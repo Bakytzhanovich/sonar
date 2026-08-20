@@ -1,0 +1,305 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import request from 'supertest';
+import type { Express } from 'express';
+import { createDb } from '../src/db';
+import { createApp } from '../src/api';
+
+function basicDefinition(overrides: { emptyText?: boolean } = {}) {
+  return {
+    nodes: [
+      { id: 'trig', type: 'trigger', position: { x: 0, y: 0 }, data: { keyword: 'цена', matchType: 'contains' } },
+      { id: 'msg1', type: 'send_message', position: { x: 0, y: 100 }, data: { text: overrides.emptyText ? '' : 'Вот цена' } },
+    ],
+    edges: [{ id: 'e1', source: 'trig', target: 'msg1' }],
+  };
+}
+
+async function createTenant(app: Express, email = 't@example.com') {
+  const res = await request(app).post('/api/tenants').send({ name: 'Blogger', email });
+  return { apiKey: res.body.apiKey as string, tenantId: res.body.tenant.id as string };
+}
+
+async function createBot(app: Express, apiKey: string, externalAccountId = 'ig-1') {
+  const res = await request(app)
+    .post('/api/bots')
+    .set('Authorization', `Bearer ${apiKey}`)
+    .send({ name: 'My Bot', externalAccountId });
+  return res.body.bot.id as string;
+}
+
+async function createPublishedFlow(app: Express, apiKey: string, botId: string) {
+  const created = await request(app)
+    .post(`/api/bots/${botId}/flows`)
+    .set('Authorization', `Bearer ${apiKey}`)
+    .send({ definition: basicDefinition() });
+  const { id, version } = created.body.flow;
+
+  await request(app)
+    .post(`/api/flows/${id}/versions/${version}/publish`)
+    .set('Authorization', `Bearer ${apiKey}`)
+    .send();
+
+  return { flowId: id as string, flowVersion: version as number };
+}
+
+describe('api', () => {
+  let app: Express;
+
+  beforeEach(() => {
+    app = createApp(createDb({ filePath: ':memory:' }));
+  });
+
+  it('rejects requests with no API key', async () => {
+    const res = await request(app).post('/api/bots').send({ name: 'Bot' });
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('missing_api_key');
+  });
+
+  it('rejects requests with a wrong API key', async () => {
+    const res = await request(app).post('/api/bots').set('Authorization', 'Bearer not-a-real-key').send({ name: 'Bot' });
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('invalid_api_key');
+  });
+
+  it('rejects publishing a flow with no trigger node', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const created = await request(app)
+      .post(`/api/bots/${botId}/flows`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ definition: { nodes: [], edges: [] } });
+
+    const publish = await request(app)
+      .post(`/api/flows/${created.body.flow.id}/versions/1/publish`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send();
+
+    expect(publish.status).toBe(422);
+    expect(publish.body.errors).toContain('flow must have exactly one trigger node, found 0');
+  });
+
+  it('refuses to bind a trigger to an unpublished flow', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const created = await request(app)
+      .post(`/api/bots/${botId}/flows`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ definition: basicDefinition() });
+
+    const res = await request(app)
+      .post(`/api/bots/${botId}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: 'цена', flowId: created.body.flow.id, flowVersion: 1 });
+
+    expect(res.status).toBe(422);
+  });
+
+  it('one tenant cannot see or act on another tenant\'s bot', async () => {
+    const owner = await createTenant(app, 'owner@example.com');
+    const intruder = await createTenant(app, 'intruder@example.com');
+    const botId = await createBot(app, owner.apiKey);
+
+    const res = await request(app)
+      .get(`/api/bots/${botId}/dashboard`)
+      .set('Authorization', `Bearer ${intruder.apiKey}`);
+
+    expect(res.status).toBe(404);
+  });
+
+  it('runs the full happy path: bot -> flow -> publish -> trigger -> test run -> mock webhook -> dashboard', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const { flowId, flowVersion } = await createPublishedFlow(app, apiKey, botId);
+
+    const trigger = await request(app)
+      .post(`/api/bots/${botId}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: 'цена', flowId, flowVersion });
+    expect(trigger.status).toBe(201);
+
+    const testRun = await request(app)
+      .post(`/api/bots/${botId}/test`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ externalUserId: 'test-user', messageText: 'цена?' });
+    expect(testRun.body.outcome.status).toBe('completed');
+
+    const webhook = await request(app).post('/webhooks/mock/instagram').send({
+      eventId: 'evt-1',
+      externalAccountId: 'ig-1',
+      externalUserId: 'real-user-1',
+      messageText: 'а сколько цена?',
+    });
+    expect(webhook.body.outcome.status).toBe('completed');
+
+    const dashboard = await request(app)
+      .get(`/api/bots/${botId}/dashboard`)
+      .set('Authorization', `Bearer ${apiKey}`);
+
+    // Only the real webhook run should be counted — the test-mode run above
+    // wrote nothing to the database.
+    expect(dashboard.body.subscriberCount).toBe(1);
+    expect(dashboard.body.runsByStatus).toEqual([{ status: 'completed', n: 1 }]);
+  });
+
+  it('mock webhook is idempotent on repeated event_id delivery', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const { flowId, flowVersion } = await createPublishedFlow(app, apiKey, botId);
+    await request(app)
+      .post(`/api/bots/${botId}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: 'цена', flowId, flowVersion });
+
+    const payload = { eventId: 'evt-dup', externalAccountId: 'ig-1', externalUserId: 'user-1', messageText: 'цена?' };
+    const first = await request(app).post('/webhooks/mock/instagram').send(payload);
+    const second = await request(app).post('/webhooks/mock/instagram').send(payload);
+
+    expect(first.body.outcome.status).toBe('completed');
+    expect(second.body).toEqual({ status: 'already_processed' });
+
+    const dashboard = await request(app)
+      .get(`/api/bots/${botId}/dashboard`)
+      .set('Authorization', `Bearer ${apiKey}`);
+    expect(dashboard.body.runsByStatus).toEqual([{ status: 'completed', n: 1 }]);
+  });
+});
+
+describe('loading flows back (needed for the canvas editor)', () => {
+  let app: Express;
+
+  beforeEach(() => {
+    app = createApp(createDb({ filePath: ':memory:' }));
+  });
+
+  it('lists all flow versions for a bot', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const { flowId } = await createPublishedFlow(app, apiKey, botId);
+    await request(app)
+      .post(`/api/flows/${flowId}/versions`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ definition: basicDefinition() });
+
+    const res = await request(app).get(`/api/bots/${botId}/flows`).set('Authorization', `Bearer ${apiKey}`);
+
+    expect(res.body.flows).toEqual([
+      { id: flowId, version: 2, status: 'draft', created_at: expect.any(String) },
+      { id: flowId, version: 1, status: 'published', created_at: expect.any(String) },
+    ]);
+  });
+
+  it('fetches one version definition, and 404s for another tenant', async () => {
+    const owner = await createTenant(app, 'owner3@example.com');
+    const intruder = await createTenant(app, 'intruder3@example.com');
+    const botId = await createBot(app, owner.apiKey);
+    const { flowId, flowVersion } = await createPublishedFlow(app, owner.apiKey, botId);
+
+    const ok = await request(app)
+      .get(`/api/flows/${flowId}/versions/${flowVersion}`)
+      .set('Authorization', `Bearer ${owner.apiKey}`);
+    expect(ok.body.flow.definition.nodes).toHaveLength(2);
+
+    const blocked = await request(app)
+      .get(`/api/flows/${flowId}/versions/${flowVersion}`)
+      .set('Authorization', `Bearer ${intruder.apiKey}`);
+    expect(blocked.status).toBe(404);
+  });
+});
+
+describe('flow versioning and rollback', () => {
+  let app: Express;
+
+  beforeEach(() => {
+    app = createApp(createDb({ filePath: ':memory:' }));
+  });
+
+  it('adds an incrementing new version to an existing flow', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const { flowId } = await createPublishedFlow(app, apiKey, botId);
+
+    const v2 = await request(app)
+      .post(`/api/flows/${flowId}/versions`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ definition: basicDefinition() });
+    expect(v2.body.flow).toEqual({ id: flowId, version: 2, status: 'draft' });
+
+    const v3 = await request(app)
+      .post(`/api/flows/${flowId}/versions`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ definition: basicDefinition() });
+    expect(v3.body.flow.version).toBe(3);
+  });
+
+  it('rolls a trigger back to an earlier published version', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const { flowId } = await createPublishedFlow(app, apiKey, botId); // v1, published
+
+    const v2 = await request(app)
+      .post(`/api/flows/${flowId}/versions`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ definition: basicDefinition() });
+    await request(app)
+      .post(`/api/flows/${flowId}/versions/2/publish`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send();
+
+    // Trigger is currently live on the newer, v2.
+    const trigger = await request(app)
+      .post(`/api/bots/${botId}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: 'цена', flowId, flowVersion: v2.body.flow.version });
+    expect(trigger.body.trigger.flow_version).toBe(2);
+
+    const rollback = await request(app)
+      .post(`/api/triggers/${trigger.body.trigger.id}/rollback`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ toVersion: 1 });
+
+    expect(rollback.status).toBe(200);
+    expect(rollback.body.trigger.flow_version).toBe(1);
+  });
+
+  it('refuses to roll back to a version that was never published', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const { flowId, flowVersion } = await createPublishedFlow(app, apiKey, botId);
+
+    await request(app)
+      .post(`/api/flows/${flowId}/versions`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ definition: basicDefinition() }); // v2, left as draft
+
+    const trigger = await request(app)
+      .post(`/api/bots/${botId}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: 'цена', flowId, flowVersion });
+
+    const rollback = await request(app)
+      .post(`/api/triggers/${trigger.body.trigger.id}/rollback`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ toVersion: 2 });
+
+    expect(rollback.status).toBe(422);
+  });
+
+  it('one tenant cannot roll back another tenant\'s trigger', async () => {
+    const owner = await createTenant(app, 'owner2@example.com');
+    const intruder = await createTenant(app, 'intruder2@example.com');
+    const botId = await createBot(app, owner.apiKey);
+    const { flowId, flowVersion } = await createPublishedFlow(app, owner.apiKey, botId);
+
+    const trigger = await request(app)
+      .post(`/api/bots/${botId}/triggers`)
+      .set('Authorization', `Bearer ${owner.apiKey}`)
+      .send({ keyword: 'цена', flowId, flowVersion });
+
+    const rollback = await request(app)
+      .post(`/api/triggers/${trigger.body.trigger.id}/rollback`)
+      .set('Authorization', `Bearer ${intruder.apiKey}`)
+      .send({ toVersion: 1 });
+
+    expect(rollback.status).toBe(404);
+  });
+});

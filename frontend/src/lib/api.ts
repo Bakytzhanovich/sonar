@@ -1,0 +1,365 @@
+// Thin client for the Sonar Module 1 backend (src/api.ts in the sibling
+// project). Types here are a deliberate, small duplicate of the backend's
+// src/types.ts — this is two files, not worth a shared workspace package
+// at this project size; revisit if the type surface grows.
+
+export type MatchType = 'contains' | 'exact';
+export type FallbackChannel = 'comment_reply';
+
+export interface TriggerNodeData {
+  keyword: string;
+  matchType: MatchType;
+}
+
+export interface SendMessageNodeData {
+  text: string;
+  fallbackChannel?: FallbackChannel;
+}
+
+export interface FlowDefinitionNode {
+  id: string;
+  type: 'trigger' | 'send_message';
+  position: { x: number; y: number };
+  data: TriggerNodeData | SendMessageNodeData;
+}
+
+export interface FlowDefinitionEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+
+export interface FlowDefinition {
+  nodes: FlowDefinitionNode[];
+  edges: FlowDefinitionEdge[];
+}
+
+export type LeadStatus = 'new' | 'in_progress' | 'client';
+
+export interface Tag {
+  id: string;
+  name: string;
+}
+
+export interface Subscriber {
+  id: string;
+  tenant_id: string;
+  bot_id: string;
+  external_user_id: string;
+  first_seen_at: string;
+  last_interacted_at: string;
+  lead_status: LeadStatus;
+  tags: Tag[];
+}
+
+export interface Note {
+  id: string;
+  subscriber_id: string;
+  body: string;
+  created_at: string;
+}
+
+export interface ConversationMessage {
+  direction: 'in' | 'out';
+  content: string;
+  created_at: string;
+}
+
+export interface StructureBeat {
+  label: string;
+  timestampSeconds: number;
+}
+
+export interface ReelAnalysis {
+  id: string;
+  source_url: string;
+  hook: string;
+  duration_seconds: number;
+  on_screen_text: string;
+  structure: StructureBeat[];
+  created_at: string;
+}
+
+export interface GeneratedScript {
+  id: string;
+  analysis_id: string;
+  niche: string;
+  script_text: string;
+  created_at: string;
+}
+
+export interface BrandPreset {
+  id: string;
+  name: string;
+  font_family: string;
+  primary_color: string;
+  secondary_color: string;
+  logo_url: string | null;
+}
+
+export interface Carousel {
+  id: string;
+  prompt: string;
+  preset_id: string | null;
+  created_at: string;
+}
+
+export interface CarouselSlide {
+  id: string;
+  carousel_id: string;
+  position: number;
+  headline: string;
+  body: string;
+}
+
+export type PostingPlatform = 'instagram' | 'tiktok' | 'youtube_shorts';
+export type ScheduledPostStatus = 'pending_approval' | 'scheduled' | 'published' | 'failed' | 'rejected';
+
+export interface ScheduledPost {
+  id: string;
+  platform: PostingPlatform;
+  caption: string;
+  scheduled_at: string;
+  requires_approval: boolean;
+  status: ScheduledPostStatus;
+  failure_reason: string | null;
+  published_at: string | null;
+  external_post_url: string | null;
+  created_at: string;
+}
+
+export type VideoTemplate = 'auto_crop_916' | 'template_with_transitions';
+export type VideoJobStatus = 'processing' | 'completed' | 'failed';
+
+export interface VideoEditJob {
+  id: string;
+  source_video_url: string;
+  template: VideoTemplate;
+  status: VideoJobStatus;
+  progress_percent: number;
+  output_url: string | null;
+  failure_reason: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface PushSubscriptionPayload {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
+export type NotificationType = 'post_published' | 'post_failed' | 'post_pending_approval' | 'video_completed' | 'video_failed';
+
+export interface AppNotification {
+  id: string;
+  type: NotificationType;
+  message: string;
+  related_id: string | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface ContentRecommendation {
+  segment: string;
+  subscriberCount: number;
+  clientCount: number;
+  conversionRate: number;
+  matchingScriptCount: number;
+  explanation: string;
+}
+
+export interface ApiConfig {
+  baseUrl: string;
+  apiKey?: string;
+}
+
+export class ApiError extends Error {
+  status: number;
+  body: unknown;
+  constructor(status: number, body: unknown) {
+    const message = typeof body === 'object' && body && 'error' in body ? String((body as { error: unknown }).error) : `request failed with ${status}`;
+    super(message);
+    this.status = status;
+    this.body = body;
+  }
+}
+
+async function apiRequest(config: ApiConfig, method: string, path: string, body?: unknown) {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (config.apiKey) headers.authorization = `Bearer ${config.apiKey}`;
+
+  const res = await fetch(`${config.baseUrl}${path}`, {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, json);
+  return json;
+}
+
+export const api = {
+  createTenant: (config: ApiConfig, name: string, email: string) =>
+    apiRequest(config, 'POST', '/api/tenants', { name, email }),
+
+  createBot: (config: ApiConfig, name: string, externalAccountId: string) =>
+    apiRequest(config, 'POST', '/api/bots', { name, externalAccountId }),
+
+  listFlows: (config: ApiConfig, botId: string) => apiRequest(config, 'GET', `/api/bots/${botId}/flows`),
+
+  createFlow: (config: ApiConfig, botId: string, definition: FlowDefinition) =>
+    apiRequest(config, 'POST', `/api/bots/${botId}/flows`, { definition }),
+
+  createFlowVersion: (config: ApiConfig, flowId: string, definition: FlowDefinition) =>
+    apiRequest(config, 'POST', `/api/flows/${flowId}/versions`, { definition }),
+
+  getFlowVersion: (config: ApiConfig, flowId: string, version: number) =>
+    apiRequest(config, 'GET', `/api/flows/${flowId}/versions/${version}`),
+
+  publishFlow: (config: ApiConfig, flowId: string, version: number) =>
+    apiRequest(config, 'POST', `/api/flows/${flowId}/versions/${version}/publish`, {}),
+
+  createTrigger: (config: ApiConfig, botId: string, body: { keyword: string; matchType: MatchType; flowId: string; flowVersion: number }) =>
+    apiRequest(config, 'POST', `/api/bots/${botId}/triggers`, body),
+
+  rollbackTrigger: (config: ApiConfig, triggerId: string, toVersion: number) =>
+    apiRequest(config, 'POST', `/api/triggers/${triggerId}/rollback`, { toVersion }),
+
+  testRun: (config: ApiConfig, botId: string, body: { externalUserId: string; messageText: string }) =>
+    apiRequest(config, 'POST', `/api/bots/${botId}/test`, body),
+
+  dashboard: (config: ApiConfig, botId: string) => apiRequest(config, 'GET', `/api/bots/${botId}/dashboard`),
+
+  // ---- Module 2: CRM ----------------------------------------------------
+
+  listSubscribers: (config: ApiConfig, botId: string, filters: { tag?: string; leadStatus?: LeadStatus } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.tag) params.set('tag', filters.tag);
+    if (filters.leadStatus) params.set('leadStatus', filters.leadStatus);
+    const qs = params.toString();
+    return apiRequest(config, 'GET', `/api/bots/${botId}/subscribers${qs ? `?${qs}` : ''}`) as Promise<{ subscribers: Subscriber[] }>;
+  },
+
+  updateLeadStatus: (config: ApiConfig, subscriberId: string, leadStatus: LeadStatus) =>
+    apiRequest(config, 'PATCH', `/api/subscribers/${subscriberId}/lead-status`, { leadStatus }),
+
+  getMessages: (config: ApiConfig, subscriberId: string) =>
+    apiRequest(config, 'GET', `/api/subscribers/${subscriberId}/messages`) as Promise<{ messages: ConversationMessage[] }>,
+
+  getNotes: (config: ApiConfig, subscriberId: string) =>
+    apiRequest(config, 'GET', `/api/subscribers/${subscriberId}/notes`) as Promise<{ notes: Note[] }>,
+
+  addNote: (config: ApiConfig, subscriberId: string, body: string) =>
+    apiRequest(config, 'POST', `/api/subscribers/${subscriberId}/notes`, { body }),
+
+  listTags: (config: ApiConfig, botId: string) => apiRequest(config, 'GET', `/api/bots/${botId}/tags`) as Promise<{ tags: Tag[] }>,
+
+  addTag: (config: ApiConfig, subscriberId: string, name: string) =>
+    apiRequest(config, 'POST', `/api/subscribers/${subscriberId}/tags`, { name }) as Promise<{ tag: Tag }>,
+
+  removeTag: (config: ApiConfig, subscriberId: string, tagId: string) =>
+    apiRequest(config, 'DELETE', `/api/subscribers/${subscriberId}/tags/${tagId}`),
+
+  // Not a Bearer-key call — this simulates Meta calling OUR webhook, so it
+  // deliberately does not go through apiRequest's auth header. eventId is
+  // generated per call so repeated clicks aren't silently deduped as
+  // "already_processed" against each other.
+  sendMockWebhook: (config: ApiConfig, externalAccountId: string, externalUserId: string, messageText: string) =>
+    fetch(`${config.baseUrl}/webhooks/mock/instagram`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ eventId: crypto.randomUUID(), externalAccountId, externalUserId, messageText }),
+    }).then((res) => res.json()),
+
+  // ---- Module 3: Reel analysis (mocked pipeline) -------------------------
+
+  createAnalysis: (config: ApiConfig, sourceUrl: string) =>
+    apiRequest(config, 'POST', '/api/reel-analyses', { sourceUrl }) as Promise<{ analysis: ReelAnalysis }>,
+
+  listAnalyses: (config: ApiConfig) => apiRequest(config, 'GET', '/api/reel-analyses') as Promise<{ analyses: ReelAnalysis[] }>,
+
+  generateScript: (config: ApiConfig, analysisId: string, niche: string) =>
+    apiRequest(config, 'POST', `/api/reel-analyses/${analysisId}/scripts`, { niche }) as Promise<{ script: GeneratedScript }>,
+
+  listScriptsForAnalysis: (config: ApiConfig, analysisId: string) =>
+    apiRequest(config, 'GET', `/api/reel-analyses/${analysisId}/scripts`) as Promise<{ scripts: GeneratedScript[] }>,
+
+  searchScriptsByNiche: (config: ApiConfig, niche: string) =>
+    apiRequest(config, 'GET', `/api/scripts?niche=${encodeURIComponent(niche)}`) as Promise<{ scripts: GeneratedScript[] }>,
+
+  // ---- Module 4: Carousel generation (mocked LLM text) -------------------
+
+  createBrandPreset: (config: ApiConfig, name: string, fields: Partial<Omit<BrandPreset, 'id' | 'tenant_id' | 'created_at' | 'name'>> = {}) =>
+    apiRequest(config, 'POST', '/api/brand-presets', {
+      name,
+      fontFamily: fields.font_family,
+      primaryColor: fields.primary_color,
+      secondaryColor: fields.secondary_color,
+      logoUrl: fields.logo_url,
+    }) as Promise<{ preset: BrandPreset }>,
+
+  listBrandPresets: (config: ApiConfig) => apiRequest(config, 'GET', '/api/brand-presets') as Promise<{ presets: BrandPreset[] }>,
+
+  createCarousel: (config: ApiConfig, prompt: string, presetId?: string) =>
+    apiRequest(config, 'POST', '/api/carousels', { prompt, presetId }) as Promise<{ carousel: Carousel; slides: CarouselSlide[] }>,
+
+  listCarousels: (config: ApiConfig) => apiRequest(config, 'GET', '/api/carousels') as Promise<{ carousels: Carousel[] }>,
+
+  getCarousel: (config: ApiConfig, id: string) =>
+    apiRequest(config, 'GET', `/api/carousels/${id}`) as Promise<{ carousel: Carousel; slides: CarouselSlide[] }>,
+
+  updateSlide: (config: ApiConfig, carouselId: string, slideId: string, fields: { headline?: string; body?: string }) =>
+    apiRequest(config, 'PATCH', `/api/carousels/${carouselId}/slides/${slideId}`, fields) as Promise<{ slide: CarouselSlide }>,
+
+  // ---- Module 5: Cross-platform autoposting (mocked) ---------------------
+
+  createScheduledPost: (
+    config: ApiConfig,
+    fields: { platform: PostingPlatform; caption: string; scheduledAt: string; requiresApproval?: boolean }
+  ) => apiRequest(config, 'POST', '/api/scheduled-posts', fields) as Promise<{ post: ScheduledPost }>,
+
+  listScheduledPosts: (config: ApiConfig) => apiRequest(config, 'GET', '/api/scheduled-posts') as Promise<{ posts: ScheduledPost[] }>,
+
+  approvePost: (config: ApiConfig, id: string) =>
+    apiRequest(config, 'POST', `/api/scheduled-posts/${id}/approve`) as Promise<{ post: ScheduledPost }>,
+
+  rejectPost: (config: ApiConfig, id: string) =>
+    apiRequest(config, 'POST', `/api/scheduled-posts/${id}/reject`) as Promise<{ post: ScheduledPost }>,
+
+  processDuePosts: (config: ApiConfig) => apiRequest(config, 'POST', '/api/scheduled-posts/process-due') as Promise<{ processed: number }>,
+
+  // ---- Module 6: Content plan from CRM + Module 3 -------------------------
+
+  getContentRecommendations: (config: ApiConfig, segment?: string) =>
+    apiRequest(config, 'GET', `/api/content-recommendations${segment ? `?segment=${encodeURIComponent(segment)}` : ''}`) as Promise<{
+      recommendations: ContentRecommendation[];
+    }>,
+
+  // ---- Module 8: Video editing, Levels 1-2 (mocked) -----------------------
+
+  createVideoJob: (config: ApiConfig, sourceVideoUrl: string, template: VideoTemplate) =>
+    apiRequest(config, 'POST', '/api/video-edit-jobs', { sourceVideoUrl, template }) as Promise<{ job: VideoEditJob }>,
+
+  listVideoJobs: (config: ApiConfig) => apiRequest(config, 'GET', '/api/video-edit-jobs') as Promise<{ jobs: VideoEditJob[] }>,
+
+  getVideoJob: (config: ApiConfig, id: string) => apiRequest(config, 'GET', `/api/video-edit-jobs/${id}`) as Promise<{ job: VideoEditJob }>,
+
+  processVideoTick: (config: ApiConfig) => apiRequest(config, 'POST', '/api/video-edit-jobs/process-tick') as Promise<{ advanced: number }>,
+
+  // ---- Push notifications (shared by Modules 5 and 8) ---------------------
+
+  getVapidPublicKey: (config: ApiConfig) => apiRequest(config, 'GET', '/api/push/vapid-public-key') as Promise<{ publicKey: string }>,
+
+  subscribePush: (config: ApiConfig, subscription: PushSubscriptionPayload) =>
+    apiRequest(config, 'POST', '/api/push/subscribe', subscription),
+
+  unsubscribePush: (config: ApiConfig, endpoint: string) => apiRequest(config, 'POST', '/api/push/unsubscribe', { endpoint }),
+
+  listNotifications: (config: ApiConfig, unreadOnly = false) =>
+    apiRequest(config, 'GET', `/api/notifications${unreadOnly ? '?unreadOnly=true' : ''}`) as Promise<{ notifications: AppNotification[] }>,
+
+  markNotificationRead: (config: ApiConfig, id: string) => apiRequest(config, 'POST', `/api/notifications/${id}/read`),
+
+  markAllNotificationsRead: (config: ApiConfig) => apiRequest(config, 'POST', '/api/notifications/read-all'),
+};
