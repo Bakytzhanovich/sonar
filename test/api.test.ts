@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import { createDb } from '../src/db';
+import type { Db } from '../src/db';
 import { createApp } from '../src/api';
+import { createTestDb, dropTestDb } from './dbTestHelper';
 
 function basicDefinition(overrides: { emptyText?: boolean } = {}) {
   return {
@@ -44,9 +45,15 @@ async function createPublishedFlow(app: Express, apiKey: string, botId: string) 
 
 describe('api', () => {
   let app: Express;
+  let db: Db;
 
-  beforeEach(() => {
-    app = createApp(createDb({ filePath: ':memory:' }));
+  beforeEach(async () => {
+    db = await createTestDb();
+    app = createApp(db);
+  });
+
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
   });
 
   it('rejects requests with no API key', async () => {
@@ -92,6 +99,83 @@ describe('api', () => {
       .send({ keyword: 'цена', flowId: created.body.flow.id, flowVersion: 1 });
 
     expect(res.status).toBe(422);
+  });
+
+  it('refuses a second trigger on the same bot for a keyword that already has one', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const { flowId, flowVersion } = await createPublishedFlow(app, apiKey, botId);
+
+    const first = await request(app)
+      .post(`/api/bots/${botId}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: 'X', flowId, flowVersion });
+    expect(first.status).toBe(201);
+
+    const second = await request(app)
+      .post(`/api/bots/${botId}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: 'X', flowId, flowVersion });
+
+    expect(second.status).toBe(409);
+  });
+
+  it('treats keywords that only differ by case or surrounding whitespace as the same conflict', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const { flowId, flowVersion } = await createPublishedFlow(app, apiKey, botId);
+
+    const first = await request(app)
+      .post(`/api/bots/${botId}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: 'Цена', flowId, flowVersion });
+    expect(first.status).toBe(201);
+
+    const second = await request(app)
+      .post(`/api/bots/${botId}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: ' цена ', flowId, flowVersion });
+
+    expect(second.status).toBe(409);
+  });
+
+  it('under true concurrency, exactly one of two simultaneous same-keyword binds succeeds (DB constraint, not just the pre-check)', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const { flowId, flowVersion } = await createPublishedFlow(app, apiKey, botId);
+
+    // Fired via Promise.all, not awaited one after another — both requests'
+    // pre-check SELECT can race before either INSERT lands. If only the
+    // app-level pre-check existed (no idx_triggers_bot_keyword_unique),
+    // this would be flaky/both-201 under load; the UNIQUE index is what
+    // guarantees exactly one winner regardless of interleaving.
+    const [a, b] = await Promise.all([
+      request(app).post(`/api/bots/${botId}/triggers`).set('Authorization', `Bearer ${apiKey}`).send({ keyword: 'гонка', flowId, flowVersion }),
+      request(app).post(`/api/bots/${botId}/triggers`).set('Authorization', `Bearer ${apiKey}`).send({ keyword: 'гонка', flowId, flowVersion }),
+    ]);
+
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([201, 409]);
+  });
+
+  it('allows the same keyword on two different bots (conflict check is per-bot)', async () => {
+    const { apiKey } = await createTenant(app);
+    const botA = await createBot(app, apiKey, 'ig-a');
+    const botB = await createBot(app, apiKey, 'ig-b');
+    const flowA = await createPublishedFlow(app, apiKey, botA);
+    const flowB = await createPublishedFlow(app, apiKey, botB);
+
+    const onA = await request(app)
+      .post(`/api/bots/${botA}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: 'цена', flowId: flowA.flowId, flowVersion: flowA.flowVersion });
+    const onB = await request(app)
+      .post(`/api/bots/${botB}/triggers`)
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ keyword: 'цена', flowId: flowB.flowId, flowVersion: flowB.flowVersion });
+
+    expect(onA.status).toBe(201);
+    expect(onB.status).toBe(201);
   });
 
   it('one tenant cannot see or act on another tenant\'s bot', async () => {
@@ -166,9 +250,15 @@ describe('api', () => {
 
 describe('loading flows back (needed for the canvas editor)', () => {
   let app: Express;
+  let db: Db;
 
-  beforeEach(() => {
-    app = createApp(createDb({ filePath: ':memory:' }));
+  beforeEach(async () => {
+    db = await createTestDb();
+    app = createApp(db);
+  });
+
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
   });
 
   it('lists all flow versions for a bot', async () => {
@@ -208,9 +298,15 @@ describe('loading flows back (needed for the canvas editor)', () => {
 
 describe('flow versioning and rollback', () => {
   let app: Express;
+  let db: Db;
 
-  beforeEach(() => {
-    app = createApp(createDb({ filePath: ':memory:' }));
+  beforeEach(async () => {
+    db = await createTestDb();
+    app = createApp(db);
+  });
+
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
   });
 
   it('adds an incrementing new version to an existing flow', async () => {
@@ -229,6 +325,45 @@ describe('flow versioning and rollback', () => {
       .set('Authorization', `Bearer ${apiKey}`)
       .send({ definition: basicDefinition() });
     expect(v3.body.flow.version).toBe(3);
+  });
+
+  it('under true concurrency, no two simultaneous new-version calls ever land on the same version number (DB constraint, not just the pre-check)', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const { flowId } = await createPublishedFlow(app, apiKey, botId);
+
+    // This endpoint's only pre-write step is one SELECT MAX(version), so a
+    // single pair of concurrent calls usually doesn't actually overlap —
+    // confirmed empirically (2-way Promise.all serialized 3/3 runs here,
+    // and even against a live server most 2-way attempts didn't collide
+    // either). 8-way concurrency reliably does force real collisions
+    // (verified: every run produces several requests reading the same
+    // pre-write maxVersion and racing for the same next version number) —
+    // that's the actual proof this needs, not a fixed 201/409 split from
+    // just two calls, which would pass even if the DB constraint were
+    // silently removed.
+    const N = 8;
+    const results = await Promise.all(
+      Array.from({ length: N }, () =>
+        request(app).post(`/api/flows/${flowId}/versions`).set('Authorization', `Bearer ${apiKey}`).send({ definition: basicDefinition() })
+      )
+    );
+
+    const successes = results.filter((r) => r.status === 201);
+    const failures = results.filter((r) => r.status !== 201);
+    // Genuine contention must have been hit — otherwise this test isn't
+    // actually exercising the race at all.
+    expect(failures.length).toBeGreaterThan(0);
+    expect(failures.every((r) => r.status === 409)).toBe(true); // never a bare 500
+
+    // flows(id, version)'s composite PRIMARY KEY is the real guarantee:
+    // no matter how many requests computed the same nextVersion, at most
+    // one of them can ever have actually inserted it.
+    const versions = successes.map((r) => r.body.flow.version);
+    expect(new Set(versions).size).toBe(versions.length);
+
+    const listed = await request(app).get(`/api/bots/${botId}/flows`).set('Authorization', `Bearer ${apiKey}`);
+    expect(listed.body.flows.filter((f: { id: string }) => f.id === flowId)).toHaveLength(1 + successes.length); // v1 + each real winner
   });
 
   it('rolls a trigger back to an earlier published version', async () => {

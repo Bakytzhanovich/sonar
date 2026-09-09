@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useRef, useState, type SetStateAction } from 'react';
 
 const STORAGE_KEY = 'sonar-dev-config';
 
@@ -9,9 +9,10 @@ export interface DevConfig {
   apiKey: string;
   botId: string;
   externalAccountId: string;
+  devMode: boolean;
 }
 
-const DEFAULT_CONFIG: DevConfig = { baseUrl: 'http://localhost:4001', apiKey: '', botId: '', externalAccountId: '' };
+const DEFAULT_CONFIG: DevConfig = { baseUrl: 'http://localhost:4001', apiKey: '', botId: '', externalAccountId: '', devMode: false };
 
 function readStoredConfig(): DevConfig {
   try {
@@ -19,6 +20,14 @@ function readStoredConfig(): DevConfig {
     return raw ? { ...DEFAULT_CONFIG, ...JSON.parse(raw) } : DEFAULT_CONFIG;
   } catch {
     return DEFAULT_CONFIG;
+  }
+}
+
+function writeStoredConfig(config: DevConfig) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  } catch {
+    // Keep the current tab usable if persistent storage is unavailable.
   }
 }
 
@@ -31,11 +40,18 @@ function readStoredConfig(): DevConfig {
 // client-only component (dynamic import with ssr:false) — there is no
 // server-rendered pass for a client-only read to mismatch against.
 export function useDevConfig() {
-  const [config, setConfig] = useState<DevConfig>(readStoredConfig);
+  const [config, setConfigState] = useState<DevConfig>(readStoredConfig);
+  const configRef = useRef(config);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-  }, [config]);
+  // Onboarding stores the JWT-backed workspace and immediately navigates to
+  // CRM. Write synchronously so that route cannot mount with stale bot/API
+  // credentials while waiting for a useEffect.
+  const setConfig = useCallback((action: SetStateAction<DevConfig>) => {
+    const next = typeof action === 'function' ? action(configRef.current) : action;
+    configRef.current = next;
+    writeStoredConfig(next);
+    setConfigState(next);
+  }, []);
 
   return [config, setConfig] as const;
 }

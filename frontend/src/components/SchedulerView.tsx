@@ -1,24 +1,38 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { api, type PostingPlatform, type ScheduledPost } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import ModuleNav from './ModuleNav';
+import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
+import PulseIndicator from './PulseIndicator';
+import StatusMessage from './StatusMessage';
+import controls from './Controls.module.css';
+import layout from './Layout.module.css';
+import styles from './SchedulerView.module.css';
 
 const PLATFORMS: PostingPlatform[] = ['instagram', 'tiktok', 'youtube_shorts'];
 const STATUS_LABEL: Record<string, string> = {
   pending_approval: 'Ждёт согласования',
   scheduled: 'Запланировано',
+  publishing: 'Публикуется',
   published: 'Опубликовано',
   failed: 'Ошибка',
   rejected: 'Отклонено',
 };
+// Category colors, same precedent as FlowEditor's node-type colors — not
+// the screen's one reserved accent. "rejected" isn't a hue at all, same
+// muted token a disabled control uses, since it's an inactive state.
+// "publishing" is the brief in-flight claim state set by publishDuePosts
+// (see schema.sql) — reuses the scheduled color since there's no dedicated
+// token and it's the same "about to be live" family.
 const STATUS_COLOR: Record<string, string> = {
-  pending_approval: '#b8860b',
-  scheduled: '#1e6fd9',
-  published: '#1a9c4a',
-  failed: '#c0392b',
-  rejected: '#888',
+  pending_approval: 'var(--status-pending)',
+  scheduled: 'var(--status-scheduled)',
+  publishing: 'var(--status-scheduled)',
+  published: 'var(--status-published)',
+  failed: 'var(--status-failed)',
+  rejected: 'var(--foreground-muted)',
 };
 
 function toLocalInputValue(isoFuture: Date) {
@@ -102,67 +116,84 @@ export default function SchedulerView() {
   const rest = posts.filter((p) => p.status !== 'pending_approval');
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'system-ui, sans-serif' }}>
-      <header style={{ padding: 12, borderBottom: '1px solid #ddd', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <strong>Sonar — Автопостинг (мок платформ, без Redis)</strong>
-        <span style={{ fontSize: 11, color: '#888' }}>
-          {apiKey ? '' : 'Нет apiKey — зайди через редактор бота и нажми "Быстрый старт"'}
-        </span>
-        <Link href="/" style={{ marginLeft: 'auto' }}>
-          ← Редактор бота
-        </Link>
-        <Link href="/carousels">Карусели →</Link>
-        <Link href="/content-plan">Контент-план →</Link>
-        <Link href="/video">Видео →</Link>
+    <div className={styles.page}>
+      <header className={layout.header}>
+        <div><span className={styles.eyebrow}>ПУБЛИКАЦИЯ</span><span className={layout.title}>Автопостинг</span></div>
+        {pending.length > 0 && <PulseIndicator count={pending.length} label="постов ждут согласования" />}
+        <ModuleNav current="/scheduler" />
       </header>
 
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <div style={{ width: 300, borderRight: '1px solid #ddd', padding: 12, overflowY: 'auto' }}>
-          <h4>Новый пост</h4>
-          <select value={platform} onChange={(e) => setPlatform(e.target.value as PostingPlatform)} style={{ width: '100%' }}>
-            {PLATFORMS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-          <textarea value={caption} onChange={(e) => setCaption(e.target.value)} rows={3} style={{ width: '100%', marginTop: 4 }} />
-          <input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} style={{ width: '100%', marginTop: 4 }} />
-          <label style={{ display: 'block', marginTop: 4 }}>
+      <div className={layout.twoPane}>
+        <div className={`${layout.sidebar} ${styles.sidebar}`}>
+          {!apiKey && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
+          <div className={styles.panelHeading}><span className={styles.eyebrow}>COMPOSER</span><h2>Новый пост</h2></div>
+
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Платформа</span>
+            <select className={controls.input} value={platform} onChange={(e) => setPlatform(e.target.value as PostingPlatform)}>
+              {PLATFORMS.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Текст поста</span>
+            <textarea className={controls.input} value={caption} onChange={(e) => setCaption(e.target.value)} rows={3} />
+          </label>
+
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Когда публиковать</span>
+            <input className={controls.input} type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
+          </label>
+
+          <label className={styles.checkboxRow}>
             <input type="checkbox" checked={requiresApproval} onChange={(e) => setRequiresApproval(e.target.checked)} /> Нужно согласование
           </label>
-          <button onClick={createPost} style={{ marginTop: 6 }}>
+
+          {/* Secondary, not primary: "Добавить в очередь" and "Approve" (below)
+              can both be on screen at once — the left form is always rendered,
+              "Ждут согласования" appears alongside it whenever a post is
+              pending. Approve is the more final/decisive action of the two,
+              so it's the one solid-accent button when both are visible. */}
+          <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={createPost}>
             Добавить в очередь
           </button>
 
-          <button onClick={processDue} style={{ marginTop: 16, display: 'block' }}>
+          <div className={styles.divider} />
+          <button className={controls.buttonSecondary} onClick={processDue}>
             Обработать due-посты сейчас
           </button>
-          <p style={{ fontSize: 11, color: '#888' }}>Без Redis/BullMQ фоновый опрос идёт раз в 15с — эта кнопка не ждёт таймер.</p>
+          <p className={styles.hint}>Без Redis/BullMQ фоновый опрос идёт раз в 15с — эта кнопка не ждёт таймер.</p>
         </div>
 
-        <div style={{ flex: 1, padding: 12, overflowY: 'auto' }}>
+        <div className={`${layout.main} ${styles.main}`}>
           {pending.length > 0 && (
             <>
               <h3>Ждут согласования</h3>
               {pending.map((p) => (
-                <div key={p.id} style={{ border: '1px solid #b8860b', borderRadius: 6, padding: 8, marginBottom: 8 }}>
+                <div key={p.id} className={styles.postCard} style={{ borderLeftColor: STATUS_COLOR[p.status] }}>
                   <PostRow post={p} />
-                  <button onClick={() => approve(p.id)}>Approve</button> <button onClick={() => reject(p.id)}>Reject</button>
+                  <div className={controls.decisionPair}>
+                    <button className={controls.buttonPrimary} onClick={() => approve(p.id)}>Approve</button>
+                    <button className={controls.buttonSecondary} onClick={() => reject(p.id)}>Reject</button>
+                  </div>
                 </div>
               ))}
             </>
           )}
 
-          <h3>Очередь</h3>
+          <div className={styles.queueHeader}><h2>Очередь</h2><span className={styles.queueCount}>{posts.length} публикаций</span></div>
           {rest.map((p) => (
-            <div key={p.id} style={{ border: '1px solid #ddd', borderRadius: 6, padding: 8, marginBottom: 8 }}>
+            <div key={p.id} className={styles.postCard} style={{ borderLeftColor: STATUS_COLOR[p.status] }}>
               <PostRow post={p} />
             </div>
           ))}
-          {posts.length === 0 && <p style={{ color: '#888' }}>Пока пусто</p>}
+          {posts.length === 0 && <div className={styles.emptyState}><div><div className={styles.emptyIcon}>↗</div><h2>Очередь свободна</h2><p>Запланированные публикации появятся здесь.</p></div></div>}
 
-          {status && <div style={{ fontSize: 12, color: '#555', marginTop: 8 }}>{status}</div>}
+          <StatusMessage>{status}</StatusMessage>
         </div>
       </div>
     </div>
@@ -172,10 +203,14 @@ export default function SchedulerView() {
 function PostRow({ post }: { post: ScheduledPost }) {
   return (
     <div>
-      <span style={{ fontWeight: 'bold' }}>{post.platform}</span> —{' '}
-      <span style={{ color: STATUS_COLOR[post.status], fontWeight: 'bold' }}>{STATUS_LABEL[post.status]}</span>
+      <div className={styles.postHeader}>
+        <span className={styles.platformLabel}>{post.platform}</span>
+        <span className={styles.statusBadge} style={{ '--status-color': STATUS_COLOR[post.status] } as React.CSSProperties}>
+          {STATUS_LABEL[post.status]}
+        </span>
+      </div>
       <div>{post.caption}</div>
-      <div style={{ fontSize: 11, color: '#888' }}>
+      <div className={styles.postMeta}>
         план: {new Date(post.scheduled_at).toLocaleString()}
         {post.published_at && <> · опубликовано: {new Date(post.published_at).toLocaleString()}</>}
         {post.failure_reason && <> · причина: {post.failure_reason}</>}

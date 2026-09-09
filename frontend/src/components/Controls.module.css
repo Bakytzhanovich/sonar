@@ -1,0 +1,127 @@
+/* Shared form-control tier, used across every screen — one place to fix
+ * instead of the per-file browser-default drift this replaced. Primary and
+ * secondary are the only tiers: no third tier exists yet, so no screen
+ * should invent one rather than picking whichever of these two fits.
+ */
+
+.input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.input::placeholder {
+  color: var(--foreground-muted);
+}
+
+.buttonBase {
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+/* Ghost/outline — transparent by default, fills with --surface-hover only
+ * on hover. For any action that isn't the one clear payoff of its section. */
+.buttonSecondary {
+  composes: buttonBase;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.buttonSecondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.buttonSecondary:disabled {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--foreground-muted);
+  cursor: not-allowed;
+}
+
+/* Solid --accent fill, not an outline — an outline reads as a focus ring,
+ * not a deliberate CTA. Text is --background: the page's opposite-extreme
+ * token in both themes (near-white on light theme's dark accent, near-black
+ * on dark theme's bright accent) — verified against real computed contrast
+ * in both themes, not assumed from the pairing alone. */
+.buttonPrimary {
+  composes: buttonBase;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--background);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.buttonPrimary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.buttonPrimary:disabled {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--foreground-muted);
+  cursor: not-allowed;
+}
+
+/* Wraps a pair of opposite-consequence buttons (Approve/Reject) so their
+ * gap can be controlled directly instead of relying on a text-node space
+ * between them — same desktop spacing as before (~8px), widened under
+ * pointer:coarse below. */
+.decisionPair {
+  display: inline-flex;
+  gap: 8px;
+}
+
+/* A finger, not a cursor: 29px-tall buttons with a few px between them are
+ * fine to click precisely with a mouse but too small/close to reliably tap
+ * (Apple HIG / Material both put the minimum around 44-48px). Gated on
+ * pointer:coarse specifically — a touchscreen laptop with a mouse attached
+ * still reports pointer:fine, so this doesn't inflate every desktop button,
+ * only real touch input. */
+@media (pointer: coarse) {
+  .buttonBase {
+    min-height: 44px;
+  }
+
+  /* Approve/Reject (SchedulerView) are opposite-consequence actions sitting
+   * right next to each other — a mistap there is worse than on an ordinary
+   * button pair, so it gets a wider gap than .buttonGroup's default, not
+   * just the same min-height bump as everywhere else. */
+  .decisionPair {
+    gap: 20px;
+  }
+}
+
+/* ---- Developer panel: flagged, off by default, tucked out of the way ----
+ * Same toggle+panel shape everywhere it's used (FlowEditor, CRM, ...): a
+ * low-prominence text toggle, closed by default, revealing raw ids/
+ * connection fields only once explicitly opened — never in the main UI. */
+.devToggle {
+  margin-top: auto;
+  background: none;
+  border: none;
+  color: var(--foreground-muted);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  padding: 4px 0;
+}
+
+.devToggle:hover {
+  color: var(--foreground);
+}
+
+.devPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}

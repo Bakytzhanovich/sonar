@@ -1,5 +1,5 @@
-import type Database from 'better-sqlite3';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
+import { exec, queryOne, type Db } from './db';
 
 // Random 256-bit token, not a password — SHA-256 is the right hash here
 // (no salt/slow-KDF needed, unlike bcrypt for user passwords), because
@@ -15,19 +15,13 @@ function hashApiKey(rawKey: string): string {
 
 // Returns the raw key — caller must show it to the user now, it can never
 // be recovered again (only its hash is stored).
-export function createApiKeyForTenant(db: Database.Database, tenantId: string): string {
+export async function createApiKeyForTenant(db: Db, tenantId: string): Promise<string> {
   const rawKey = generateApiKey();
-  db.prepare(`INSERT INTO api_keys (id, tenant_id, key_hash) VALUES (?, ?, ?)`).run(
-    randomUUID(),
-    tenantId,
-    hashApiKey(rawKey)
-  );
+  await exec(db, `INSERT INTO api_keys (id, tenant_id, key_hash) VALUES (?, ?, ?)`, randomUUID(), tenantId, hashApiKey(rawKey));
   return rawKey;
 }
 
-export function resolveTenantIdFromApiKey(db: Database.Database, rawKey: string): string | undefined {
-  const row = db.prepare(`SELECT tenant_id FROM api_keys WHERE key_hash = ?`).get(hashApiKey(rawKey)) as
-    | { tenant_id: string }
-    | undefined;
+export async function resolveTenantIdFromApiKey(db: Db, rawKey: string): Promise<string | undefined> {
+  const row = await queryOne<{ tenant_id: string }>(db, `SELECT tenant_id FROM api_keys WHERE key_hash = ?`, hashApiKey(rawKey));
   return row?.tenant_id;
 }

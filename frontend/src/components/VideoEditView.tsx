@@ -1,16 +1,41 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { api, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import ModuleNav from './ModuleNav';
+import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
+import PulseIndicator from './PulseIndicator';
+import StatusMessage from './StatusMessage';
+import controls from './Controls.module.css';
+import layout from './Layout.module.css';
+import styles from './VideoEditView.module.css';
 
-const TEMPLATES: { value: VideoTemplate; label: string }[] = [
-  { value: 'auto_crop_916', label: 'Уровень 1: автонарезка 9:16 + субтитры' },
-  { value: 'template_with_transitions', label: 'Уровень 2: шаблонный монтаж с переходами' },
+const TEMPLATES: { value: VideoTemplate; level: string; title: string; description: string }[] = [
+  {
+    value: 'auto_crop_916',
+    level: 'Уровень 1',
+    title: 'Автонарезка 9:16 + субтитры',
+    description: 'Быстрый кроп под вертикальный формат Reels/Shorts с автоматическими субтитрами.',
+  },
+  {
+    value: 'template_with_transitions',
+    level: 'Уровень 2',
+    title: 'Шаблонный монтаж',
+    description: 'Готовые переходы между сценами по шаблону — для более собранного ролика.',
+  },
 ];
 
 const STATUS_LABEL: Record<string, string> = { processing: 'Рендерится', completed: 'Готово', failed: 'Ошибка' };
+// "processing" reuses --accent (an active-right-now state, same precedent
+// as the pulse indicator), "completed" reuses Scheduler's "published"
+// success color, "failed" reuses its failed color — same tokens, same
+// meanings, across screens instead of a fresh ad hoc palette per screen.
+const STATUS_COLOR: Record<string, string> = {
+  processing: 'var(--accent)',
+  completed: 'var(--status-published)',
+  failed: 'var(--status-failed)',
+};
 
 export default function VideoEditView() {
   const [devConfig] = useDevConfig();
@@ -68,65 +93,134 @@ export default function VideoEditView() {
     }
   }
 
+  const processingCount = jobs.filter((j) => j.status === 'processing').length;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'system-ui, sans-serif' }}>
-      <header style={{ padding: 12, borderBottom: '1px solid #ddd', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <strong>Sonar — Видеомонтаж (Уровень 1-2, мок Shotstack/Creatomate)</strong>
-        <span style={{ fontSize: 11, color: '#888' }}>
-          {apiKey ? '' : 'Нет apiKey — зайди через редактор бота и нажми "Быстрый старт"'}
-        </span>
-        <Link href="/" style={{ marginLeft: 'auto' }}>
-          ← Редактор бота
-        </Link>
-        <Link href="/content-plan">Контент-план →</Link>
+    <div className={styles.page}>
+      <header className={layout.header}>
+        <div>
+          <span className={styles.eyebrow}>РЕДАКТОР</span>
+          <span className={layout.title}>Видеомонтаж</span>
+        </div>
+        {processingCount > 0 && <PulseIndicator count={processingCount} label="рендеров в процессе" />}
+        <ModuleNav current="/video" />
       </header>
 
-      <div style={{ flex: 1, padding: 16, overflowY: 'auto', maxWidth: 700 }}>
-        <h4>Загрузка видео → шаблон → рендер</h4>
-        <p style={{ fontSize: 12, color: '#888' }}>
-          Реального файла нет — источник это просто ссылка (как ссылка на рилс в Модуле 3), настоящей загрузки/хранения видео не делаем.
-        </p>
-        <input value={sourceVideoUrl} onChange={(e) => setSourceVideoUrl(e.target.value)} style={{ width: '100%' }} />
-        <select value={template} onChange={(e) => setTemplate(e.target.value as VideoTemplate)} style={{ width: '100%', margin: '4px 0' }}>
-          {TEMPLATES.map((t) => (
-            <option key={t.value} value={t.value}>
-              {t.label}
-            </option>
-          ))}
-        </select>
-        <button onClick={submit}>Отправить на рендер</button>{' '}
-        <button onClick={tickNow}>Продвинуть рендер сейчас</button>
+      <main className={styles.main}>
+        {!apiKey && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
 
-        <h4 style={{ marginTop: 16 }}>Очередь рендеров</h4>
-        {jobs.map((j) => (
-          <div key={j.id} style={{ border: '1px solid #ddd', borderRadius: 6, padding: 10, marginBottom: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span>{j.template}</span>
-              <span>{STATUS_LABEL[j.status]}</span>
-            </div>
-            <div style={{ background: '#eee', borderRadius: 4, height: 8, marginTop: 6, overflow: 'hidden' }}>
-              <div
-                style={{
-                  width: `${j.progress_percent}%`,
-                  background: j.status === 'failed' ? '#c0392b' : '#1a9c4a',
-                  height: '100%',
-                }}
-              />
-            </div>
-            <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
-              {j.progress_percent}%{j.failure_reason && <> · причина: {j.failure_reason}</>}
-            </div>
-            {j.output_url && (
-              <a href={j.output_url} target="_blank" rel="noreferrer">
-                {j.output_url}
-              </a>
-            )}
+        <div className={styles.hero}>
+          <div>
+            <h1>Преврати исходник в ролик</h1>
+            <p className={styles.lead}>
+              Реального файла нет — источник это просто ссылка (как ссылка на рилс в Модуле 3), настоящей загрузки/хранения видео не делаем.
+            </p>
           </div>
-        ))}
-        {jobs.length === 0 && <p style={{ color: '#888' }}>Пока пусто</p>}
+        </div>
 
-        {status && <div style={{ fontSize: 12, color: '#555', marginTop: 8 }}>{status}</div>}
-      </div>
+        <div className={styles.composer}>
+          <div className={styles.composerHead}>
+            <span className={styles.eyebrow}>НОВЫЙ ПРОЕКТ</span>
+            <h2>Загрузи исходник</h2>
+          </div>
+
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Ссылка на видео</span>
+            <input
+              className={`${controls.input} ${styles.input}`}
+              placeholder="https://example.com/my-video.mp4"
+              value={sourceVideoUrl}
+              onChange={(e) => setSourceVideoUrl(e.target.value)}
+            />
+          </label>
+
+          <div className={styles.templateLabel}>
+            <span className={styles.fieldLabel}>Шаблон монтажа</span>
+          </div>
+          <div className={styles.templateGrid} role="radiogroup" aria-label="Шаблон монтажа">
+            {TEMPLATES.map((t) => (
+              <button
+                key={t.value}
+                type="button"
+                role="radio"
+                aria-checked={template === t.value}
+                className={`${styles.templateCard} ${template === t.value ? styles.templateCardActive : ''}`}
+                onClick={() => setTemplate(t.value)}
+              >
+                <span className={styles.templateLevel}>{t.level}</span>
+                <span className={styles.templateTitle}>{t.title}</span>
+                <span className={styles.templateDesc}>{t.description}</span>
+              </button>
+            ))}
+          </div>
+
+          <button
+            className={`${controls.buttonPrimary} ${styles.submitButton}`}
+            onClick={submit}
+            disabled={!sourceVideoUrl.trim()}
+          >
+            Запустить рендер
+          </button>
+        </div>
+
+        <section className={styles.queue}>
+          <div className={styles.queueHeader}>
+            <h2>Очередь рендеров</h2>
+            <span className={styles.queueCount}>{jobs.length} проектов</span>
+          </div>
+          <p className={styles.queueHint}>Без реальной очереди рендер продвигается по таймеру — эта кнопка не ждёт его.</p>
+          <button className={controls.buttonSecondary} onClick={tickNow}>
+            Продвинуть рендер сейчас
+          </button>
+
+          {jobs.length > 0 && (
+            <div className={styles.jobList}>
+              {jobs.map((j) => (
+                <div key={j.id} className={styles.jobCard} style={{ '--job-color': STATUS_COLOR[j.status] } as React.CSSProperties}>
+                  <div className={styles.jobHeader}>
+                    <span className={styles.jobTemplate}>{TEMPLATES.find((t) => t.value === j.template)?.title ?? j.template}</span>
+                    <span className={styles.statusBadge}>{STATUS_LABEL[j.status]}</span>
+                  </div>
+
+                  <div className={styles.progressRow}>
+                    <div className={styles.progressTrack}>
+                      <div className={styles.progressFill} style={{ width: `${j.progress_percent}%` }} />
+                    </div>
+                    <span className={styles.progressPercent}>{j.progress_percent}%</span>
+                  </div>
+
+                  {j.failure_reason && <div className={`${styles.jobMeta} ${styles.jobFailure}`}>Причина: {j.failure_reason}</div>}
+
+                  {j.output_url && (
+                    <div className={styles.jobOutputRow}>
+                      <a className={styles.jobOutputButton} href={j.output_url} download target="_blank" rel="noreferrer">
+                        Скачать видео
+                      </a>
+                      {/* output_url is a mock link (render.mock doesn't resolve to a
+                          real server) until a real Shotstack/Creatomate integration
+                          replaces videoRender.ts — flagging that here so clicking
+                          "Скачать" and hitting a DNS error isn't a surprise. */}
+                      <span className={styles.jobOutputHint}>мок-ссылка, реального файла ещё нет</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {jobs.length === 0 && (
+            <div className={styles.emptyState}>
+              <div>
+                <div className={styles.emptyIcon}>▶</div>
+                <h2>Готов к первому монтажу</h2>
+                <p>Добавь ссылку на видео, чтобы создать проект.</p>
+              </div>
+            </div>
+          )}
+
+          <StatusMessage>{status}</StatusMessage>
+        </section>
+      </main>
     </div>
   );
 }

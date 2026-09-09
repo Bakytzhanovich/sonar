@@ -42,13 +42,12 @@ export function analyzeReelMock(sourceUrl: string): ReelAnalysisFields {
     hook,
     duration_seconds: durationSeconds,
     on_screen_text: `[мок] экранный текст разбора для ${sourceUrl}`,
-    structure: JSON.stringify(structure),
+    structure,
   };
 }
 
 export function generateScriptMock(analysis: ReelAnalysis, niche: string): string {
-  const beats = JSON.parse(analysis.structure) as StructureBeat[];
-  const beatLines = beats.map((b) => `- ${b.label} (${b.timestampSeconds}с)`).join('\n');
+  const beatLines = analysis.structure.map((b) => `- ${b.label} (${b.timestampSeconds}с)`).join('\n');
 
   return [
     `[мок сценарий, адаптирован под нишу "${niche}"]`,

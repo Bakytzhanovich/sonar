@@ -1,5 +1,5 @@
-import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
+import { exec, isUniqueViolation, queryOne, type Db } from './db';
 import { getActiveTriggersForBot, hasRunToday, matchTrigger } from './triggerMatcher';
 import type {
   Flow,
@@ -36,7 +36,7 @@ export type RunFlowOutcome =
   | { status: 'failed'; triggerId: string; flowRunId?: string; failureReason: FlowRunFailureReason }
   | { status: 'completed'; triggerId: string; flowRunId?: string; sentMessages: SentMessage[] };
 
-export function runFlow(db: Database.Database, input: RunFlowInput): RunFlowOutcome {
+export async function runFlow(db: Db, input: RunFlowInput): Promise<RunFlowOutcome> {
   const now = input.now ?? new Date();
   const isTest = input.isTest ?? false;
 
@@ -45,28 +45,28 @@ export function runFlow(db: Database.Database, input: RunFlowInput): RunFlowOutc
   // exist for anyone who ever messaged the bot, not just people whose
   // message happened to match a keyword. Previously a non-matching
   // message touched the database at all — that made it invisible to CRM.
-  const subscriber = findOrCreateSubscriber(db, input.tenantId, input.botId, input.externalUserId, now, isTest);
+  const subscriber = await findOrCreateSubscriber(db, input.tenantId, input.botId, input.externalUserId, now, isTest);
   if (!isTest) {
-    logMessage(db, { tenantId: input.tenantId, botId: input.botId, subscriberId: subscriber.id, direction: 'in', content: input.messageText, now });
+    await logMessage(db, { tenantId: input.tenantId, botId: input.botId, subscriberId: subscriber.id, direction: 'in', content: input.messageText, now });
   }
 
-  const triggers = getActiveTriggersForBot(db, input.botId);
+  const triggers = await getActiveTriggersForBot(db, input.botId);
   const trigger = matchTrigger(triggers, input.messageText);
   if (!trigger) return { status: 'no_trigger_match' };
 
   const runDate = toCalendarDay(now);
-  if (!isTest && hasRunToday(db, trigger.id, subscriber.id, runDate)) {
+  if (!isTest && (await hasRunToday(db, trigger.id, subscriber.id, runDate))) {
     return { status: 'duplicate_today', triggerId: trigger.id };
   }
 
-  const flow = loadFlow(db, trigger.flow_id, trigger.flow_version);
+  const flow = await loadFlow(db, trigger.flow_id, trigger.flow_version);
   if (!flow) {
     return { status: 'failed', triggerId: trigger.id, failureReason: 'flow_not_found' };
   }
 
   const flowRunId = isTest ? undefined : randomUUID();
   if (flowRunId) {
-    const inserted = tryInsertFlowRun(db, {
+    const inserted = await tryInsertFlowRun(db, {
       id: flowRunId,
       tenantId: input.tenantId,
       botId: input.botId,
@@ -95,17 +95,23 @@ export function runFlow(db: Database.Database, input: RunFlowInput): RunFlowOutc
     } else if (node.data.fallbackChannel === 'comment_reply') {
       channel = 'comment_fallback';
     } else {
-      failFlowRun(db, flowRunId, now, 'outside_24h_window_no_fallback_configured');
+      await failFlowRun(db, flowRunId, now, 'outside_24h_window_no_fallback_configured');
       return { status: 'failed', triggerId: trigger.id, flowRunId, failureReason: 'outside_24h_window_no_fallback_configured' };
     }
 
     sentMessages.push({ channel, content: node.data.text });
 
     if (flowRunId) {
-      db.prepare(
-        `INSERT INTO mock_sent_messages (id, flow_run_id, subscriber_id, channel, content) VALUES (?, ?, ?, ?, ?)`
-      ).run(randomUUID(), flowRunId, subscriber.id, channel, node.data.text);
-      logMessage(db, { tenantId: input.tenantId, botId: input.botId, subscriberId: subscriber.id, direction: 'out', content: node.data.text, now });
+      await exec(
+        db,
+        `INSERT INTO mock_sent_messages (id, flow_run_id, subscriber_id, channel, content) VALUES (?, ?, ?, ?, ?)`,
+        randomUUID(),
+        flowRunId,
+        subscriber.id,
+        channel,
+        node.data.text
+      );
+      await logMessage(db, { tenantId: input.tenantId, botId: input.botId, subscriberId: subscriber.id, direction: 'out', content: node.data.text, now });
     }
 
     // Only a DM send opens/refreshes the 24h window — this trigger is
@@ -116,32 +122,33 @@ export function runFlow(db: Database.Database, input: RunFlowInput): RunFlowOutc
     if (channel === 'dm') {
       subscriber.last_interacted_at = now.toISOString();
       if (!isTest) {
-        db.prepare(`UPDATE subscribers SET last_interacted_at = ? WHERE id = ?`).run(now.toISOString(), subscriber.id);
+        await exec(db, `UPDATE subscribers SET last_interacted_at = ? WHERE id = ?`, now.toISOString(), subscriber.id);
       }
     }
   }
 
   if (flowRunId) {
-    db.prepare(`UPDATE flow_runs SET status = 'completed', completed_at = ? WHERE id = ?`).run(now.toISOString(), flowRunId);
+    await exec(db, `UPDATE flow_runs SET status = 'completed', completed_at = ? WHERE id = ?`, now.toISOString(), flowRunId);
   }
 
   return { status: 'completed', triggerId: trigger.id, flowRunId, sentMessages };
 }
 
-function findOrCreateSubscriber(
-  db: Database.Database,
+async function findOrCreateSubscriber(
+  db: Db,
   tenantId: string,
   botId: string,
   externalUserId: string,
   now: Date,
   isTest: boolean
-): Subscriber {
-  const existing = db
-    .prepare(
-      `SELECT id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at, lead_status
-       FROM subscribers WHERE bot_id = ? AND external_user_id = ?`
-    )
-    .get(botId, externalUserId) as Subscriber | undefined;
+): Promise<Subscriber> {
+  const existing = await queryOne<Subscriber>(
+    db,
+    `SELECT id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at, lead_status
+     FROM subscribers WHERE bot_id = ? AND external_user_id = ?`,
+    botId,
+    externalUserId
+  );
 
   if (existing) return existing;
 
@@ -159,10 +166,37 @@ function findOrCreateSubscriber(
   // in-memory subscriber is enough to evaluate the flow. Real subscriber
   // counts otherwise pick up phantom entries from someone hitting "test".
   if (!isTest) {
-    db.prepare(
-      `INSERT INTO subscribers (id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(fresh.id, fresh.tenant_id, fresh.bot_id, fresh.external_user_id, fresh.first_seen_at, fresh.last_interacted_at);
+    try {
+      await exec(
+        db,
+        `INSERT INTO subscribers (id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        fresh.id,
+        fresh.tenant_id,
+        fresh.bot_id,
+        fresh.external_user_id,
+        fresh.first_seen_at,
+        fresh.last_interacted_at
+      );
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+      // Lost the race to a concurrent delivery for the same
+      // (bot_id, external_user_id) — the SELECT above missed it because
+      // every await point here is a place another request can interleave
+      // now that this runs against Postgres instead of synchronous SQLite.
+      // The winner's row is authoritative (its last_interacted_at is real,
+      // ours is a synthetic guess), so fetch and use that instead of
+      // throwing the message away.
+      const winner = await queryOne<Subscriber>(
+        db,
+        `SELECT id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at, lead_status
+         FROM subscribers WHERE bot_id = ? AND external_user_id = ?`,
+        botId,
+        externalUserId
+      );
+      if (winner) return winner;
+      throw err;
+    }
   }
 
   return fresh;
@@ -181,19 +215,27 @@ interface LogMessageArgs {
 // mock_sent_messages (Module 1's per-flow-run execution record) — this
 // table is subscriber-centric and includes inbound content, which
 // mock_sent_messages never has.
-function logMessage(db: Database.Database, args: LogMessageArgs): void {
-  db.prepare(
-    `INSERT INTO messages (id, tenant_id, bot_id, subscriber_id, direction, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(randomUUID(), args.tenantId, args.botId, args.subscriberId, args.direction, args.content, args.now.toISOString());
+async function logMessage(db: Db, args: LogMessageArgs): Promise<void> {
+  await exec(
+    db,
+    `INSERT INTO messages (id, tenant_id, bot_id, subscriber_id, direction, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    randomUUID(),
+    args.tenantId,
+    args.botId,
+    args.subscriberId,
+    args.direction,
+    args.content,
+    args.now.toISOString()
+  );
 }
 
-function loadFlow(db: Database.Database, flowId: string, flowVersion: number): Flow | undefined {
-  const row = db
-    .prepare(`SELECT id, bot_id, version, definition, status, created_at FROM flows WHERE id = ? AND version = ?`)
-    .get(flowId, flowVersion) as (Omit<Flow, 'definition'> & { definition: string }) | undefined;
-
-  if (!row) return undefined;
-  return { ...row, definition: JSON.parse(row.definition) as FlowDefinition };
+async function loadFlow(db: Db, flowId: string, flowVersion: number): Promise<Flow | undefined> {
+  return queryOne<Flow>(
+    db,
+    `SELECT id, bot_id, version, definition, status, created_at FROM flows WHERE id = ? AND version = ?`,
+    flowId,
+    flowVersion
+  );
 }
 
 interface InsertFlowRunArgs {
@@ -210,29 +252,33 @@ interface InsertFlowRunArgs {
 // Returns false (instead of throwing) specifically on the UNIQUE(trigger_id,
 // subscriber_id, run_date) violation — that specific failure is an expected
 // outcome (a race with another delivery), not an error condition.
-function tryInsertFlowRun(db: Database.Database, args: InsertFlowRunArgs): boolean {
+async function tryInsertFlowRun(db: Db, args: InsertFlowRunArgs): Promise<boolean> {
   try {
-    db.prepare(
+    await exec(
+      db,
       `INSERT INTO flow_runs (id, tenant_id, bot_id, trigger_id, subscriber_id, flow_id, flow_version, run_date, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running')`
-    ).run(args.id, args.tenantId, args.botId, args.triggerId, args.subscriberId, args.flowId, args.flowVersion, args.runDate);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running')`,
+      args.id,
+      args.tenantId,
+      args.botId,
+      args.triggerId,
+      args.subscriberId,
+      args.flowId,
+      args.flowVersion,
+      args.runDate
+    );
     return true;
   } catch (err) {
-    if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
-      return false;
-    }
+    if (isUniqueViolation(err)) return false;
     throw err;
   }
 }
 
-function failFlowRun(
-  db: Database.Database,
-  flowRunId: string | undefined,
-  now: Date,
-  reason: FlowRunFailureReason
-): void {
+async function failFlowRun(db: Db, flowRunId: string | undefined, now: Date, reason: FlowRunFailureReason): Promise<void> {
   if (!flowRunId) return;
-  db.prepare(`UPDATE flow_runs SET status = 'failed', failure_reason = ?, completed_at = ? WHERE id = ?`).run(
+  await exec(
+    db,
+    `UPDATE flow_runs SET status = 'failed', failure_reason = ?, completed_at = ? WHERE id = ?`,
     reason,
     now.toISOString(),
     flowRunId

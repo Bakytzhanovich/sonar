@@ -1,0 +1,227 @@
+/* ---- Shell (header + sidebar): dark, same tokens as the other 6 screens */
+
+.header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.title {
+  font-weight: 600;
+  color: var(--foreground);
+  margin-right: 4px;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--background);
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  box-shadow: -12px 0 30px rgba(18, 22, 29, 0.04);
+}
+
+.setupNotice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.setupNotice p {
+  margin: 0;
+  color: var(--foreground-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* Same reasoning as Layout.module.css's .twoPane/.sidebar: a 320px fixed
+ * sidebar next to the canvas would leave almost nothing for the canvas on
+ * a phone-width viewport, so stack instead. The canvas keeps a real
+ * minimum height rather than collapsing when flex:1 has little row space
+ * left in a column layout. */
+@media (max-width: 720px) {
+  .body {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .canvasWrap {
+    min-height: 340px;
+  }
+
+  .sidebar {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    max-height: 60vh;
+  }
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--background);
+}
+
+.cardTitle {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--foreground-muted);
+}
+
+.cardTitle + .row { margin-top: 2px; }
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hint {
+  font-size: 11px;
+  color: var(--foreground-muted);
+  margin: 0;
+}
+
+.statusLine {
+  font-size: 12px;
+  color: var(--foreground-muted);
+  word-break: break-word;
+}
+
+.errorBox {
+  color: #b00020;
+}
+
+.activeBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.activeDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-glow);
+  flex-shrink: 0;
+}
+
+/* ---- Canvas: always light, category convention (ManyChat/ChatPlace) ---- */
+
+.canvasWrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  background: var(--canvas-bg);
+}
+
+.canvasWrap :global(.react-flow__edge-path) {
+  stroke: var(--canvas-edge);
+  stroke-width: 1.6;
+}
+
+.canvasWrap :global(.react-flow__edge.selected .react-flow__edge-path) {
+  stroke: var(--canvas-accent);
+  stroke-width: 2.2;
+}
+
+.canvasWrap :global(.react-flow__connection-path) {
+  stroke: var(--canvas-accent);
+}
+
+.node {
+  background: var(--canvas-node-bg);
+  border: 1px solid var(--canvas-node-border);
+  border-left: 4px solid var(--canvas-node-border);
+  /* Square left corners: a rounded corner under a 4px rail (vs. the 1px
+     border on the other three sides) leaves a visible seam where the two
+     widths meet the curve — reads as a shadow at a glance. Square it off. */
+  border-radius: 0 10px 10px 0;
+  min-width: 190px;
+  padding: 10px 12px;
+  font-family: system-ui, sans-serif;
+  color: var(--canvas-node-text);
+}
+
+.nodeTrigger {
+  border-left-color: var(--canvas-type-trigger);
+}
+
+.nodeAction {
+  border-left-color: var(--canvas-type-action);
+}
+
+.nodeSelected {
+  border-color: var(--canvas-accent);
+  outline: 2px solid var(--canvas-accent-glow);
+  outline-offset: 1px;
+}
+
+.nodeHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.nodeIcon {
+  display: inline-flex;
+  color: var(--canvas-node-text-muted);
+  flex-shrink: 0;
+}
+
+.nodeTrigger .nodeIcon {
+  color: var(--canvas-type-trigger);
+}
+
+.nodeAction .nodeIcon {
+  color: var(--canvas-type-action);
+}
+
+.nodeTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.nodeSubtitle {
+  font-size: 12px;
+  color: var(--canvas-node-text-muted);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.handle {
+  width: 8px;
+  height: 8px;
+  background: var(--canvas-node-border);
+  border: 1px solid var(--canvas-node-bg);
+}

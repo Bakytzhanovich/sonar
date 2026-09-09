@@ -1,0 +1,89 @@
+/* Real per-carousel/per-preset data made visible, not decoration: which
+ * brand colors a carousel actually used, and where you are in its slides. */
+
+.swatch {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.page { min-height: 100dvh; display: flex; flex-direction: column; background: var(--surface); color: var(--foreground); }
+.workspace { min-height: 0; }
+.sidebar { width: 320px !important; padding: 24px !important; background: var(--background); gap: 12px; }
+.main { padding: clamp(20px, 4vw, 44px) !important; background: var(--surface); }
+.panelHeading { display: flex; flex-direction: column; gap: 4px; }
+.panelHeading h2 { margin: 0; font-size: 17px; letter-spacing: -0.02em; }
+.panelEyebrow { color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: 0.12em; }
+.divider { height: 1px; margin: 10px 0; background: var(--border); }
+.fullButton { width: 100%; margin-top: 4px; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.fieldLabel { color: var(--foreground-muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.presetRow { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.presetRow select { flex: 1; }
+.colorRow { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.colorRow input[type='color'] { width: 36px; height: 32px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; max-width: 760px; margin: 0 auto 10px; }
+.helper { max-width: 760px; margin: 0 auto 14px; color: var(--foreground-muted); font-size: 12px; }
+.canvasStage { display: flex; justify-content: center; padding: clamp(20px, 5vw, 54px); border: 1px solid var(--border); border-radius: 16px; background: var(--background); }
+.canvasStage canvas { max-width: 100%; height: auto; border: 1px solid var(--border); }
+.emptyState { min-height: 440px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; border: 1px dashed var(--border); border-radius: 16px; background: var(--background); text-align: center; animation: rise 500ms ease both; }
+.emptyState h2 { margin: 8px 0 0; font-size: 24px; letter-spacing: -0.03em; }
+.emptyState p { max-width: 360px; margin: 8px 0 0; color: var(--foreground-muted); line-height: 1.5; }
+.emptyShape { display: grid; place-items: center; width: 64px; height: 64px; margin-bottom: 10px; border: 1px solid var(--accent); border-radius: 18px 18px 4px 18px; color: var(--accent); font-size: 28px; background: var(--accent-soft); }
+
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+.swatchHalf {
+  flex: 1;
+}
+
+.libraryItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px !important;
+  border: 1px solid var(--border);
+  border-radius: 10px !important;
+  margin-bottom: 6px;
+  background: var(--surface);
+  font-size: 12px;
+  cursor: pointer;
+  transition: transform 180ms ease, background 180ms ease, border-color 180ms ease;
+}
+
+.libraryItem:hover { transform: translateX(3px); background: var(--surface-hover); border-color: var(--accent); }
+.libraryItemActive { background: var(--accent-soft); border-color: var(--accent); }
+
+@media (max-width: 720px) {
+  .sidebar { max-height: none !important; }
+  .main { min-height: 520px; }
+  .emptyState { min-height: 360px; }
+}
+
+.libraryItemPrompt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.dotActive {
+  background: var(--accent);
+}

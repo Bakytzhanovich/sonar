@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import { createDb } from '../src/db';
+import { exec, queryOne, type Db } from '../src/db';
 import { createApp } from '../src/api';
 import { advanceRenderJobs } from '../src/videoRender';
+import { createTestDb, dropTestDb } from './dbTestHelper';
 
 async function createTenant(app: Express, email = 'video@example.com') {
   const res = await request(app).post('/api/tenants').send({ name: 'Blogger', email });
@@ -12,9 +13,15 @@ async function createTenant(app: Express, email = 'video@example.com') {
 
 describe('video edit job API', () => {
   let app: Express;
+  let db: Db;
 
-  beforeEach(() => {
-    app = createApp(createDb({ filePath: ':memory:' }));
+  beforeEach(async () => {
+    db = await createTestDb();
+    app = createApp(db);
+  });
+
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
   });
 
   it('creates a job at 0% progress, processing', async () => {
@@ -70,26 +77,31 @@ describe('video edit job API', () => {
 });
 
 describe('advanceRenderJobs (pure)', () => {
-  it('increments progress by 25 per tick and leaves non-processing jobs untouched', () => {
-    const db = createDb({ filePath: ':memory:' });
-    db.prepare(`INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`).run();
-    db.prepare(
+  let db: Db;
+
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
+  });
+
+  it('increments progress by 25 per tick and leaves non-processing jobs untouched', async () => {
+    db = await createTestDb();
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`);
+    await exec(
+      db,
       `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, status, progress_percent) VALUES ('j1', 't1', 'url', 'auto_crop_916', 'processing', 0)`
-    ).run();
-    db.prepare(
+    );
+    await exec(
+      db,
       `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, status, progress_percent) VALUES ('j2', 't1', 'url', 'auto_crop_916', 'completed', 100)`
-    ).run();
+    );
 
-    advanceRenderJobs(db);
+    await advanceRenderJobs(db);
 
-    const j1 = db.prepare(`SELECT progress_percent, status FROM video_edit_jobs WHERE id = 'j1'`).get() as {
-      progress_percent: number;
-      status: string;
-    };
-    const j2 = db.prepare(`SELECT progress_percent FROM video_edit_jobs WHERE id = 'j2'`).get() as { progress_percent: number };
+    const j1 = await queryOne<{ progress_percent: number; status: string }>(db, `SELECT progress_percent, status FROM video_edit_jobs WHERE id = 'j1'`);
+    const j2 = await queryOne<{ progress_percent: number }>(db, `SELECT progress_percent FROM video_edit_jobs WHERE id = 'j2'`);
 
-    expect(j1.progress_percent).toBe(25);
-    expect(j1.status).toBe('processing');
-    expect(j2.progress_percent).toBe(100); // untouched
+    expect(j1!.progress_percent).toBe(25);
+    expect(j1!.status).toBe('processing');
+    expect(j2!.progress_percent).toBe(100); // untouched
   });
 });

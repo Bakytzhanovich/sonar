@@ -1,0 +1,144 @@
+/* Shared by SignupView and LoginView — same tokens as the rest of the app,
+ * no new palette. A standalone centered card (like /landing), not the
+ * in-app shell (ModuleNav etc.) — there's no logged-in dashboard to nav
+ * into yet (that's the Billing/Platform-connection stages still to come). */
+
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6) var(--space-4);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.brand {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--foreground);
+  margin-bottom: var(--space-5);
+}
+
+.card {
+  width: 100%;
+  max-width: 360px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: var(--space-5);
+  background: var(--surface);
+}
+
+.title {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--foreground);
+  margin: 0 0 var(--space-4);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.label {
+  font-size: var(--text-sm);
+  color: var(--foreground-muted);
+}
+
+.input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: var(--text-base);
+}
+
+.passwordField {
+  position: relative;
+  display: flex;
+}
+
+.passwordField .input {
+  padding-right: 72px;
+}
+
+.toggleVisibility {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+
+.submit {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: var(--text-base);
+  margin-top: var(--space-2);
+}
+
+/* Reuses the same token as a failed post/render job elsewhere in the app —
+ * an auth error is the same kind of "this action did not succeed" state. */
+.error {
+  font-size: var(--text-sm);
+  color: var(--status-failed);
+  margin: 0;
+}
+
+.switchLine {
+  margin-top: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--foreground-muted);
+  text-align: center;
+}
+
+.switchLine a {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.hint {
+  font-size: var(--text-sm);
+  color: var(--foreground-muted);
+  margin: -6px 0 0;
+}
+
+/* ---- Post-signup/login confirmation — honest placeholder, not a fake
+ * dashboard: Billing and platform-connection are separate, not-yet-built
+ * stages, so this states plainly what comes next instead of pretending a
+ * real dashboard exists already. */
+.welcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.welcomeTitle {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.welcomeBody {
+  font-size: var(--text-base);
+  color: var(--foreground-muted);
+  line-height: 1.5;
+}
+
+.logoutButton {
+  margin-top: var(--space-3);
+  align-self: flex-start;
+}

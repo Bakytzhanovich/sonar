@@ -1,0 +1,46 @@
+/* The same header row was copy-pasted as an inline style object into 6
+ * screens verbatim — one shared class instead, on the spacing scale. */
+.header {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.title {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* Shared responsive shell for the two-pane (fixed-width sidebar + flexible
+ * main area) pattern every screen repeats. Desktop widths stay as each
+ * screen's own inline style (300/320/360px, they differ on purpose per
+ * screen's content); this only overrides that at narrow viewports, where a
+ * fixed-px sidebar would crush the main content instead of adapting.
+ */
+.twoPane {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+@media (max-width: 720px) {
+  .twoPane {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .sidebar {
+    width: 100% !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--border);
+    max-height: 60vh;
+  }
+
+  .main {
+    overflow-y: visible !important;
+  }
+}

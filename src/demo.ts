@@ -2,19 +2,24 @@
 // -> real (mock) webhook -> idempotent redelivery -> 24h window failure.
 // Runs against a real HTTP server (not in-process function calls) so it
 // exercises the same path an actual client would.
-import fs from 'node:fs';
-import path from 'node:path';
-import type Database from 'better-sqlite3';
+import { Pool } from 'pg';
 import { createApp } from './api';
-import { createDb } from './db';
+import { createDb, defaultConnectionString, exec, withSearchPath, type Db } from './db';
 
-const DEMO_DB_PATH = path.join(process.cwd(), 'data', 'demo.db');
+const BASE_CONNECTION_STRING = defaultConnectionString();
+const DEMO_SCHEMA = 'demo';
 
 async function main() {
   // Fresh DB every run — a demo should be repeatable, not fail on the
   // second run because of a UNIQUE(email) collision from the first.
-  fs.rmSync(DEMO_DB_PATH, { force: true });
-  const db = createDb({ filePath: DEMO_DB_PATH });
+  // Postgres has no ":memory:"/delete-the-file equivalent, so this drops
+  // and recreates a dedicated "demo" schema instead (a namespace within
+  // the same database, not a second physical database to provision), then
+  // createDb() applies schema.sql against it exactly like a first run.
+  await resetDemoSchema();
+  const db = await createDb({
+    connectionString: withSearchPath(BASE_CONNECTION_STRING, DEMO_SCHEMA),
+  });
   const app = createApp(db);
 
   const server = app.listen(0);
@@ -25,10 +30,17 @@ async function main() {
     await runScenario(baseUrl, db);
   } finally {
     server.close();
+    await db.end();
   }
 }
 
-async function runScenario(baseUrl: string, db: Database.Database) {
+async function resetDemoSchema(): Promise<void> {
+  const pool = new Pool({ connectionString: BASE_CONNECTION_STRING });
+  await pool.query(`DROP SCHEMA IF EXISTS "${DEMO_SCHEMA}" CASCADE; CREATE SCHEMA "${DEMO_SCHEMA}";`);
+  await pool.end();
+}
+
+async function runScenario(baseUrl: string, db: Db) {
   section('1. Sign up a tenant');
   const { tenant, apiKey } = await post(baseUrl, '/api/tenants', {
     name: 'Aigerim Blogger',
@@ -107,7 +119,7 @@ async function runScenario(baseUrl: string, db: Database.Database) {
   log(`second delivery result: ${JSON.stringify(redelivered)}`);
 
   section('8. 25 hours later, same subscriber trips a *different* trigger — DM window closed, no fallback configured');
-  backdateSubscriberOutsideWindow(db, 'ig_user_42');
+  await backdateSubscriberOutsideWindow(db, 'ig_user_42');
   const stale = await post(baseUrl, '/webhooks/mock/instagram', {
     eventId: 'evt-002',
     externalAccountId: 'ig-aigerim',
@@ -125,9 +137,9 @@ async function runScenario(baseUrl: string, db: Database.Database) {
 // since this script has no way to fast-forward a real clock. There is
 // deliberately no API endpoint that does this — it would make no sense
 // outside of a demo/test context.
-function backdateSubscriberOutsideWindow(db: Database.Database, externalUserId: string) {
+async function backdateSubscriberOutsideWindow(db: Db, externalUserId: string): Promise<void> {
   const staleTimestamp = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
-  db.prepare(`UPDATE subscribers SET last_interacted_at = ? WHERE external_user_id = ?`).run(staleTimestamp, externalUserId);
+  await exec(db, `UPDATE subscribers SET last_interacted_at = ? WHERE external_user_id = ?`, staleTimestamp, externalUserId);
 }
 
 async function post(baseUrl: string, urlPath: string, body: unknown, apiKey?: string): Promise<any> {

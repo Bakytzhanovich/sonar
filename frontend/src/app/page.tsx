@@ -1,13 +1,33 @@
-'use client';
+import type { Metadata, Viewport } from 'next';
+import LandingView from '@/components/LandingView';
 
-import dynamic from 'next/dynamic';
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#0b0f14' },
+  ],
+};
 
-// The editor generates ids client-side (crypto.randomUUID) and has no
-// SEO value — server-rendering it would just produce output that can
-// never match what the client mounts, so it's disabled outright rather
-// than patched around.
-const FlowEditor = dynamic(() => import('@/components/FlowEditor'), { ssr: false });
+export const metadata: Metadata = {
+  title: 'Sonar — из диалога в CRM и контент-план',
+  description: 'Пройдите демо-цикл Sonar: сценарий, тестовый диалог, CRM и rule-based приоритет контента. Без подключения соцсетей, карты и автоподписки.',
+  alternates: {
+    canonical: '/',
+  },
+  openGraph: {
+    title: 'Sonar — из диалога в CRM и контент-план',
+    description: 'Четыре шага от демо-диалога до объяснимого приоритета контента.',
+    images: ['/hero-content-plan.png'],
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Sonar — из диалога в CRM и контент-план',
+    description: 'Демо-сценарий, CRM и объяснимый приоритет контента в одной цепочке данных.',
+    images: ['/hero-content-plan.png'],
+  },
+};
 
 export default function Page() {
-  return <FlowEditor />;
+  return <LandingView />;
 }

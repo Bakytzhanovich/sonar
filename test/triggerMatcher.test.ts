@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { createDb } from '../src/db';
+import { describe, it, expect, afterEach } from 'vitest';
+import { exec, isUniqueViolation, type Db } from '../src/db';
 import { matchTrigger, hasRunToday, normalizeKeyword } from '../src/triggerMatcher';
 import type { Trigger } from '../src/types';
+import { createTestDb, dropTestDb } from './dbTestHelper';
 
 function makeTrigger(overrides: Partial<Trigger> = {}): Trigger {
   return {
@@ -53,56 +54,55 @@ describe('matchTrigger', () => {
 });
 
 describe('hasRunToday', () => {
-  it('is false with no matching flow_run, true once one exists', () => {
-    const db = createDb({ filePath: ':memory:' });
+  let db: Db;
 
-    db.prepare(`INSERT INTO tenants (id, name, email) VALUES ('t1', 'Tenant', 't@example.com')`).run();
-    db.prepare(
-      `INSERT INTO bots (id, tenant_id, name, external_account_id) VALUES ('bot-1', 't1', 'Bot', 'ig-1')`
-    ).run();
-    db.prepare(
-      `INSERT INTO flows (id, bot_id, version, definition, status) VALUES ('flow-1', 'bot-1', 1, '{}', 'published')`
-    ).run();
-    db.prepare(
-      `INSERT INTO triggers (id, bot_id, flow_id, flow_version, keyword) VALUES ('trigger-1', 'bot-1', 'flow-1', 1, 'цена')`
-    ).run();
-    db.prepare(
-      `INSERT INTO subscribers (id, tenant_id, bot_id, external_user_id) VALUES ('sub-1', 't1', 'bot-1', 'ig-user-1')`
-    ).run();
-
-    expect(hasRunToday(db, 'trigger-1', 'sub-1', '2026-08-20')).toBe(false);
-
-    db.prepare(
-      `INSERT INTO flow_runs (id, tenant_id, bot_id, trigger_id, subscriber_id, flow_id, flow_version, run_date, status)
-       VALUES ('run-1', 't1', 'bot-1', 'trigger-1', 'sub-1', 'flow-1', 1, '2026-08-20', 'completed')`
-    ).run();
-
-    expect(hasRunToday(db, 'trigger-1', 'sub-1', '2026-08-20')).toBe(true);
-    expect(hasRunToday(db, 'trigger-1', 'sub-1', '2026-08-21')).toBe(false);
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
   });
 
-  it('enforces one run per trigger+subscriber+day at the DB level', () => {
-    const db = createDb({ filePath: ':memory:' });
-    db.prepare(`INSERT INTO tenants (id, name, email) VALUES ('t1', 'Tenant', 't@example.com')`).run();
-    db.prepare(
-      `INSERT INTO bots (id, tenant_id, name, external_account_id) VALUES ('bot-1', 't1', 'Bot', 'ig-1')`
-    ).run();
-    db.prepare(
-      `INSERT INTO flows (id, bot_id, version, definition, status) VALUES ('flow-1', 'bot-1', 1, '{}', 'published')`
-    ).run();
-    db.prepare(
-      `INSERT INTO triggers (id, bot_id, flow_id, flow_version, keyword) VALUES ('trigger-1', 'bot-1', 'flow-1', 1, 'цена')`
-    ).run();
-    db.prepare(
-      `INSERT INTO subscribers (id, tenant_id, bot_id, external_user_id) VALUES ('sub-1', 't1', 'bot-1', 'ig-user-1')`
-    ).run();
+  it('is false with no matching flow_run, true once one exists', async () => {
+    db = await createTestDb();
 
-    const insertRun = db.prepare(
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES ('t1', 'Tenant', 't@example.com')`);
+    await exec(db, `INSERT INTO bots (id, tenant_id, name, external_account_id) VALUES ('bot-1', 't1', 'Bot', 'ig-1')`);
+    await exec(db, `INSERT INTO flows (id, bot_id, version, definition, status) VALUES ('flow-1', 'bot-1', 1, '{}', 'published')`);
+    await exec(db, `INSERT INTO triggers (id, bot_id, flow_id, flow_version, keyword) VALUES ('trigger-1', 'bot-1', 'flow-1', 1, 'цена')`);
+    await exec(db, `INSERT INTO subscribers (id, tenant_id, bot_id, external_user_id) VALUES ('sub-1', 't1', 'bot-1', 'ig-user-1')`);
+
+    expect(await hasRunToday(db, 'trigger-1', 'sub-1', '2026-08-20')).toBe(false);
+
+    await exec(
+      db,
       `INSERT INTO flow_runs (id, tenant_id, bot_id, trigger_id, subscriber_id, flow_id, flow_version, run_date, status)
-       VALUES (?, 't1', 'bot-1', 'trigger-1', 'sub-1', 'flow-1', 1, '2026-08-20', 'completed')`
+       VALUES ('run-1', 't1', 'bot-1', 'trigger-1', 'sub-1', 'flow-1', 1, '2026-08-20', 'completed')`
     );
 
-    insertRun.run('run-1');
-    expect(() => insertRun.run('run-2')).toThrow(/UNIQUE constraint failed/);
+    expect(await hasRunToday(db, 'trigger-1', 'sub-1', '2026-08-20')).toBe(true);
+    expect(await hasRunToday(db, 'trigger-1', 'sub-1', '2026-08-21')).toBe(false);
+  });
+
+  it('enforces one run per trigger+subscriber+day at the DB level', async () => {
+    db = await createTestDb();
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES ('t1', 'Tenant', 't@example.com')`);
+    await exec(db, `INSERT INTO bots (id, tenant_id, name, external_account_id) VALUES ('bot-1', 't1', 'Bot', 'ig-1')`);
+    await exec(db, `INSERT INTO flows (id, bot_id, version, definition, status) VALUES ('flow-1', 'bot-1', 1, '{}', 'published')`);
+    await exec(db, `INSERT INTO triggers (id, bot_id, flow_id, flow_version, keyword) VALUES ('trigger-1', 'bot-1', 'flow-1', 1, 'цена')`);
+    await exec(db, `INSERT INTO subscribers (id, tenant_id, bot_id, external_user_id) VALUES ('sub-1', 't1', 'bot-1', 'ig-user-1')`);
+
+    const insertRun = (id: string) =>
+      exec(
+        db,
+        `INSERT INTO flow_runs (id, tenant_id, bot_id, trigger_id, subscriber_id, flow_id, flow_version, run_date, status)
+         VALUES (?, 't1', 'bot-1', 'trigger-1', 'sub-1', 'flow-1', 1, '2026-08-20', 'completed')`,
+        id
+      );
+
+    await insertRun('run-1');
+    try {
+      await insertRun('run-2');
+      expect.unreachable('expected a unique_violation on the second insert');
+    } catch (err) {
+      expect(isUniqueViolation(err)).toBe(true);
+    }
   });
 });

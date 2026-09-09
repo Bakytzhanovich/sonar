@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import { createDb } from '../src/db';
+import { exec, type Db } from '../src/db';
 import { createApp } from '../src/api';
 import { notify, listNotifications } from '../src/notifications';
 import { publishDuePosts } from '../src/publisher';
 import { advanceRenderJobs } from '../src/videoRender';
-import type Database from 'better-sqlite3';
+import { createTestDb, dropTestDb } from './dbTestHelper';
 
 async function createTenant(app: Express, email = 'push@example.com') {
   const res = await request(app).post('/api/tenants').send({ name: 'Blogger', email });
@@ -14,63 +14,75 @@ async function createTenant(app: Express, email = 'push@example.com') {
 }
 
 describe('notify / listNotifications (pure)', () => {
-  it('writes an in-app notification row even with no push subscriptions (the required fallback)', () => {
-    const db = createDb({ filePath: ':memory:' });
-    db.prepare(`INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`).run();
+  let db: Db;
 
-    notify(db, 't1', 'post_published', 'Тестовое сообщение', 'related-1');
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
+  });
 
-    const notifications = listNotifications(db, 't1', false);
+  it('writes an in-app notification row even with no push subscriptions (the required fallback)', async () => {
+    db = await createTestDb();
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`);
+
+    await notify(db, 't1', 'post_published', 'Тестовое сообщение', 'related-1');
+
+    const notifications = await listNotifications(db, 't1', false);
     expect(notifications).toHaveLength(1);
     expect(notifications[0]).toMatchObject({ type: 'post_published', message: 'Тестовое сообщение', related_id: 'related-1', is_read: false });
   });
 
-  it('unreadOnly filters out read notifications', () => {
-    const db = createDb({ filePath: ':memory:' });
-    db.prepare(`INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`).run();
-    notify(db, 't1', 'post_published', 'A');
-    notify(db, 't1', 'post_failed', 'B');
+  it('unreadOnly filters out read notifications', async () => {
+    db = await createTestDb();
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`);
+    await notify(db, 't1', 'post_published', 'A');
+    await notify(db, 't1', 'post_failed', 'B');
 
-    const all = listNotifications(db, 't1', false);
-    db.prepare(`UPDATE notifications SET is_read = 1 WHERE id = ?`).run(all[0].id);
+    const all = await listNotifications(db, 't1', false);
+    await exec(db, `UPDATE notifications SET is_read = true WHERE id = ?`, all[0].id);
 
-    expect(listNotifications(db, 't1', true)).toHaveLength(1);
-    expect(listNotifications(db, 't1', false)).toHaveLength(2);
+    expect(await listNotifications(db, 't1', true)).toHaveLength(1);
+    expect(await listNotifications(db, 't1', false)).toHaveLength(2);
   });
 });
 
 describe('notifications fire from real publisher/render flows', () => {
-  let db: Database.Database;
+  let db: Db;
 
-  beforeEach(() => {
-    db = createDb({ filePath: ':memory:' });
-    db.prepare(`INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`).run();
+  beforeEach(async () => {
+    db = await createTestDb();
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`);
   });
 
-  it('publishDuePosts notifies whichever way the post resolves', () => {
-    db.prepare(
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
+  });
+
+  it('publishDuePosts notifies whichever way the post resolves', async () => {
+    await exec(
+      db,
       `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, status) VALUES ('post-success', 't1', 'instagram', 'x', '2020-01-01T00:00:00.000Z', 'scheduled')`
-    ).run();
+    );
 
-    publishDuePosts(db, new Date('2026-01-01T00:00:00.000Z'));
+    await publishDuePosts(db, new Date('2026-01-01T00:00:00.000Z'));
 
-    const notifications = listNotifications(db, 't1', false);
+    const notifications = await listNotifications(db, 't1', false);
     expect(notifications).toHaveLength(1);
     expect(['post_published', 'post_failed']).toContain(notifications[0].type);
   });
 
-  it('advanceRenderJobs notifies once a job resolves, not on intermediate progress ticks', () => {
-    db.prepare(
+  it('advanceRenderJobs notifies once a job resolves, not on intermediate progress ticks', async () => {
+    await exec(
+      db,
       `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, status, progress_percent) VALUES ('job-1', 't1', 'url', 'auto_crop_916', 'processing', 0)`
-    ).run();
+    );
 
-    advanceRenderJobs(db); // 0 -> 25%, not resolved yet
-    expect(listNotifications(db, 't1', false)).toHaveLength(0);
+    await advanceRenderJobs(db); // 0 -> 25%, not resolved yet
+    expect(await listNotifications(db, 't1', false)).toHaveLength(0);
 
-    advanceRenderJobs(db); // 25 -> 50
-    advanceRenderJobs(db); // 50 -> 75
-    advanceRenderJobs(db); // 75 -> 100, resolves
-    const notifications = listNotifications(db, 't1', false);
+    await advanceRenderJobs(db); // 25 -> 50
+    await advanceRenderJobs(db); // 50 -> 75
+    await advanceRenderJobs(db); // 75 -> 100, resolves
+    const notifications = await listNotifications(db, 't1', false);
     expect(notifications).toHaveLength(1);
     expect(['video_completed', 'video_failed']).toContain(notifications[0].type);
   });
@@ -78,9 +90,15 @@ describe('notifications fire from real publisher/render flows', () => {
 
 describe('push + notifications API', () => {
   let app: Express;
+  let db: Db;
 
-  beforeEach(() => {
-    app = createApp(createDb({ filePath: ':memory:' }));
+  beforeEach(async () => {
+    db = await createTestDb();
+    app = createApp(db);
+  });
+
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
   });
 
   it('returns a VAPID public key', async () => {

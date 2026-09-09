@@ -34,6 +34,52 @@ export interface FlowDefinition {
   edges: FlowDefinitionEdge[];
 }
 
+export interface Bot {
+  id: string;
+  tenant_id: string;
+  name: string;
+  platform: string;
+  external_account_id: string | null;
+  created_at: string;
+}
+
+export interface PublishedFlow {
+  id: string;
+  bot_id: string;
+  version: number;
+  definition: FlowDefinition;
+  status: 'published';
+  created_at: string;
+}
+
+export interface ActiveTrigger {
+  id: string;
+  bot_id: string;
+  flow_id: string;
+  flow_version: number;
+  keyword: string;
+  match_type: MatchType;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface SentMessage {
+  channel: 'dm' | 'comment_fallback';
+  content: string;
+}
+
+export type RunFlowOutcome =
+  | { status: 'no_trigger_match' }
+  | { status: 'duplicate_today'; triggerId: string }
+  | { status: 'failed'; triggerId: string; flowRunId?: string; failureReason: string }
+  | { status: 'completed'; triggerId: string; flowRunId?: string; sentMessages: SentMessage[] };
+
+export interface DemoWorkspace {
+  bot: Bot;
+  flow: PublishedFlow;
+  trigger: ActiveTrigger;
+}
+
 export type LeadStatus = 'new' | 'in_progress' | 'client';
 
 export interface Tag {
@@ -113,7 +159,7 @@ export interface CarouselSlide {
 }
 
 export type PostingPlatform = 'instagram' | 'tiktok' | 'youtube_shorts';
-export type ScheduledPostStatus = 'pending_approval' | 'scheduled' | 'published' | 'failed' | 'rejected';
+export type ScheduledPostStatus = 'pending_approval' | 'scheduled' | 'publishing' | 'published' | 'failed' | 'rejected';
 
 export interface ScheduledPost {
   id: string;
@@ -203,8 +249,23 @@ export const api = {
   createTenant: (config: ApiConfig, name: string, email: string) =>
     apiRequest(config, 'POST', '/api/tenants', { name, email }),
 
+  // ---- Auth (Логика Б) ----------------------------------------------------
+  signup: (config: ApiConfig, email: string, password: string) => apiRequest(config, 'POST', '/api/auth/signup', { email, password }),
+
+  login: (config: ApiConfig, email: string, password: string) => apiRequest(config, 'POST', '/api/auth/login', { email, password }),
+
+  // config.apiKey carries the session JWT here — apiRequest just sends
+  // whatever it's given as a Bearer token, so no separate request helper
+  // is needed for the two different token kinds.
+  me: (config: ApiConfig) => apiRequest(config, 'GET', '/api/auth/me'),
+
   createBot: (config: ApiConfig, name: string, externalAccountId: string) =>
     apiRequest(config, 'POST', '/api/bots', { name, externalAccountId }),
+
+  listBots: (config: ApiConfig) => apiRequest(config, 'GET', '/api/bots') as Promise<{ bots: Bot[] }>,
+
+  createDemoWorkspace: (config: ApiConfig, keyword: string, replyText: string) =>
+    apiRequest(config, 'POST', '/api/onboarding/demo-workspace', { keyword, replyText }) as Promise<DemoWorkspace>,
 
   listFlows: (config: ApiConfig, botId: string) => apiRequest(config, 'GET', `/api/bots/${botId}/flows`),
 
@@ -227,7 +288,13 @@ export const api = {
     apiRequest(config, 'POST', `/api/triggers/${triggerId}/rollback`, { toVersion }),
 
   testRun: (config: ApiConfig, botId: string, body: { externalUserId: string; messageText: string }) =>
-    apiRequest(config, 'POST', `/api/bots/${botId}/test`, body),
+    apiRequest(config, 'POST', `/api/bots/${botId}/test`, body) as Promise<{ outcome: RunFlowOutcome }>,
+
+  createDemoInteraction: (config: ApiConfig, botId: string, messageText: string) =>
+    apiRequest(config, 'POST', `/api/bots/${botId}/demo-interactions`, { messageText }) as Promise<{
+      subscriberId: string;
+      outcome: RunFlowOutcome;
+    }>,
 
   dashboard: (config: ApiConfig, botId: string) => apiRequest(config, 'GET', `/api/bots/${botId}/dashboard`),
 

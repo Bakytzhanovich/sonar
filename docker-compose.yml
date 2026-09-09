@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+      POSTGRES_DB: sonar
+    ports:
+      - '5435:5432'
+    volumes:
+      - sonar-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  sonar-postgres-data:

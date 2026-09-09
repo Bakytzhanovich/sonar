@@ -1,9 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { api, type GeneratedScript, type ReelAnalysis } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import ModuleNav from './ModuleNav';
+import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
+import StatusMessage from './StatusMessage';
+import controls from './Controls.module.css';
+import styles from './ReelsView.module.css';
+import layout from './Layout.module.css';
 
 export default function ReelsView() {
   const [devConfig] = useDevConfig();
@@ -82,105 +87,100 @@ export default function ReelsView() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'system-ui, sans-serif' }}>
-      <header style={{ padding: 12, borderBottom: '1px solid #ddd', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <strong>Sonar — Анализ рилсов (мок)</strong>
-        <span style={{ fontSize: 11, color: '#888' }}>
-          {apiKey ? '' : 'Нет apiKey — зайди через редактор бота и нажми "Быстрый старт"'}
-        </span>
-        <Link href="/" style={{ marginLeft: 'auto' }}>
-          ← Редактор бота
-        </Link>
-        <Link href="/crm">CRM →</Link>
-        <Link href="/carousels">Карусели →</Link>
-        <Link href="/scheduler">Автопостинг →</Link>
-        <Link href="/content-plan">Контент-план →</Link>
-        <Link href="/video">Видео →</Link>
+    <div className={styles.page}>
+      <header className={layout.header}>
+        <div><span className={styles.eyebrow}>ИССЛЕДОВАНИЯ</span><span className={layout.title}>Анализ рилсов</span></div>
+        <ModuleNav current="/reels" />
       </header>
 
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <div style={{ width: 320, borderRight: '1px solid #ddd', padding: 12, overflowY: 'auto' }}>
-          <h4>Вставьте ссылку</h4>
-          <input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} style={{ width: '100%' }} />
-          <button onClick={analyze} style={{ marginTop: 6 }}>
+      <div className={layout.twoPane}>
+        <div className={`${layout.sidebar} ${styles.sidebar}`}>
+          {!apiKey && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
+          <div className={styles.panelHeading}><span className={styles.eyebrow}>НОВЫЙ РАЗБОР</span><h2>Источник видео</h2></div>
+          <input className={controls.input} value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} style={{ width: '100%' }} />
+          <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={analyze}>
             Разобрать
           </button>
 
-          <h4 style={{ marginTop: 16 }}>Библиотека</h4>
+          <div className={styles.divider} /><div className={styles.panelHeading}><span className={styles.eyebrow}>БИБЛИОТЕКА</span><h2>Последние разборы</h2></div>
           {analyses.map((a) => (
             <div
               key={a.id}
               onClick={() => selectAnalysis(a.id)}
-              style={{
-                cursor: 'pointer',
-                padding: 6,
-                border: '1px solid #ccc',
-                borderRadius: 4,
-                marginBottom: 6,
-                background: a.id === selectedId ? '#eef' : undefined,
-              }}
+              className={`${styles.analysisItem} ${a.id === selectedId ? styles.analysisItemActive : ''}`}
             >
-              <div style={{ fontSize: 12, wordBreak: 'break-all' }}>{a.source_url}</div>
-              <div style={{ fontSize: 11, color: '#666' }}>{a.hook}</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
+                <div style={{ fontSize: 12, wordBreak: 'break-all' }}>{a.source_url}</div>
+                <span className={styles.durationBadge}>{a.duration_seconds}с</span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--foreground-muted)' }}>{a.hook}</div>
             </div>
           ))}
 
-          <h4 style={{ marginTop: 16 }}>Поиск сценариев по нише</h4>
-          <input value={nicheSearch} onChange={(e) => setNicheSearch(e.target.value)} placeholder="напр. фитнес" style={{ width: '70%' }} />
-          <button onClick={searchByNiche}>Найти</button>
+          <div className={styles.divider} /><div className={styles.panelHeading}><span className={styles.eyebrow}>БИБЛИОТЕКА СЦЕНАРИЕВ</span><h2>Поиск по нише</h2></div>
+          <div className={styles.searchRow}>
+            <input className={controls.input} value={nicheSearch} onChange={(e) => setNicheSearch(e.target.value)} placeholder="напр. фитнес" />
+            <button className={controls.buttonSecondary} onClick={searchByNiche}>Найти</button>
+          </div>
           {searchResults && (
-            <ul style={{ fontSize: 12 }}>
+            <div className={styles.searchResults}>
               {searchResults.map((s) => (
-                <li key={s.id}>{s.script_text.slice(0, 60)}…</li>
+                <div key={s.id} className={styles.searchResultItem}>{s.script_text.slice(0, 60)}…</div>
               ))}
-              {searchResults.length === 0 && <li style={{ color: '#888' }}>Ничего не найдено</li>}
-            </ul>
+              {searchResults.length === 0 && <div className={styles.searchResultEmpty}>Ничего не найдено</div>}
+            </div>
           )}
         </div>
 
-        <div style={{ flex: 1, padding: 12, overflowY: 'auto' }}>
+        <div className={`${layout.main} ${styles.main}`}>
           {!selected ? (
-            <p>Выбери разбор из библиотеки слева или создай новый.</p>
+            <div className={styles.emptyState}><div className={styles.emptyIcon}>◌</div><span className={styles.eyebrow}>АНАЛИЗ КОНТЕНТА</span><h2>Найди повторяемую механику</h2><p>Добавь рилс, чтобы разобрать хук, структуру и собрать сценарий под свою нишу.</p></div>
           ) : (
             <>
-              <h3>Карточка анализа</h3>
-              <p style={{ fontSize: 12, color: '#888' }}>{selected.source_url}</p>
-              <p>
-                <strong>Хук:</strong> {selected.hook}
-              </p>
-              <p>
-                <strong>Длительность:</strong> {selected.duration_seconds}с
-              </p>
-              <p>
-                <strong>Текст на экране:</strong> {selected.on_screen_text}
-              </p>
+              <div className={styles.analysisHeader}><div><span className={styles.eyebrow}>РАЗБОР ЗАВЕРШЕН</span><h1>Карточка анализа</h1><p>{selected.source_url}</p></div><span className={styles.durationBadge}>{selected.duration_seconds}с</span></div>
+              <div className={styles.signalGrid}><div className={styles.signalCard}><span>ХУК</span><strong>{selected.hook}</strong></div><div className={styles.signalCard}><span>ТЕКСТ НА ЭКРАНЕ</span><strong>{selected.on_screen_text}</strong></div></div>
 
-              <h4>Структура (чек-лист)</h4>
-              <ul>
+              <h3 className={styles.sectionTitle}>Структура ролика</h3>
+              {/* Real position in time, not decoration — each beat's
+                  timestampSeconds plotted against the reel's actual
+                  duration_seconds. */}
+              <div className={styles.timeline}>
                 {selected.structure.map((beat, i) => (
-                  <li key={i}>
-                    <label>
-                      <input type="checkbox" /> {beat.label} — {beat.timestampSeconds}с
-                    </label>
-                  </li>
+                  <span
+                    key={i}
+                    className={styles.timelineMarker}
+                    style={{ left: `${Math.min(100, (beat.timestampSeconds / selected.duration_seconds) * 100)}%` }}
+                    title={`${beat.label} — ${beat.timestampSeconds}с`}
+                  />
                 ))}
-              </ul>
+              </div>
+              <div className={styles.beatList}>
+                {selected.structure.map((beat, i) => (
+                  <label key={i} className={styles.beatItem}>
+                    <input type="checkbox" /> {beat.label} — {beat.timestampSeconds}с
+                  </label>
+                ))}
+              </div>
 
-              <h4>Сгенерировать сценарий под нишу</h4>
-              <input value={niche} onChange={(e) => setNiche(e.target.value)} style={{ width: 200 }} />
-              <button onClick={generate}>Сгенерировать сценарий</button>
-
-              {scripts.map((s) => (
-                <div key={s.id} style={{ marginTop: 12 }}>
-                  <div style={{ fontSize: 12, color: '#888' }}>ниша: {s.niche}</div>
-                  {/* Editable per the ТЗ ("редактируемый текстовый блок") — edits are local only, not persisted back. */}
-                  <textarea defaultValue={s.script_text} rows={10} style={{ width: '100%' }} />
+              <div className={styles.scriptPanel}>
+                <h3>Адаптировать под нишу</h3>
+                <div className={styles.nicheRow}>
+                  <input className={controls.input} value={niche} onChange={(e) => setNiche(e.target.value)} />
+                  <button className={controls.buttonPrimary} onClick={generate}>Сгенерировать сценарий</button>
                 </div>
-              ))}
+
+                {scripts.map((s) => (
+                  <div key={s.id} className={styles.scriptCard}>
+                    <span className={styles.nicheBadge}>ниша: {s.niche}</span>
+                    {/* Editable per the ТЗ ("редактируемый текстовый блок") — edits are local only, not persisted back. */}
+                    <textarea className={`${controls.input} ${styles.scriptTextarea}`} defaultValue={s.script_text} rows={10} />
+                  </div>
+                ))}
+              </div>
             </>
           )}
 
-          {status && <div style={{ fontSize: 12, color: '#555', marginTop: 8 }}>{status}</div>}
+          <StatusMessage>{status}</StatusMessage>
         </div>
       </div>
     </div>

@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import { createDb } from '../src/db';
+import { exec, queryOne, type Db } from '../src/db';
 import { createApp } from '../src/api';
 import { mockPublish, publishDuePosts } from '../src/publisher';
+import { createTestDb, dropTestDb } from './dbTestHelper';
 
 async function createTenant(app: Express, email = 'posts@example.com') {
   const res = await request(app).post('/api/tenants').send({ name: 'Blogger', email });
@@ -26,9 +27,15 @@ describe('mockPublish (pure)', () => {
 
 describe('scheduled posts API + publishDuePosts', () => {
   let app: Express;
+  let db: Db;
 
-  beforeEach(() => {
-    app = createApp(createDb({ filePath: ':memory:' }));
+  beforeEach(async () => {
+    db = await createTestDb();
+    app = createApp(db);
+  });
+
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
   });
 
   it('creates a post without approval as immediately scheduled', async () => {
@@ -93,23 +100,62 @@ describe('scheduled posts API + publishDuePosts', () => {
     expect(fetched.body.post.status).toBe('rejected');
   });
 
-  it('publishDuePosts only touches scheduled posts whose time has come, leaving future ones alone', () => {
-    const db = createDb({ filePath: ':memory:' });
-    db.prepare(`INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`).run();
+  it('under true concurrency, many simultaneous approve/reject calls on the same post let exactly one through', async () => {
+    const { apiKey } = await createTenant(app);
+    const created = await request(app)
+      .post('/api/scheduled-posts')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ platform: 'instagram', caption: 'Привет', scheduledAt: '2026-09-01T10:00:00.000Z', requiresApproval: true });
+    const id = created.body.post.id;
 
-    const insert = db.prepare(
-      `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, status) VALUES (?, 't1', 'instagram', 'x', ?, 'scheduled')`
+    // A plain 2-way Promise.all (one approve + one reject) turned out not
+    // to reliably race this endpoint: its guard SELECT is fast enough that
+    // in practice the winner's SELECT+UPDATE usually both complete before
+    // the loser's own guard SELECT even runs — confirmed empirically, 3/3
+    // runs at 10-way concurrency here. That means the loser sees the
+    // already-flipped status at its OWN precondition check and gets 422
+    // ("not pending approval") rather than 409 (losing the UPDATE's WHERE
+    // clause) — both are correct, race-safe outcomes; what would be a bug
+    // is two 200s or a bare 500. 5 approves + 5 rejects fired together
+    // gives enough concurrent attempts to make the invariant meaningful to
+    // check, regardless of which of the two valid loser-paths each one hits.
+    const calls = [
+      ...Array.from({ length: 5 }, () => request(app).post(`/api/scheduled-posts/${id}/approve`).set('Authorization', `Bearer ${apiKey}`)),
+      ...Array.from({ length: 5 }, () => request(app).post(`/api/scheduled-posts/${id}/reject`).set('Authorization', `Bearer ${apiKey}`)),
+    ];
+    const results = await Promise.all(calls);
+
+    const successes = results.filter((r) => r.status === 200);
+    expect(successes).toHaveLength(1); // mutual exclusion: exactly one caller wins, ever
+    expect(results.every((r) => r.status === 200 || r.status === 409 || r.status === 422)).toBe(true); // never a bare 500
+
+    const fetched = await request(app).get(`/api/scheduled-posts/${id}`).set('Authorization', `Bearer ${apiKey}`);
+    expect(['scheduled', 'rejected']).toContain(fetched.body.post.status);
+  });
+
+  it('publishDuePosts only touches scheduled posts whose time has come, leaving future ones alone', async () => {
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`);
+
+    await exec(
+      db,
+      `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, status) VALUES (?, 't1', 'instagram', 'x', ?, 'scheduled')`,
+      'due-1',
+      '2026-01-01T00:00:00.000Z'
     );
-    insert.run('due-1', '2026-01-01T00:00:00.000Z');
-    insert.run('future-1', '2099-01-01T00:00:00.000Z');
+    await exec(
+      db,
+      `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, status) VALUES (?, 't1', 'instagram', 'x', ?, 'scheduled')`,
+      'future-1',
+      '2099-01-01T00:00:00.000Z'
+    );
 
-    const result = publishDuePosts(db, new Date('2026-06-01T00:00:00.000Z'));
+    const result = await publishDuePosts(db, new Date('2026-06-01T00:00:00.000Z'));
     expect(result.processed).toBe(1);
 
-    const due = db.prepare(`SELECT status FROM scheduled_posts WHERE id = 'due-1'`).get() as { status: string };
-    const future = db.prepare(`SELECT status FROM scheduled_posts WHERE id = 'future-1'`).get() as { status: string };
-    expect(due.status).not.toBe('scheduled');
-    expect(future.status).toBe('scheduled');
+    const due = await queryOne<{ status: string }>(db, `SELECT status FROM scheduled_posts WHERE id = 'due-1'`);
+    const future = await queryOne<{ status: string }>(db, `SELECT status FROM scheduled_posts WHERE id = 'future-1'`);
+    expect(due!.status).not.toBe('scheduled');
+    expect(future!.status).toBe('scheduled');
   });
 
   it('filters the list by status and date range', async () => {

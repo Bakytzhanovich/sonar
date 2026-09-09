@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import { queryAll, queryOne, type Db } from './db';
 import type { Trigger } from './types';
 
 // Matching is a pure function, deliberately separate from the two DB
@@ -26,17 +26,15 @@ export function matchTrigger(triggers: Trigger[], messageText: string): Trigger 
   return null;
 }
 
-export function getActiveTriggersForBot(db: Database.Database, botId: string): Trigger[] {
-  const rows = db
-    .prepare(
-      `SELECT id, bot_id, flow_id, flow_version, keyword, match_type, is_active, created_at
-       FROM triggers
-       WHERE bot_id = ? AND is_active = 1
-       ORDER BY created_at ASC`
-    )
-    .all(botId) as Array<Omit<Trigger, 'is_active'> & { is_active: number }>;
-
-  return rows.map((row) => ({ ...row, is_active: row.is_active === 1 }));
+export async function getActiveTriggersForBot(db: Db, botId: string): Promise<Trigger[]> {
+  return queryAll<Trigger>(
+    db,
+    `SELECT id, bot_id, flow_id, flow_version, keyword, match_type, is_active, created_at
+     FROM triggers
+     WHERE bot_id = ? AND is_active = true
+     ORDER BY created_at ASC`,
+    botId
+  );
 }
 
 // Fast pre-check for the common (non-racing) case, so flowEngine can skip
@@ -45,17 +43,14 @@ export function getActiveTriggersForBot(db: Database.Database, botId: string): T
 // subscriber_id, run_date) constraint on flow_runs is (see schema.sql).
 // flowEngine still has to handle that constraint violation as the real
 // dedup guarantee; this function only avoids the common-case race.
-export function hasRunToday(
-  db: Database.Database,
-  triggerId: string,
-  subscriberId: string,
-  runDate: string
-): boolean {
-  const row = db
-    .prepare(
-      `SELECT 1 FROM flow_runs WHERE trigger_id = ? AND subscriber_id = ? AND run_date = ? LIMIT 1`
-    )
-    .get(triggerId, subscriberId, runDate);
+export async function hasRunToday(db: Db, triggerId: string, subscriberId: string, runDate: string): Promise<boolean> {
+  const row = await queryOne(
+    db,
+    `SELECT 1 FROM flow_runs WHERE trigger_id = ? AND subscriber_id = ? AND run_date = ? LIMIT 1`,
+    triggerId,
+    subscriberId,
+    runDate
+  );
 
   return row !== undefined;
 }

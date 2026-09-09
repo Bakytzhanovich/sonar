@@ -1,6 +1,10 @@
--- Sonar / Module 1 (bot constructor) — SQLite schema.
--- Written to migrate ~1:1 to PostgreSQL later: TEXT ids are UUID strings
--- (-> uuid), TEXT json columns (-> jsonb), INTEGER 0/1 flags (-> boolean).
+-- Sonar / Module 1+ — PostgreSQL schema.
+-- Migrated from SQLite (see git history for the original). id columns stay
+-- TEXT rather than uuid on purpose: several tests seed non-UUID fixture ids
+-- ('t1', 'bot-1', ...), and TEXT behaves identically to uuid for every
+-- query pattern actually used here (equality, JOIN, FK) — switching would
+-- only add test-fixture churn, not fix anything. JSON columns did move to
+-- jsonb and 0/1 flags to real boolean, since neither breaks existing data.
 
 -- One row per paying client (blogger/expert/agency). Root of multi-tenancy:
 -- every other table hangs off tenant_id, directly or via bot_id, so a
@@ -9,7 +13,7 @@ CREATE TABLE tenants (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
   email      TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- API keys authenticate which tenant an API request is acting as. Only the
@@ -20,7 +24,7 @@ CREATE TABLE api_keys (
   id         TEXT PRIMARY KEY,
   tenant_id  TEXT NOT NULL REFERENCES tenants(id),
   key_hash   TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_api_keys_tenant ON api_keys(tenant_id);
@@ -34,21 +38,22 @@ CREATE TABLE bots (
   name               TEXT NOT NULL,
   platform           TEXT NOT NULL DEFAULT 'instagram',
   external_account_id TEXT,
-  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_bots_tenant ON bots(tenant_id);
 
 -- Versioned flow definitions. Publishing a new version inserts a new row
--- rather than overwriting — that's what makes the future rollback endpoint
--- a plain SELECT instead of needing separate history tracking.
+-- rather than overwriting — that's what makes the rollback endpoint
+-- (POST /api/triggers/:id/rollback) a plain SELECT instead of needing
+-- separate history tracking.
 CREATE TABLE flows (
   id         TEXT NOT NULL,
   bot_id     TEXT NOT NULL REFERENCES bots(id),
   version    INTEGER NOT NULL,
-  definition TEXT NOT NULL, -- JSON: FlowDefinition (src/types.ts)
+  definition JSONB NOT NULL, -- FlowDefinition (src/types.ts)
   status     TEXT NOT NULL DEFAULT 'draft', -- draft | published
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (id, version)
 );
 
@@ -64,22 +69,32 @@ CREATE TABLE triggers (
   flow_version INTEGER NOT NULL,
   keyword     TEXT NOT NULL,
   match_type  TEXT NOT NULL DEFAULT 'contains', -- contains | exact
-  is_active   INTEGER NOT NULL DEFAULT 1,
-  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  is_active   BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   FOREIGN KEY (flow_id, flow_version) REFERENCES flows(id, version)
 );
 
 CREATE INDEX idx_triggers_bot ON triggers(bot_id);
 
+-- Two active triggers on the same bot for the same keyword is not a valid
+-- state (matchTrigger() would silently pick whichever is older) — this is
+-- the source-of-truth backstop for the app-level pre-check in api.ts,
+-- same two-layer shape as flow_runs' UNIQUE below. Normalized the same way
+-- normalizeKeyword() does (trim + lowercase) so "Цена"/" цена " collide too.
+CREATE UNIQUE INDEX idx_triggers_bot_keyword_unique ON triggers (bot_id, lower(trim(keyword))) WHERE is_active = true;
+
 -- One row per person who has ever messaged a bot. last_interacted_at is
--- what the 24h Instagram messaging window is computed from.
+-- what the 24h Instagram messaging window is computed from. seq is a
+-- Postgres stand-in for SQLite's implicit rowid, kept purely as an
+-- insertion-order tiebreaker for listing queries (see idx below).
 CREATE TABLE subscribers (
   id                 TEXT PRIMARY KEY,
+  seq                BIGSERIAL,
   tenant_id          TEXT NOT NULL REFERENCES tenants(id),
   bot_id             TEXT NOT NULL REFERENCES bots(id),
   external_user_id   TEXT NOT NULL,
-  first_seen_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  last_interacted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  first_seen_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_interacted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- CRM lead status (Module 2). Lives on subscribers rather than a
   -- separate table because it's 1:1 and single-valued — there's exactly
   -- one current status per subscriber, not a history of them.
@@ -92,9 +107,9 @@ CREATE TABLE subscribers (
 CREATE TABLE webhook_events (
   event_id     TEXT PRIMARY KEY,
   bot_id       TEXT NOT NULL REFERENCES bots(id),
-  payload      TEXT NOT NULL, -- JSON, raw event as received
-  received_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  processed_at TEXT
+  payload      JSONB NOT NULL, -- raw event as received
+  received_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  processed_at TIMESTAMPTZ
 );
 
 -- Real (non-test-mode) flow executions. run_date + the unique index below
@@ -105,6 +120,7 @@ CREATE TABLE webhook_events (
 -- pollute conversion analytics), so there's no is_test flag to filter on.
 CREATE TABLE flow_runs (
   id              TEXT PRIMARY KEY,
+  seq             BIGSERIAL,
   tenant_id       TEXT NOT NULL REFERENCES tenants(id),
   bot_id          TEXT NOT NULL REFERENCES bots(id),
   trigger_id      TEXT NOT NULL REFERENCES triggers(id),
@@ -114,8 +130,8 @@ CREATE TABLE flow_runs (
   run_date        TEXT NOT NULL, -- subscriber's local trigger day, YYYY-MM-DD
   status          TEXT NOT NULL DEFAULT 'running', -- running | completed | failed
   failure_reason  TEXT, -- e.g. outside_24h_window_no_fallback_configured
-  started_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  completed_at    TEXT,
+  started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at    TIMESTAMPTZ,
   UNIQUE (trigger_id, subscriber_id, run_date)
 );
 
@@ -130,7 +146,7 @@ CREATE TABLE mock_sent_messages (
   subscriber_id TEXT NOT NULL REFERENCES subscribers(id),
   channel       TEXT NOT NULL DEFAULT 'dm', -- dm | comment_fallback
   content       TEXT NOT NULL,
-  sent_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  sent_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_mock_sent_messages_flow_run ON mock_sent_messages(flow_run_id);
@@ -143,14 +159,14 @@ CREATE TABLE tags (
   id         TEXT PRIMARY KEY,
   tenant_id  TEXT NOT NULL REFERENCES tenants(id),
   name       TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (tenant_id, name)
 );
 
 CREATE TABLE subscriber_tags (
   subscriber_id TEXT NOT NULL REFERENCES subscribers(id),
   tag_id        TEXT NOT NULL REFERENCES tags(id),
-  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (subscriber_id, tag_id)
 );
 
@@ -164,10 +180,11 @@ CREATE INDEX idx_subscriber_tags_tag ON subscriber_tags(tag_id);
 -- who wrote what when.
 CREATE TABLE notes (
   id            TEXT PRIMARY KEY,
+  seq           BIGSERIAL,
   subscriber_id TEXT NOT NULL REFERENCES subscribers(id),
   tenant_id     TEXT NOT NULL REFERENCES tenants(id),
   body          TEXT NOT NULL,
-  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_notes_subscriber ON notes(subscriber_id);
@@ -183,12 +200,13 @@ CREATE INDEX idx_notes_subscriber ON notes(subscriber_id);
 -- duplicated between the two, they serve different queries.
 CREATE TABLE messages (
   id            TEXT PRIMARY KEY,
+  seq           BIGSERIAL,
   tenant_id     TEXT NOT NULL REFERENCES tenants(id),
   bot_id        TEXT NOT NULL REFERENCES bots(id),
   subscriber_id TEXT NOT NULL REFERENCES subscribers(id),
   direction     TEXT NOT NULL, -- in | out
   content       TEXT NOT NULL,
-  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_messages_subscriber ON messages(subscriber_id, created_at);
@@ -199,28 +217,31 @@ CREATE INDEX idx_messages_subscriber ON messages(subscriber_id, created_at);
 -- runs here — analyzeReelMock/generateScriptMock (src/reelAnalysis.ts)
 -- produce deterministic fake output from the same storage/API shape the
 -- real pipeline will use, so swapping the mock out later doesn't change
--- this schema. No pgvector means no similarity search yet — out of scope
--- until Postgres migration actually happens.
+-- this schema. pgvector itself is still deferred — no similarity search
+-- yet, even though we're on Postgres now; a real embeddings pipeline is
+-- its own follow-up, not a side effect of this migration.
 CREATE TABLE reel_analyses (
   id               TEXT PRIMARY KEY,
+  seq              BIGSERIAL,
   tenant_id        TEXT NOT NULL REFERENCES tenants(id),
   source_url       TEXT NOT NULL,
   hook             TEXT NOT NULL,
   duration_seconds INTEGER NOT NULL,
   on_screen_text   TEXT NOT NULL,
-  structure        TEXT NOT NULL, -- JSON: StructureBeat[] (src/types.ts)
-  created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  structure        JSONB NOT NULL, -- StructureBeat[] (src/types.ts)
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_reel_analyses_tenant ON reel_analyses(tenant_id);
 
 CREATE TABLE generated_scripts (
   id          TEXT PRIMARY KEY,
+  seq         BIGSERIAL,
   tenant_id   TEXT NOT NULL REFERENCES tenants(id),
   analysis_id TEXT NOT NULL REFERENCES reel_analyses(id),
   niche       TEXT NOT NULL,
   script_text TEXT NOT NULL,
-  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_generated_scripts_analysis ON generated_scripts(analysis_id);
@@ -242,17 +263,18 @@ CREATE TABLE brand_presets (
   primary_color   TEXT NOT NULL DEFAULT '#111111',
   secondary_color TEXT NOT NULL DEFAULT '#ffffff',
   logo_url        TEXT,
-  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_brand_presets_tenant ON brand_presets(tenant_id);
 
 CREATE TABLE carousels (
   id         TEXT PRIMARY KEY,
+  seq        BIGSERIAL,
   tenant_id  TEXT NOT NULL REFERENCES tenants(id),
   prompt     TEXT NOT NULL,
   preset_id  TEXT REFERENCES brand_presets(id),
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_carousels_tenant ON carousels(tenant_id);
@@ -264,7 +286,7 @@ CREATE TABLE carousel_slides (
   position    INTEGER NOT NULL,
   headline    TEXT NOT NULL,
   body        TEXT NOT NULL,
-  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (carousel_id, position)
 );
 
@@ -272,24 +294,28 @@ CREATE INDEX idx_carousel_slides_carousel ON carousel_slides(carousel_id, positi
 
 -- ---- Module 5: Cross-platform autoposting (mocked platform APIs) --------
 -- ТЗ calls for Celery/BullMQ on Redis; decided to skip that infra for now
--- (no real load yet, same reasoning as staying on SQLite) — src/publisher.ts
--- polls this table on a timer instead of running a real job queue. The
--- mock stands in for Instagram Content Publishing API / TikTok Content
--- Posting API / YouTube Data API — each needs its own real app review we
--- don't have yet.
+-- (no real load yet) — src/publisher.ts polls this table on a timer
+-- instead of running a real job queue. The mock stands in for Instagram
+-- Content Publishing API / TikTok Content Posting API / YouTube Data API —
+-- each needs its own real app review we don't have yet.
 CREATE TABLE scheduled_posts (
   id                 TEXT PRIMARY KEY,
+  seq                BIGSERIAL,
   tenant_id          TEXT NOT NULL REFERENCES tenants(id),
   platform           TEXT NOT NULL, -- instagram | tiktok | youtube_shorts
   caption            TEXT NOT NULL,
-  scheduled_at       TEXT NOT NULL,
-  requires_approval  INTEGER NOT NULL DEFAULT 0,
-  -- pending_approval | scheduled | published | failed | rejected
+  scheduled_at       TIMESTAMPTZ NOT NULL,
+  requires_approval  BOOLEAN NOT NULL DEFAULT false,
+  -- pending_approval | scheduled | publishing | published | failed | rejected
+  -- 'publishing' is a transient claim state set by publishDuePosts; claimed_at
+  -- lets a stale claim (the process crashed or threw mid-processing) be
+  -- reclaimed and retried instead of stuck there forever.
   status             TEXT NOT NULL DEFAULT 'scheduled',
+  claimed_at         TIMESTAMPTZ,
   failure_reason     TEXT, -- token_expired | rejected_by_platform | rate_limited
-  published_at       TEXT,
+  published_at       TIMESTAMPTZ,
   external_post_url  TEXT,
-  created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_scheduled_posts_tenant ON scheduled_posts(tenant_id);
@@ -303,6 +329,7 @@ CREATE INDEX idx_scheduled_posts_due ON scheduled_posts(status, scheduled_at);
 -- object storage, we never actually handle video bytes.
 CREATE TABLE video_edit_jobs (
   id                TEXT PRIMARY KEY,
+  seq               BIGSERIAL,
   tenant_id         TEXT NOT NULL REFERENCES tenants(id),
   source_video_url  TEXT NOT NULL,
   template          TEXT NOT NULL, -- auto_crop_916 | template_with_transitions
@@ -310,8 +337,8 @@ CREATE TABLE video_edit_jobs (
   progress_percent  INTEGER NOT NULL DEFAULT 0,
   output_url        TEXT,
   failure_reason    TEXT,
-  created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  completed_at      TEXT
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at      TIMESTAMPTZ
 );
 
 CREATE INDEX idx_video_edit_jobs_tenant ON video_edit_jobs(tenant_id);
@@ -327,7 +354,7 @@ CREATE TABLE push_subscriptions (
   endpoint   TEXT NOT NULL UNIQUE,
   p256dh     TEXT NOT NULL,
   auth       TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_push_subscriptions_tenant ON push_subscriptions(tenant_id);
@@ -339,13 +366,42 @@ CREATE INDEX idx_push_subscriptions_tenant ON push_subscriptions(tenant_id);
 -- change.
 CREATE TABLE notifications (
   id         TEXT PRIMARY KEY,
+  seq        BIGSERIAL,
   tenant_id  TEXT NOT NULL REFERENCES tenants(id),
   -- post_published | post_failed | post_pending_approval | video_completed | video_failed
   type       TEXT NOT NULL,
   message    TEXT NOT NULL,
   related_id TEXT,
-  is_read    INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  is_read    BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_notifications_tenant ON notifications(tenant_id, created_at);
+
+-- ---- Auth (Логика Б: public self-serve signup, additive to the existing
+-- staff-assisted POST /api/tenants + API key flow, which is untouched and
+-- stays the path internal demos use). email+password login for a real
+-- dashboard, on its own tenant — one user per tenant for now (nothing here
+-- enforces that beyond signup always creating both together; tenant_id is
+-- a plain FK, not unique, so a future multi-user-per-tenant invite flow
+-- doesn't need a schema change). password_hash is bcrypt — unlike
+-- api_keys.key_hash (SHA-256, see apiKeys.ts), a human-chosen password
+-- needs a slow, salted KDF to resist offline brute-forcing.
+CREATE TABLE users (
+  id            TEXT PRIMARY KEY,
+  tenant_id     TEXT NOT NULL REFERENCES tenants(id),
+  email         TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_users_tenant ON users(tenant_id);
+
+-- Email identity is case-insensitive (api.ts normalizes to lower(trim())
+-- before every insert/lookup) — a plain UNIQUE on the raw column would only
+-- enforce that within one exact casing, so a future write path that skips
+-- the app-level normalization could still create 'User@x.com' and
+-- 'user@x.com' as two accounts. Same two-layer shape as
+-- idx_triggers_bot_keyword_unique above: the DB constraint is the real
+-- guard, app-level normalization is the fast/friendly path.
+CREATE UNIQUE INDEX idx_users_email_unique ON users (lower(trim(email)));

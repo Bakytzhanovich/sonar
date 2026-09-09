@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import { queryAll, type Db } from './db';
 
 // The actual differentiator (per CLAUDE.md and the Notion ТЗ): ties
 // Module 2's CRM data (who actually converts, by tag/segment) to Module
@@ -15,36 +15,50 @@ export interface ContentRecommendation {
   explanation: string;
 }
 
-export function computeContentRecommendations(db: Database.Database, tenantId: string): ContentRecommendation[] {
-  const tags = db.prepare(`SELECT id, name FROM tags WHERE tenant_id = ?`).all(tenantId) as Array<{ id: string; name: string }>;
+export async function computeContentRecommendations(db: Db, tenantId: string): Promise<ContentRecommendation[]> {
+  const tags = await queryAll<{ id: string; name: string }>(db, `SELECT id, name FROM tags WHERE tenant_id = ?`, tenantId);
 
   // Matched by case-insensitive tag-name == niche equality — a
   // deliberately simple rule for MVP, not fuzzy/semantic matching (that
-  // would want pgvector, which we've deferred along with Postgres). The
-  // case-fold happens in JS, not SQL: SQLite's built-in LOWER() only
-  // handles ASCII a-z — it leaves Cyrillic untouched, so "Фитнес" and
-  // "фитнес" would silently fail to match if compared with SQL LOWER().
-  const scriptRows = db.prepare(`SELECT niche FROM generated_scripts WHERE tenant_id = ?`).all(tenantId) as Array<{ niche: string }>;
+  // would want pgvector, which we've deferred even though we're now on
+  // Postgres). The case-fold happens in JS, not SQL, to keep this
+  // behavior identical to before the migration (Postgres's LOWER() does
+  // handle Cyrillic correctly, unlike SQLite's, but there was never a
+  // functional need to move the fold into SQL).
+  const scriptRows = await queryAll<{ niche: string }>(db, `SELECT niche FROM generated_scripts WHERE tenant_id = ?`, tenantId);
   const scriptCountByNiche = new Map<string, number>();
   for (const row of scriptRows) {
     const key = row.niche.toLowerCase();
     scriptCountByNiche.set(key, (scriptCountByNiche.get(key) ?? 0) + 1);
   }
 
+  // One GROUP BY across every tag, not an awaited query per tag — each
+  // was a separate Postgres round-trip (cheap in-process under the old
+  // synchronous SQLite driver, a real network hop now). A tag with zero
+  // subscribers just doesn't appear in the grouped result, same effect
+  // as the old per-tag "stats.total === 0, skip" check.
+  const statsByTagId = new Map<string, { total: number; clients: number | null }>();
+  if (tags.length > 0) {
+    const placeholders = tags.map(() => '?').join(',');
+    const statsRows = await queryAll<{ tagId: string; total: number; clients: number | null }>(
+      db,
+      `SELECT subscriber_tags.tag_id as "tagId", COUNT(*) as total, SUM(CASE WHEN subscribers.lead_status = 'client' THEN 1 ELSE 0 END) as clients
+       FROM subscriber_tags
+       JOIN subscribers ON subscriber_tags.subscriber_id = subscribers.id
+       WHERE subscriber_tags.tag_id IN (${placeholders})
+       GROUP BY subscriber_tags.tag_id`,
+      ...tags.map((t) => t.id)
+    );
+    for (const row of statsRows) statsByTagId.set(row.tagId, row);
+  }
+
   const recommendations: ContentRecommendation[] = [];
 
   for (const tag of tags) {
-    const stats = db
-      .prepare(
-        `SELECT COUNT(*) as total, SUM(CASE WHEN subscribers.lead_status = 'client' THEN 1 ELSE 0 END) as clients
-         FROM subscriber_tags
-         JOIN subscribers ON subscriber_tags.subscriber_id = subscribers.id
-         WHERE subscriber_tags.tag_id = ?`
-      )
-      .get(tag.id) as { total: number; clients: number | null };
+    const stats = statsByTagId.get(tag.id);
 
     // No subscribers currently carry this tag — nothing to recommend from.
-    if (stats.total === 0) continue;
+    if (!stats || stats.total === 0) continue;
 
     const clients = stats.clients ?? 0;
     const conversionRate = clients / stats.total;

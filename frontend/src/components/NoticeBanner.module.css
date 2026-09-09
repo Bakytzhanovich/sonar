@@ -1,0 +1,31 @@
+/* Warm/amber, same family as --status-pending — a heads-up, not an error:
+ * nothing is broken, the screen just can't do anything useful yet (e.g. no
+ * apiKey). Its own banner, not a stray line of tiny muted text buried in
+ * the header, so it's the first thing a user without a working session
+ * actually reads. */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--status-pending) 40%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--status-pending) 10%, var(--background));
+  color: var(--foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--status-pending) 22%, transparent);
+  color: var(--status-pending);
+  font-weight: 800;
+  font-size: 13px;
+}

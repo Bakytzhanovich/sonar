@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
 import webpush from 'web-push';
+import { exec, queryAll, type Db } from './db';
 import { getOrCreateVapidKeys } from './vapidKeys';
 import type { AppNotification, NotificationType, PushSubscriptionRecord } from './types';
 
@@ -18,39 +18,39 @@ function ensureVapidConfigured(): void {
 // best-effort on top of that: a push failure is caught and never
 // propagates, because the in-app row already exists regardless of
 // whether the push succeeds.
-export function notify(db: Database.Database, tenantId: string, type: NotificationType, message: string, relatedId?: string): void {
+export async function notify(db: Db, tenantId: string, type: NotificationType, message: string, relatedId?: string): Promise<void> {
   const id = randomUUID();
-  db.prepare(`INSERT INTO notifications (id, tenant_id, type, message, related_id) VALUES (?, ?, ?, ?, ?)`).run(
-    id,
-    tenantId,
-    type,
-    message,
-    relatedId ?? null
-  );
+  await exec(db, `INSERT INTO notifications (id, tenant_id, type, message, related_id) VALUES (?, ?, ?, ?, ?)`, id, tenantId, type, message, relatedId ?? null);
 
   ensureVapidConfigured();
-  const subscriptions = db.prepare(`SELECT * FROM push_subscriptions WHERE tenant_id = ?`).all(tenantId) as PushSubscriptionRecord[];
+  const subscriptions = await queryAll<PushSubscriptionRecord>(db, `SELECT * FROM push_subscriptions WHERE tenant_id = ?`, tenantId);
 
   for (const sub of subscriptions) {
     webpush
       .sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, JSON.stringify({ type, message, relatedId }))
-      .catch((err: unknown) => {
+      .catch(async (err: unknown) => {
         // 404/410 — the push service says this subscription no longer
         // exists on the browser's end. Keeping it would just mean
         // retrying a permanently dead endpoint on every future notify().
         const statusCode = err instanceof webpush.WebPushError ? err.statusCode : undefined;
         if (statusCode === 404 || statusCode === 410) {
-          db.prepare(`DELETE FROM push_subscriptions WHERE id = ?`).run(sub.id);
+          try {
+            await exec(db, `DELETE FROM push_subscriptions WHERE id = ?`, sub.id);
+          } catch {
+            // Best-effort cleanup — nothing awaits notify()'s push delivery,
+            // so a transient DB error here (pool exhaustion, connection
+            // reset) must not become an unhandled rejection. The stale row
+            // just survives until the next notify() retries this cleanup.
+          }
         }
       });
   }
 }
 
-export function listNotifications(db: Database.Database, tenantId: string, unreadOnly: boolean): AppNotification[] {
+export async function listNotifications(db: Db, tenantId: string, unreadOnly: boolean): Promise<AppNotification[]> {
   const query = unreadOnly
-    ? `SELECT * FROM notifications WHERE tenant_id = ? AND is_read = 0 ORDER BY created_at DESC, rowid DESC`
-    : `SELECT * FROM notifications WHERE tenant_id = ? ORDER BY created_at DESC, rowid DESC`;
+    ? `SELECT * FROM notifications WHERE tenant_id = ? AND is_read = false ORDER BY created_at DESC, seq DESC`
+    : `SELECT * FROM notifications WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`;
 
-  const rows = db.prepare(query).all(tenantId) as Array<Record<string, unknown>>;
-  return rows.map((row) => ({ ...row, is_read: row.is_read === 1 })) as AppNotification[];
+  return queryAll<AppNotification>(db, query, tenantId);
 }

@@ -1,0 +1,92 @@
+.wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 14px;
+}
+
+.link {
+  color: var(--foreground-muted);
+  text-decoration: none;
+}
+
+.link:hover {
+  color: var(--accent);
+}
+
+.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.navMobile {
+  display: none;
+  position: relative;
+}
+
+.hamburger {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--foreground);
+  width: 36px;
+  height: 32px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.mobileMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  z-index: 20;
+}
+
+.mobileLink {
+  padding: 8px 10px;
+  border-radius: 4px;
+  color: var(--foreground-muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.mobileLink:hover {
+  background: var(--surface-hover);
+}
+
+.mobileActive {
+  color: var(--accent);
+  font-weight: 600;
+  background: var(--accent-soft);
+}
+
+/* Below this width, 7 text links wrapping onto multiple header lines stops
+ * being a nav and starts being clutter — collapse to a menu instead. Placed
+ * last in the file (not just inside a media query) so its rules win the
+ * cascade over the unconditional .nav/.navMobile defaults above at equal
+ * specificity — order matters here since nothing else disambiguates it.
+ */
+@media (max-width: 720px) {
+  .nav {
+    display: none;
+  }
+
+  .navMobile {
+    display: flex;
+  }
+}

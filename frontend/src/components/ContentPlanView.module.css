@@ -1,0 +1,208 @@
+/* Module 6's real differentiator has no competitor equivalent — the card
+ * should make that concrete (an actual conversion bar built from this
+ * client's own subscriber/client counts), not just state a percentage. */
+
+/* Same asymmetric corner and exact radius as CrmView's incoming-message
+ * bubble (CrmView.module.css .bubbleIn) — not a proportionally-similar
+ * shape, the identical one. The meaning carries over honestly: "built from
+ * real, live data" (CRM conversion counts), the same reason the bubble
+ * marks a real person's message. Anywhere that meaning doesn't hold (a
+ * status badge, a generic "important" card) doesn't get this corner —
+ * reusing the shape for a different meaning would turn a signature into a
+ * decorative pattern, which is exactly what a single sharp accent color is
+ * meant to avoid doing with color. */
+.filterInput {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 4px 14px 14px 14px;
+  padding: 14px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--background);
+  transition: transform 180ms ease, border-color 180ms ease;
+}
+.page { min-height: 100dvh; display: flex; flex-direction: column; background: var(--surface); color: var(--foreground); }.main { width: 100%; max-width: 1120px; margin: 0 auto; padding: clamp(20px, 4vw, 44px); overflow-y: auto; }.eyebrow { display: block; color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .12em; }.intro { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; }.intro h1 { margin: 6px 0; font-size: clamp(25px, 4vw, 38px); letter-spacing: -.04em; }.intro p { max-width: 620px; margin: 0; color: var(--foreground-muted); font-size: 13px; line-height: 1.55; }.introMark { padding: 12px 16px; border-left: 2px solid var(--accent); color: var(--accent); font-size: 11px; font-weight: 800; line-height: 1.5; letter-spacing: .1em; }.summary { display: flex; align-items: center; gap: 12px; margin: 22px 0 14px; color: var(--foreground-muted); font-size: 13px; }.summary strong { color: var(--foreground); font-size: 30px; letter-spacing: -.04em; }.summary small { font-size: 11px; }.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }.card:hover { transform: translateY(-2px); border-color: var(--accent); }.emptyHint { background: var(--background); border-radius: 14px; padding: 22px; }
+@media (max-width: 680px) { .intro { align-items: start; flex-direction: column; }.cards { grid-template-columns: 1fr; }.introMark { display: none; } }
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.segmentGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Rank is real — recommendations are already sorted by rankScore, this
+ * just makes that ordering legible instead of implicit array position. */
+.rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--foreground-muted);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.segment {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversionPct {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* The actual proportion, not just its number — clientCount/subscriberCount
+ * from this tenant's own CRM data, the thing no competitor's dashboard has. */
+.barTrack {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}
+
+.explanation {
+  font-size: 13px;
+  color: var(--foreground);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--foreground-muted);
+}
+
+.scriptBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Ready to publish now vs needs a Module 3 pass first — an actionable
+ * distinction, not decoration. */
+.scriptBadgeReady {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.scriptBadgeMissing {
+  background: var(--surface);
+  color: var(--foreground-muted);
+}
+
+/* Explains why the list is short instead of leaving it looking broken —
+   text only, same muted token already used for disabled controls, not a
+   decorative illustration. */
+.emptyHint {
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.emptyHint p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--foreground-muted);
+  line-height: 1.4;
+}
+
+/* Onboarding explains the same real rule the recommendation cards expose:
+ * client status + segment tag. Flat surface, one accent and no motion keep
+ * it inside the product's existing visual language. */
+.onboardingState {
+  margin-bottom: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: 4px 14px 14px 14px;
+  background: var(--surface);
+}
+
+.onboardingComplete {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.onboardingEyebrow {
+  display: block;
+  margin-bottom: var(--space-1);
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.onboardingState h2 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: var(--text-lg);
+  line-height: 1.3;
+}
+
+.onboardingState p {
+  margin: var(--space-2) 0 0;
+  color: var(--foreground-muted);
+  font-size: var(--text-base);
+  line-height: 1.5;
+}
+
+.onboardingState .onboardingCaveat {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+
+.onboardingCta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  margin-top: var(--space-3);
+}
+
+@media (max-width: 560px) {
+  .onboardingCta {
+    width: 100%;
+  }
+}

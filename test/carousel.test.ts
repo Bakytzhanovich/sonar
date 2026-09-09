@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import { createDb } from '../src/db';
+import type { Db } from '../src/db';
 import { createApp } from '../src/api';
 import { generateCarouselMock } from '../src/carouselGeneration';
+import { createTestDb, dropTestDb } from './dbTestHelper';
 
 async function createTenant(app: Express, email = 'carousel@example.com') {
   const res = await request(app).post('/api/tenants').send({ name: 'Blogger', email });
@@ -22,9 +23,15 @@ describe('generateCarouselMock (pure)', () => {
 
 describe('carousel API', () => {
   let app: Express;
+  let db: Db;
 
-  beforeEach(() => {
-    app = createApp(createDb({ filePath: ':memory:' }));
+  beforeEach(async () => {
+    db = await createTestDb();
+    app = createApp(db);
+  });
+
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
   });
 
   it('creates a brand preset with defaults when optional fields are omitted', async () => {

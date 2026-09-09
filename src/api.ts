@@ -1,10 +1,13 @@
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
-import type Database from 'better-sqlite3';
+import rateLimit from 'express-rate-limit';
 import { randomUUID } from 'node:crypto';
+import { exec, isUniqueViolation, queryAll, queryOne, type Db } from './db';
 import { createApiKeyForTenant, resolveTenantIdFromApiKey } from './apiKeys';
+import { hashPassword, verifyPassword, signSession, verifySession } from './auth';
 import { runFlow, collectMessageNodes } from './flowEngine';
+import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { analyzeReelMock, generateScriptMock } from './reelAnalysis';
-import { generateCarouselMock } from './carouselGeneration';
+import { generateCarouselSlides } from './carouselGeneration';
 import { publishDuePosts } from './publisher';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
@@ -20,16 +23,41 @@ import type {
   ScheduledPost,
   Subscriber,
   Trigger,
+  User,
   VideoEditJob,
   VideoTemplate,
 } from './types';
 
-export function createApp(db: Database.Database): Express {
+const DEMO_BOT_NAME = 'Sonar Demo';
+const DEMO_EXTERNAL_USER_ID = 'sonar-demo-contact';
+
+function demoExternalAccountId(tenantId: string): string {
+  return `demo:${tenantId}`;
+}
+
+export function createApp(db: Db): Express {
   const app = express();
   app.use(express.json());
 
-  // Permissive for now — every protected route needs a Bearer API key, not
-  // a cookie/session, so there's no CSRF surface to widen by allowing any
+  // Credential endpoints are the most commonly attacked surface (password
+  // brute force, credential stuffing, mass account creation) — CLAUDE.md
+  // calls out rate limiting explicitly for autoposting; these need the same
+  // protection. In-memory store is fine while the app is single-process
+  // (Redis is planned but not wired yet, same stage as the rest of this
+  // codebase's mocked infra) — declared inside createApp so every test
+  // (which calls createApp fresh per test) gets its own isolated limiter
+  // state instead of sharing one counter across the whole test run.
+  const authRateLimit = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'too_many_requests' },
+  });
+
+  // Permissive for now — protected routes use a Bearer credential (an API
+  // key for integrations or a session JWT for the first-party product),
+  // not a cookie, so there's no CSRF surface to widen by allowing any
   // origin. Worth tightening to a specific origin once there's a real
   // deployed frontend URL to pin it to.
   app.use((req, res, next) => {
@@ -44,38 +72,335 @@ export function createApp(db: Database.Database): Express {
 
   // ---- Tenant bootstrap (not API-key protected — this is how a tenant
   // gets its first key; equivalent to a signup step). --------------------
-  app.post('/api/tenants', (req, res) => {
+  app.post('/api/tenants', authRateLimit, asyncHandler(async (req, res) => {
     const { name, email } = req.body ?? {};
     if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
 
     const tenantId = randomUUID();
-    db.prepare(`INSERT INTO tenants (id, name, email) VALUES (?, ?, ?)`).run(tenantId, name, email);
-    const apiKey = createApiKeyForTenant(db, tenantId);
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES (?, ?, ?)`, tenantId, name, email);
+    const apiKey = await createApiKeyForTenant(db, tenantId);
 
     // apiKey is shown exactly once, right here — it is not retrievable
     // again (only its hash is stored).
     res.status(201).json({ tenant: { id: tenantId, name, email }, apiKey });
-  });
+  }));
 
-  app.use('/api', requireApiKey(db));
+  // ---- Auth (Логика Б: public self-serve signup) -------------------------
+  // Additive, parallel to the staff-assisted POST /api/tenants above — that
+  // route (and the API-key flow it issues) is untouched. Signup here makes
+  // its own tenant + a password-holding user row, and hands back a session
+  // JWT that the first-party product can use on the same tenant-scoped API.
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const MIN_PASSWORD_LENGTH = 8;
+
+  app.post('/api/auth/signup', authRateLimit, asyncHandler(async (req, res) => {
+    const rawEmail = req.body?.email;
+    const { password } = req.body ?? {};
+    if (typeof rawEmail !== 'string' || !EMAIL_RE.test(rawEmail)) {
+      return res.status(400).json({ error: 'invalid_email' });
+    }
+    if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ error: 'invalid_password', minLength: MIN_PASSWORD_LENGTH });
+    }
+    // Email identity must be case-insensitive (RFC 5321 leaves the local
+    // part case-sensitive in theory, but no mainstream provider treats it
+    // that way) — normalize before the uniqueness check/storage so
+    // "Aibek@gmail.com" and "aibek@gmail.com" are the same account.
+    const email = rawEmail.trim().toLowerCase();
+
+    const existing = await queryOne<{ id: string }>(db, `SELECT id FROM users WHERE email = ?`, email);
+    if (existing) return res.status(409).json({ error: 'email_taken' });
+
+    const tenantId = randomUUID();
+    const userId = randomUUID();
+    const passwordHash = await hashPassword(password);
+
+    try {
+      // No explicit transaction (same convention as POST /api/tenants
+      // above) — ids are generated client-side, so a crash between the two
+      // inserts leaves an orphan tenant row rather than a corrupt
+      // reference; users.email UNIQUE is still the real race guard below.
+      await exec(db, `INSERT INTO tenants (id, name, email) VALUES (?, ?, ?)`, tenantId, email, email);
+      await exec(db, `INSERT INTO users (id, tenant_id, email, password_hash) VALUES (?, ?, ?, ?)`, userId, tenantId, email, passwordHash);
+    } catch (err) {
+      // Two signups racing on the same email: both pass the SELECT above,
+      // one wins the INSERT, the other hits users.email's UNIQUE
+      // constraint — the DB constraint is the real guard, the SELECT above
+      // is just a fast path that avoids a wasted bcrypt hash most of the time.
+      if (isUniqueViolation(err)) return res.status(409).json({ error: 'email_taken' });
+      throw err;
+    }
+
+    const sessionToken = signSession({ userId, tenantId });
+    res.status(201).json({ user: { id: userId, email }, tenant: { id: tenantId, name: email }, sessionToken });
+  }));
+
+  app.post('/api/auth/login', authRateLimit, asyncHandler(async (req, res) => {
+    const { email: rawEmail, password } = req.body ?? {};
+    if (typeof rawEmail !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ error: 'email and password are required' });
+    }
+    const email = rawEmail.trim().toLowerCase();
+
+    // Same error for "no such user" and "wrong password" — a distinct
+    // "no such user" response would let a caller enumerate registered
+    // emails by probing this endpoint.
+    const user = await queryOne<User>(db, `SELECT * FROM users WHERE email = ?`, email);
+    if (!user || !(await verifyPassword(password, user.password_hash))) {
+      return res.status(401).json({ error: 'invalid_credentials' });
+    }
+
+    const tenant = await queryOne<{ id: string; name: string }>(db, `SELECT id, name FROM tenants WHERE id = ?`, user.tenant_id);
+    const sessionToken = signSession({ userId: user.id, tenantId: user.tenant_id });
+    res.json({ user: { id: user.id, email: user.email }, tenant, sessionToken });
+  }));
+
+  app.get('/api/auth/me', requireSession(db), asyncHandler(async (req, res) => {
+    const { userId, tenantId } = res.locals.session as { userId: string; tenantId: string };
+    const user = await queryOne<User>(db, `SELECT * FROM users WHERE id = ?`, userId);
+    const tenant = await queryOne<{ id: string; name: string }>(db, `SELECT id, name FROM tenants WHERE id = ?`, tenantId);
+    if (!user || !tenant) return res.status(401).json({ error: 'invalid_session' });
+    res.json({ user: { id: user.id, email: user.email }, tenant });
+  }));
+
+  app.use('/api', requireProductCredential(db));
 
   // ---- Bots --------------------------------------------------------------
-  app.post('/api/bots', (req, res) => {
+  // Workspace discovery for both returning browser sessions and API-key
+  // clients. Before this endpoint the frontend had to remember a bot id in
+  // localStorage forever; a new browser could authenticate successfully but
+  // had no supported way to recover the tenant's workspace.
+  app.get('/api/bots', asyncHandler(async (_req, res) => {
+    const bots = await queryAll<Bot>(
+      db,
+      `SELECT * FROM bots WHERE tenant_id = ? ORDER BY created_at ASC, id ASC`,
+      res.locals.tenantId
+    );
+    res.json({ bots });
+  }));
+
+  app.post('/api/bots', asyncHandler(async (req, res) => {
     const tenantId = res.locals.tenantId as string;
     const { name, platform, externalAccountId } = req.body ?? {};
     if (!name) return res.status(400).json({ error: 'name is required' });
 
     const botId = randomUUID();
-    db.prepare(
-      `INSERT INTO bots (id, tenant_id, name, platform, external_account_id) VALUES (?, ?, ?, ?, ?)`
-    ).run(botId, tenantId, name, platform ?? 'instagram', externalAccountId ?? null);
+    await exec(
+      db,
+      `INSERT INTO bots (id, tenant_id, name, platform, external_account_id) VALUES (?, ?, ?, ?, ?)`,
+      botId,
+      tenantId,
+      name,
+      platform ?? 'instagram',
+      externalAccountId ?? null
+    );
 
     res.status(201).json({ bot: { id: botId, tenant_id: tenantId, name, platform: platform ?? 'instagram', external_account_id: externalAccountId ?? null } });
-  });
+  }));
+
+  // Creates the smallest complete workspace needed for first-run onboarding:
+  // one demo bot, one already-published two-node flow, and one active trigger.
+  // A tenant-scoped Postgres advisory lock makes the check+create sequence
+  // idempotent even when a double click (or two tabs) sends concurrent calls;
+  // schema changes solely for a one-off bootstrap marker are unnecessary.
+  app.post('/api/onboarding/demo-workspace', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const keyword = typeof req.body?.keyword === 'string' ? req.body.keyword.trim() : '';
+    const replyText = typeof req.body?.replyText === 'string' ? req.body.replyText.trim() : '';
+
+    if (!keyword) return res.status(400).json({ error: 'keyword is required' });
+    if (!replyText) return res.status(400).json({ error: 'replyText is required' });
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      await exec(client, `SELECT pg_advisory_xact_lock(hashtext(?))`, `sonar-demo-workspace:${tenantId}`);
+
+      const externalAccountId = demoExternalAccountId(tenantId);
+      let bot = await queryOne<Bot>(
+        client,
+        `SELECT * FROM bots WHERE tenant_id = ? AND external_account_id = ? ORDER BY created_at ASC, id ASC LIMIT 1`,
+        tenantId,
+        externalAccountId
+      );
+
+      if (!bot) {
+        bot = await queryOne<Bot>(
+          client,
+          `INSERT INTO bots (id, tenant_id, name, platform, external_account_id)
+           VALUES (?, ?, ?, 'instagram', ?)
+           RETURNING *`,
+          randomUUID(),
+          tenantId,
+          DEMO_BOT_NAME,
+          externalAccountId
+        );
+      }
+      // INSERT ... RETURNING * on a single-row insert always yields exactly
+      // one row — this narrows `bot` for TypeScript and would only trip if
+      // that invariant somehow broke.
+      if (!bot) throw new Error('failed to create demo bot');
+
+      const existingWorkspace = await queryOne<{
+        trigger_id: string;
+        trigger_keyword: string;
+        match_type: Trigger['match_type'];
+        is_active: boolean;
+        trigger_created_at: string;
+        flow_id: string;
+        flow_version: number;
+        flow_status: 'published';
+        definition: FlowDefinition;
+        flow_created_at: string;
+      }>(
+        client,
+        `SELECT
+           triggers.id AS trigger_id,
+           triggers.keyword AS trigger_keyword,
+           triggers.match_type,
+           triggers.is_active,
+           triggers.created_at AS trigger_created_at,
+           flows.id AS flow_id,
+           flows.version AS flow_version,
+           flows.status AS flow_status,
+           flows.definition,
+           flows.created_at AS flow_created_at
+         FROM triggers
+         JOIN flows ON flows.id = triggers.flow_id AND flows.version = triggers.flow_version
+         WHERE triggers.bot_id = ? AND triggers.is_active = true AND flows.status = 'published'
+         ORDER BY triggers.created_at ASC, triggers.id ASC
+         LIMIT 1`,
+        bot.id
+      );
+
+      if (existingWorkspace) {
+        await client.query('COMMIT');
+        return res.json({
+          bot,
+          flow: {
+            id: existingWorkspace.flow_id,
+            bot_id: bot.id,
+            version: existingWorkspace.flow_version,
+            status: existingWorkspace.flow_status,
+            definition: existingWorkspace.definition,
+            created_at: existingWorkspace.flow_created_at,
+          },
+          trigger: {
+            id: existingWorkspace.trigger_id,
+            bot_id: bot.id,
+            flow_id: existingWorkspace.flow_id,
+            flow_version: existingWorkspace.flow_version,
+            keyword: existingWorkspace.trigger_keyword,
+            match_type: existingWorkspace.match_type,
+            is_active: existingWorkspace.is_active,
+            created_at: existingWorkspace.trigger_created_at,
+          },
+        });
+      }
+
+      const definition: FlowDefinition = {
+        nodes: [
+          {
+            id: 'demo-trigger-node',
+            type: 'trigger',
+            position: { x: 80, y: 100 },
+            data: { keyword, matchType: 'contains' },
+          },
+          {
+            id: 'demo-message-node',
+            type: 'send_message',
+            position: { x: 340, y: 100 },
+            data: { text: replyText },
+          },
+        ],
+        edges: [{ id: 'demo-trigger-to-message', source: 'demo-trigger-node', target: 'demo-message-node' }],
+      };
+
+      // The endpoint constructs the graph rather than accepting arbitrary
+      // nodes, but keep the same publish invariant as the regular flow API.
+      const validationErrors = validateFlowDefinition(definition);
+      if (validationErrors.length > 0) throw new Error(`invalid demo flow: ${validationErrors.join('; ')}`);
+
+      const flowId = randomUUID();
+      const triggerId = randomUUID();
+      const flow = await queryOne<{
+        id: string;
+        bot_id: string;
+        version: number;
+        definition: FlowDefinition;
+        status: 'published';
+        created_at: string;
+      }>(
+        client,
+        `INSERT INTO flows (id, bot_id, version, definition, status)
+         VALUES (?, ?, 1, ?, 'published')
+         RETURNING *`,
+        flowId,
+        bot.id,
+        JSON.stringify(definition)
+      );
+      const trigger = await queryOne<Trigger>(
+        client,
+        `INSERT INTO triggers (id, bot_id, flow_id, flow_version, keyword, match_type)
+         VALUES (?, ?, ?, 1, ?, 'contains')
+         RETURNING *`,
+        triggerId,
+        bot.id,
+        flowId,
+        keyword
+      );
+
+      await client.query('COMMIT');
+      return res.status(201).json({ bot, flow, trigger });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }));
+
+  // Persists one controlled demo conversation through the exact same flow
+  // engine as a real webhook. It is intentionally separate from /test:
+  // dry-run preview must stay analytics-clean, while this explicit action
+  // exists to demonstrate the subscriber and timeline appearing in CRM.
+  app.post('/api/bots/:botId/demo-interactions', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const messageText = typeof req.body?.messageText === 'string' ? req.body.messageText.trim() : '';
+    if (!messageText) return res.status(400).json({ error: 'messageText is required' });
+
+    const bot = await getBotForTenant(db, req.params.botId, tenantId);
+    if (!bot) return res.status(404).json({ error: 'bot not found' });
+    if (bot.external_account_id !== demoExternalAccountId(tenantId)) {
+      return res.status(403).json({ error: 'demo interactions are only available for the tenant demo bot' });
+    }
+
+    const outcome = await runFlow(db, {
+      tenantId,
+      botId: bot.id,
+      externalUserId: DEMO_EXTERNAL_USER_ID,
+      messageText,
+      isTest: false,
+    });
+    const subscriber = await queryOne<Subscriber>(
+      db,
+      `SELECT * FROM subscribers WHERE bot_id = ? AND external_user_id = ?`,
+      bot.id,
+      DEMO_EXTERNAL_USER_ID
+    );
+
+    // runFlow creates/fetches the persistent subscriber before trigger
+    // matching. Reaching this branch without one would mean that invariant
+    // regressed, so surface it as a server error rather than returning a
+    // successful response that the CRM cannot follow.
+    if (!subscriber) throw new Error('demo interaction completed without a persistent subscriber');
+
+    res.json({ subscriberId: subscriber.id, outcome });
+  }));
 
   // ---- Flows ---------------------------------------------------------------
-  app.post('/api/bots/:botId/flows', (req, res) => {
-    const bot = getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
+  app.post('/api/bots/:botId/flows', asyncHandler(async (req, res) => {
+    const bot = await getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
     if (!bot) return res.status(404).json({ error: 'bot not found' });
 
     const definition = req.body?.definition as FlowDefinition | undefined;
@@ -84,105 +409,118 @@ export function createApp(db: Database.Database): Express {
     }
 
     const flowId = randomUUID();
-    db.prepare(`INSERT INTO flows (id, bot_id, version, definition, status) VALUES (?, ?, 1, ?, 'draft')`).run(
+    await exec(
+      db,
+      `INSERT INTO flows (id, bot_id, version, definition, status) VALUES (?, ?, 1, ?, 'draft')`,
       flowId,
       bot.id,
       JSON.stringify(definition)
     );
 
     res.status(201).json({ flow: { id: flowId, version: 1, status: 'draft' } });
-  });
+  }));
 
   // Lists every flow (each version as its own row) for a bot — what the
   // canvas uses to show "your flows" instead of requiring the caller to
   // remember a flowId after creating it.
-  app.get('/api/bots/:botId/flows', (req, res) => {
-    const bot = getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
+  app.get('/api/bots/:botId/flows', asyncHandler(async (req, res) => {
+    const bot = await getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
     if (!bot) return res.status(404).json({ error: 'bot not found' });
 
-    const flows = db
-      .prepare(`SELECT id, version, status, created_at FROM flows WHERE bot_id = ? ORDER BY id, version DESC`)
-      .all(bot.id);
+    const flows = await queryAll(db, `SELECT id, version, status, created_at FROM flows WHERE bot_id = ? ORDER BY id, version DESC`, bot.id);
 
     res.json({ flows });
-  });
+  }));
 
   // Fetches one specific version's definition — needed to re-open an
   // existing draft/published flow for editing; without this the canvas
   // could only ever create new flows, never load one back in.
-  app.get('/api/flows/:flowId/versions/:version', (req, res) => {
+  app.get('/api/flows/:flowId/versions/:version', asyncHandler(async (req, res) => {
     const version = Number(req.params.version);
-    const row = db
-      .prepare(
-        `SELECT flows.id, flows.version, flows.definition, flows.status, bots.tenant_id
-         FROM flows JOIN bots ON flows.bot_id = bots.id
-         WHERE flows.id = ? AND flows.version = ?`
-      )
-      .get(req.params.flowId, version) as
-      | { id: string; version: number; definition: string; status: string; tenant_id: string }
-      | undefined;
+    const row = await queryOne<{ id: string; version: number; definition: FlowDefinition; status: string; tenant_id: string }>(
+      db,
+      `SELECT flows.id, flows.version, flows.definition, flows.status, bots.tenant_id
+       FROM flows JOIN bots ON flows.bot_id = bots.id
+       WHERE flows.id = ? AND flows.version = ?`,
+      req.params.flowId,
+      version
+    );
 
     if (!row || row.tenant_id !== res.locals.tenantId) return res.status(404).json({ error: 'flow not found' });
 
-    res.json({ flow: { id: row.id, version: row.version, status: row.status, definition: JSON.parse(row.definition) } });
-  });
+    res.json({ flow: { id: row.id, version: row.version, status: row.status, definition: row.definition } });
+  }));
 
   // Publishing is where an invalid graph gets rejected — drafts can be
   // incomplete while being edited, but nothing incomplete can go live.
-  app.post('/api/flows/:flowId/versions/:version/publish', (req, res) => {
+  app.post('/api/flows/:flowId/versions/:version/publish', asyncHandler(async (req, res) => {
     const version = Number(req.params.version);
-    const row = db
-      .prepare(
-        `SELECT flows.definition, bots.tenant_id
-         FROM flows JOIN bots ON flows.bot_id = bots.id
-         WHERE flows.id = ? AND flows.version = ?`
-      )
-      .get(req.params.flowId, version) as { definition: string; tenant_id: string } | undefined;
+    const row = await queryOne<{ definition: FlowDefinition; tenant_id: string }>(
+      db,
+      `SELECT flows.definition, bots.tenant_id
+       FROM flows JOIN bots ON flows.bot_id = bots.id
+       WHERE flows.id = ? AND flows.version = ?`,
+      req.params.flowId,
+      version
+    );
 
     if (!row || row.tenant_id !== res.locals.tenantId) return res.status(404).json({ error: 'flow not found' });
 
-    const definition = JSON.parse(row.definition) as FlowDefinition;
-    const errors = validateFlowDefinition(definition);
+    const errors = validateFlowDefinition(row.definition);
     if (errors.length > 0) return res.status(422).json({ errors });
 
-    db.prepare(`UPDATE flows SET status = 'published' WHERE id = ? AND version = ?`).run(req.params.flowId, version);
+    await exec(db, `UPDATE flows SET status = 'published' WHERE id = ? AND version = ?`, req.params.flowId, version);
     res.json({ flow: { id: req.params.flowId, version, status: 'published' } });
-  });
+  }));
 
   // Adds a new draft version to an EXISTING flow (auto-incremented from
   // the current max version) — this is what makes rollback meaningful:
   // without a second version, there's nothing to roll back from.
-  app.post('/api/flows/:flowId/versions', (req, res) => {
+  app.post('/api/flows/:flowId/versions', asyncHandler(async (req, res) => {
     const definition = req.body?.definition as FlowDefinition | undefined;
     if (!definition || !Array.isArray(definition.nodes) || !Array.isArray(definition.edges)) {
       return res.status(400).json({ error: 'definition with nodes[] and edges[] is required' });
     }
 
-    const flowMeta = db
-      .prepare(
-        `SELECT flows.bot_id, bots.tenant_id, MAX(flows.version) as maxVersion
-         FROM flows JOIN bots ON flows.bot_id = bots.id
-         WHERE flows.id = ?
-         GROUP BY flows.bot_id, bots.tenant_id`
-      )
-      .get(req.params.flowId) as { bot_id: string; tenant_id: string; maxVersion: number } | undefined;
+    const flowMeta = await queryOne<{ bot_id: string; tenant_id: string; maxversion: number }>(
+      db,
+      `SELECT flows.bot_id, bots.tenant_id, MAX(flows.version) as maxVersion
+       FROM flows JOIN bots ON flows.bot_id = bots.id
+       WHERE flows.id = ?
+       GROUP BY flows.bot_id, bots.tenant_id`,
+      req.params.flowId
+    );
 
     if (!flowMeta || flowMeta.tenant_id !== res.locals.tenantId) return res.status(404).json({ error: 'flow not found' });
 
-    const nextVersion = flowMeta.maxVersion + 1;
-    db.prepare(`INSERT INTO flows (id, bot_id, version, definition, status) VALUES (?, ?, ?, ?, 'draft')`).run(
-      req.params.flowId,
-      flowMeta.bot_id,
-      nextVersion,
-      JSON.stringify(definition)
-    );
+    const nextVersion = flowMeta.maxversion + 1;
+    try {
+      await exec(
+        db,
+        `INSERT INTO flows (id, bot_id, version, definition, status) VALUES (?, ?, ?, ?, 'draft')`,
+        req.params.flowId,
+        flowMeta.bot_id,
+        nextVersion,
+        JSON.stringify(definition)
+      );
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        // Two concurrent "add a version" calls computed the same
+        // maxVersion+1 and raced for the flows(id, version) primary key
+        // (rare — this editor has one save button, not concurrent
+        // callers) — ask the loser to recompute against the now-current
+        // max rather than surfacing a bare 500.
+        return res.status(409).json({ error: 'version already created by a concurrent request, retry' });
+      }
+      throw err;
+    }
 
     res.status(201).json({ flow: { id: req.params.flowId, version: nextVersion, status: 'draft' } });
-  });
+  }));
 
   // ---- Triggers --------------------------------------------------------
-  app.post('/api/bots/:botId/triggers', (req, res) => {
-    const bot = getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
+  app.post('/api/bots/:botId/triggers', asyncHandler(async (req, res) => {
+    const bot = await getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
     if (!bot) return res.status(404).json({ error: 'bot not found' });
 
     const { keyword, matchType, flowId, flowVersion } = req.body ?? {};
@@ -190,44 +528,76 @@ export function createApp(db: Database.Database): Express {
       return res.status(400).json({ error: 'keyword, flowId and flowVersion are required' });
     }
 
-    const flow = db
-      .prepare(`SELECT status FROM flows WHERE id = ? AND version = ? AND bot_id = ?`)
-      .get(flowId, flowVersion, bot.id) as { status: string } | undefined;
+    const flow = await queryOne<{ status: string }>(db, `SELECT status FROM flows WHERE id = ? AND version = ? AND bot_id = ?`, flowId, flowVersion, bot.id);
 
     if (!flow) return res.status(404).json({ error: 'flow not found on this bot' });
     if (flow.status !== 'published') {
       return res.status(422).json({ error: 'cannot bind a trigger to a flow that is not published' });
     }
 
-    const triggerId = randomUUID();
-    db.prepare(
-      `INSERT INTO triggers (id, bot_id, flow_id, flow_version, keyword, match_type) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(triggerId, bot.id, flowId, flowVersion, keyword, matchType ?? 'contains');
+    // Two active triggers on the same bot racing for the same keyword is
+    // not a valid state — matchTrigger() would silently pick whichever one
+    // was created first and the other would never fire. No draft/active
+    // split exists on triggers (every row is_active=true, see schema.sql),
+    // so this checks against all of the bot's existing triggers, not a
+    // "live" subset — comparison is normalized the same way matching is
+    // (trim + lowercase), so "Цена" and " цена " collide too.
+    const existingTriggers = await getActiveTriggersForBot(db, bot.id);
+    const normalizedIncoming = normalizeKeyword(keyword);
+    if (existingTriggers.some((t) => normalizeKeyword(t.keyword) === normalizedIncoming)) {
+      return res.status(409).json({ error: 'a trigger with this keyword already exists for this bot' });
+    }
 
-    res.status(201).json({ trigger: { id: triggerId, bot_id: bot.id, flow_id: flowId, flow_version: flowVersion, keyword, match_type: matchType ?? 'contains' } });
-  });
+    // The check above is a fast pre-check for the common (non-racing) case
+    // — same two-layer shape as flow_runs' dedup (see triggerMatcher.ts's
+    // comment on hasRunToday). It is NOT the source of truth under
+    // concurrency: two requests can both pass it before either INSERT
+    // lands. idx_triggers_bot_keyword_unique (schema.sql) is the real
+    // guarantee; this catch is what makes the loser of that race get a
+    // clean 409 instead of an unhandled 500.
+    const triggerId = randomUUID();
+    try {
+      await exec(
+        db,
+        `INSERT INTO triggers (id, bot_id, flow_id, flow_version, keyword, match_type) VALUES (?, ?, ?, ?, ?, ?)`,
+        triggerId,
+        bot.id,
+        flowId,
+        flowVersion,
+        keyword,
+        matchType ?? 'contains'
+      );
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({ error: 'a trigger with this keyword already exists for this bot' });
+      }
+      throw err;
+    }
+
+    res.status(201).json({
+      trigger: { id: triggerId, bot_id: bot.id, flow_id: flowId, flow_version: flowVersion, keyword, match_type: matchType ?? 'contains', is_active: true },
+    });
+  }));
 
   // Points an existing trigger back at an earlier version of the same
   // flow. Doesn't touch flow rows or other triggers on the same flow —
   // triggers are bound per-version by design (see schema.sql), so rolling
   // one back can't silently change what any other trigger runs.
-  app.post('/api/triggers/:triggerId/rollback', (req, res) => {
-    const trigger = db
-      .prepare(
-        `SELECT triggers.*, bots.tenant_id as bot_tenant_id
-         FROM triggers JOIN bots ON triggers.bot_id = bots.id
-         WHERE triggers.id = ?`
-      )
-      .get(req.params.triggerId) as (Trigger & { bot_tenant_id: string }) | undefined;
+  app.post('/api/triggers/:triggerId/rollback', asyncHandler(async (req, res) => {
+    const trigger = await queryOne<Trigger & { bot_tenant_id: string }>(
+      db,
+      `SELECT triggers.*, bots.tenant_id as bot_tenant_id
+       FROM triggers JOIN bots ON triggers.bot_id = bots.id
+       WHERE triggers.id = ?`,
+      req.params.triggerId
+    );
 
     if (!trigger || trigger.bot_tenant_id !== res.locals.tenantId) return res.status(404).json({ error: 'trigger not found' });
 
     const toVersion = Number(req.body?.toVersion);
     if (!toVersion) return res.status(400).json({ error: 'toVersion is required' });
 
-    const targetFlow = db.prepare(`SELECT status FROM flows WHERE id = ? AND version = ?`).get(trigger.flow_id, toVersion) as
-      | { status: string }
-      | undefined;
+    const targetFlow = await queryOne<{ status: string }>(db, `SELECT status FROM flows WHERE id = ? AND version = ?`, trigger.flow_id, toVersion);
 
     if (!targetFlow) return res.status(404).json({ error: 'target flow version not found' });
     // Only ever-published versions are valid rollback targets — an
@@ -237,13 +607,13 @@ export function createApp(db: Database.Database): Express {
       return res.status(422).json({ error: 'can only roll back to a version that was published' });
     }
 
-    db.prepare(`UPDATE triggers SET flow_version = ? WHERE id = ?`).run(toVersion, trigger.id);
+    await exec(db, `UPDATE triggers SET flow_version = ? WHERE id = ?`, toVersion, trigger.id);
     res.json({ trigger: { id: trigger.id, flow_id: trigger.flow_id, flow_version: toVersion } });
-  });
+  }));
 
   // ---- Test mode ---------------------------------------------------------
-  app.post('/api/bots/:botId/test', (req, res) => {
-    const bot = getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
+  app.post('/api/bots/:botId/test', asyncHandler(async (req, res) => {
+    const bot = await getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
     if (!bot) return res.status(404).json({ error: 'bot not found' });
 
     const { externalUserId, messageText } = req.body ?? {};
@@ -251,7 +621,7 @@ export function createApp(db: Database.Database): Express {
       return res.status(400).json({ error: 'externalUserId and messageText are required' });
     }
 
-    const outcome = runFlow(db, {
+    const outcome = await runFlow(db, {
       tenantId: res.locals.tenantId as string,
       botId: bot.id,
       externalUserId,
@@ -260,41 +630,40 @@ export function createApp(db: Database.Database): Express {
     });
 
     res.json({ outcome });
-  });
+  }));
 
   // ---- Dashboard -----------------------------------------------------------
-  app.get('/api/bots/:botId/dashboard', (req, res) => {
-    const bot = getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
+  app.get('/api/bots/:botId/dashboard', asyncHandler(async (req, res) => {
+    const bot = await getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
     if (!bot) return res.status(404).json({ error: 'bot not found' });
 
-    const subscriberCount = (
-      db.prepare(`SELECT COUNT(*) as n FROM subscribers WHERE bot_id = ?`).get(bot.id) as { n: number }
-    ).n;
-
-    const runsByStatus = db
-      .prepare(`SELECT status, COUNT(*) as n FROM flow_runs WHERE bot_id = ? GROUP BY status`)
-      .all(bot.id) as Array<{ status: string; n: number }>;
-
-    const recentRuns = db
-      .prepare(
+    // None of these three depends on another's result — run them
+    // concurrently so the endpoint pays the max of the three round trips
+    // to Postgres instead of their sum.
+    const [subscriberCountRow, runsByStatus, recentRuns] = await Promise.all([
+      queryOne<{ n: number }>(db, `SELECT COUNT(*) as n FROM subscribers WHERE bot_id = ?`, bot.id),
+      queryAll<{ status: string; n: number }>(db, `SELECT status, COUNT(*) as n FROM flow_runs WHERE bot_id = ? GROUP BY status`, bot.id),
+      queryAll(
+        db,
         `SELECT flow_runs.id, triggers.keyword, flow_runs.status, flow_runs.failure_reason, flow_runs.started_at
          FROM flow_runs JOIN triggers ON flow_runs.trigger_id = triggers.id
          WHERE flow_runs.bot_id = ?
-         ORDER BY flow_runs.started_at DESC, flow_runs.rowid DESC
-         LIMIT 10`
-      )
-      .all(bot.id);
+         ORDER BY flow_runs.started_at DESC, flow_runs.seq DESC
+         LIMIT 10`,
+        bot.id
+      ),
+    ]);
 
-    res.json({ subscriberCount, runsByStatus, recentRuns });
-  });
+    res.json({ subscriberCount: subscriberCountRow!.n, runsByStatus, recentRuns });
+  }));
 
   // ---- Module 2: CRM and audience database -------------------------------
 
   // List + filter — the "table/Kanban of leads" and "filters by segment"
   // from the ТЗ both read from this one endpoint; a segment is just this
   // query with a tag filter applied, not a stored entity.
-  app.get('/api/bots/:botId/subscribers', (req, res) => {
-    const bot = getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
+  app.get('/api/bots/:botId/subscribers', asyncHandler(async (req, res) => {
+    const bot = await getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
     if (!bot) return res.status(404).json({ error: 'bot not found' });
 
     const { tag, leadStatus } = req.query as { tag?: string; leadStatus?: string };
@@ -312,24 +681,26 @@ export function createApp(db: Database.Database): Express {
       params.push(leadStatus);
     }
 
-    const subscribers = db
-      .prepare(`SELECT * FROM subscribers WHERE ${conditions.join(' AND ')} ORDER BY last_interacted_at DESC, rowid DESC`)
-      .all(...params) as Subscriber[];
+    const subscribers = await queryAll<Subscriber>(
+      db,
+      `SELECT * FROM subscribers WHERE ${conditions.join(' AND ')} ORDER BY last_interacted_at DESC, seq DESC`,
+      ...params
+    );
 
-    const tagsBySubscriber = tagsForSubscribers(db, subscribers.map((s) => s.id));
+    const tagsBySubscriber = await tagsForSubscribers(db, subscribers.map((s) => s.id));
     res.json({ subscribers: subscribers.map((s) => ({ ...s, tags: tagsBySubscriber[s.id] ?? [] })) });
-  });
+  }));
 
-  app.get('/api/subscribers/:id', (req, res) => {
-    const subscriber = getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.get('/api/subscribers/:id', asyncHandler(async (req, res) => {
+    const subscriber = await getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!subscriber) return res.status(404).json({ error: 'subscriber not found' });
 
-    const tags = tagsForSubscribers(db, [subscriber.id])[subscriber.id] ?? [];
+    const tags = (await tagsForSubscribers(db, [subscriber.id]))[subscriber.id] ?? [];
     res.json({ subscriber: { ...subscriber, tags } });
-  });
+  }));
 
-  app.patch('/api/subscribers/:id/lead-status', (req, res) => {
-    const subscriber = getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.patch('/api/subscribers/:id/lead-status', asyncHandler(async (req, res) => {
+    const subscriber = await getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!subscriber) return res.status(404).json({ error: 'subscriber not found' });
 
     const { leadStatus } = req.body ?? {};
@@ -337,39 +708,38 @@ export function createApp(db: Database.Database): Express {
       return res.status(400).json({ error: 'leadStatus must be one of: new, in_progress, client' });
     }
 
-    db.prepare(`UPDATE subscribers SET lead_status = ? WHERE id = ?`).run(leadStatus, subscriber.id);
+    await exec(db, `UPDATE subscribers SET lead_status = ? WHERE id = ?`, leadStatus, subscriber.id);
     res.json({ subscriber: { ...subscriber, lead_status: leadStatus } });
-  });
+  }));
 
   // The contact profile timeline — every inbound message (matched or not)
   // plus every outbound send, in order. This is what flowEngine's
   // logMessage calls (added for Module 2) exist to make possible.
-  app.get('/api/subscribers/:id/messages', (req, res) => {
-    const subscriber = getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.get('/api/subscribers/:id/messages', asyncHandler(async (req, res) => {
+    const subscriber = await getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!subscriber) return res.status(404).json({ error: 'subscriber not found' });
 
-    const messages = db
-      // rowid tiebreaker: two messages logged within the same millisecond
-      // (created_at has only ms precision) would otherwise sort in an
-      // unstable order relative to each other.
-      .prepare(`SELECT direction, content, created_at FROM messages WHERE subscriber_id = ? ORDER BY created_at ASC, rowid ASC`)
-      .all(subscriber.id);
+    const messages = await queryAll(
+      // seq tiebreaker: two messages logged within the same millisecond
+      // would otherwise sort in an unstable order relative to each other.
+      db,
+      `SELECT direction, content, created_at FROM messages WHERE subscriber_id = ? ORDER BY created_at ASC, seq ASC`,
+      subscriber.id
+    );
 
     res.json({ messages });
-  });
+  }));
 
-  app.get('/api/subscribers/:id/notes', (req, res) => {
-    const subscriber = getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.get('/api/subscribers/:id/notes', asyncHandler(async (req, res) => {
+    const subscriber = await getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!subscriber) return res.status(404).json({ error: 'subscriber not found' });
 
-    const notes = db
-      .prepare(`SELECT id, body, created_at FROM notes WHERE subscriber_id = ? ORDER BY created_at DESC, rowid DESC`)
-      .all(subscriber.id);
+    const notes = await queryAll(db, `SELECT id, body, created_at FROM notes WHERE subscriber_id = ? ORDER BY created_at DESC, seq DESC`, subscriber.id);
     res.json({ notes });
-  });
+  }));
 
-  app.post('/api/subscribers/:id/notes', (req, res) => {
-    const subscriber = getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.post('/api/subscribers/:id/notes', asyncHandler(async (req, res) => {
+    const subscriber = await getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!subscriber) return res.status(404).json({ error: 'subscriber not found' });
 
     const { body } = req.body ?? {};
@@ -378,94 +748,103 @@ export function createApp(db: Database.Database): Express {
     }
 
     const id = randomUUID();
-    db.prepare(`INSERT INTO notes (id, subscriber_id, tenant_id, body) VALUES (?, ?, ?, ?)`).run(
-      id,
-      subscriber.id,
-      subscriber.tenant_id,
-      body
-    );
+    await exec(db, `INSERT INTO notes (id, subscriber_id, tenant_id, body) VALUES (?, ?, ?, ?)`, id, subscriber.id, subscriber.tenant_id, body);
     res.status(201).json({ note: { id, subscriber_id: subscriber.id, body } });
-  });
+  }));
 
-  app.get('/api/bots/:botId/tags', (req, res) => {
-    const bot = getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
+  app.get('/api/bots/:botId/tags', asyncHandler(async (req, res) => {
+    const bot = await getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
     if (!bot) return res.status(404).json({ error: 'bot not found' });
 
-    const tags = db.prepare(`SELECT id, name FROM tags WHERE tenant_id = ? ORDER BY name`).all(res.locals.tenantId);
+    const tags = await queryAll(db, `SELECT id, name FROM tags WHERE tenant_id = ? ORDER BY name`, res.locals.tenantId);
     res.json({ tags });
-  });
+  }));
 
   // "Быстрое добавление тега прямо из чата" — one call, creates the tag
   // if it doesn't exist yet rather than requiring a separate create-tag
   // step first.
-  app.post('/api/subscribers/:id/tags', (req, res) => {
-    const subscriber = getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.post('/api/subscribers/:id/tags', asyncHandler(async (req, res) => {
+    const subscriber = await getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!subscriber) return res.status(404).json({ error: 'subscriber not found' });
 
     const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     if (!name) return res.status(400).json({ error: 'name is required' });
 
-    let tag = db.prepare(`SELECT id, name FROM tags WHERE tenant_id = ? AND name = ?`).get(subscriber.tenant_id, name) as
-      | { id: string; name: string }
-      | undefined;
+    let tag = await queryOne<{ id: string; name: string }>(db, `SELECT id, name FROM tags WHERE tenant_id = ? AND name = ?`, subscriber.tenant_id, name);
 
     if (!tag) {
       const id = randomUUID();
-      db.prepare(`INSERT INTO tags (id, tenant_id, name) VALUES (?, ?, ?)`).run(id, subscriber.tenant_id, name);
-      tag = { id, name };
+      try {
+        await exec(db, `INSERT INTO tags (id, tenant_id, name) VALUES (?, ?, ?)`, id, subscriber.tenant_id, name);
+        tag = { id, name };
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+        // Lost the race to a concurrent create of the same tag name
+        // (tags has UNIQUE(tenant_id, name)) — the winner's row already
+        // exists, so use it instead of failing a harmless race.
+        tag = await queryOne<{ id: string; name: string }>(db, `SELECT id, name FROM tags WHERE tenant_id = ? AND name = ?`, subscriber.tenant_id, name);
+        if (!tag) throw err;
+      }
     }
 
-    // SQLite-specific; becomes ON CONFLICT DO NOTHING on Postgres.
-    db.prepare(`INSERT OR IGNORE INTO subscriber_tags (subscriber_id, tag_id) VALUES (?, ?)`).run(subscriber.id, tag.id);
+    await exec(db, `INSERT INTO subscriber_tags (subscriber_id, tag_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, subscriber.id, tag.id);
     res.status(201).json({ tag });
-  });
+  }));
 
-  app.delete('/api/subscribers/:id/tags/:tagId', (req, res) => {
-    const subscriber = getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.delete('/api/subscribers/:id/tags/:tagId', asyncHandler(async (req, res) => {
+    const subscriber = await getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!subscriber) return res.status(404).json({ error: 'subscriber not found' });
 
-    db.prepare(`DELETE FROM subscriber_tags WHERE subscriber_id = ? AND tag_id = ?`).run(subscriber.id, req.params.tagId);
+    await exec(db, `DELETE FROM subscriber_tags WHERE subscriber_id = ? AND tag_id = ?`, subscriber.id, req.params.tagId);
     res.status(204).send();
-  });
+  }));
 
   // ---- Module 3: Reel analysis and script adaptation (mocked) ------------
   // "Вставьте ссылку" -> analyzeReelMock stands in for yt-dlp + Whisper +
   // an LLM call. Only this function's internals change when the real
   // pipeline replaces it; the request/response shape here is what the
   // real version will also expose.
-  app.post('/api/reel-analyses', (req, res) => {
+  app.post('/api/reel-analyses', asyncHandler(async (req, res) => {
     const sourceUrl = typeof req.body?.sourceUrl === 'string' ? req.body.sourceUrl.trim() : '';
     if (!sourceUrl) return res.status(400).json({ error: 'sourceUrl is required' });
 
     const fields = analyzeReelMock(sourceUrl);
     const id = randomUUID();
-    db.prepare(
+    await exec(
+      db,
       `INSERT INTO reel_analyses (id, tenant_id, source_url, hook, duration_seconds, on_screen_text, structure)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, res.locals.tenantId, fields.source_url, fields.hook, fields.duration_seconds, fields.on_screen_text, fields.structure);
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      res.locals.tenantId,
+      fields.source_url,
+      fields.hook,
+      fields.duration_seconds,
+      fields.on_screen_text,
+      // pg serializes a JS array parameter as a Postgres array literal, not
+      // JSON — must stringify explicitly for a jsonb column (see db.ts's
+      // query helpers: objects get auto-JSON'd by pg, arrays don't).
+      JSON.stringify(fields.structure)
+    );
 
-    const analysis = getAnalysisForTenant(db, id, res.locals.tenantId as string)!;
-    res.status(201).json({ analysis: { ...analysis, structure: JSON.parse(analysis.structure) } });
-  });
+    const analysis = (await getAnalysisForTenant(db, id, res.locals.tenantId as string))!;
+    res.status(201).json({ analysis });
+  }));
 
   // The "library" from the ТЗ.
-  app.get('/api/reel-analyses', (req, res) => {
-    const analyses = db
-      .prepare(`SELECT * FROM reel_analyses WHERE tenant_id = ? ORDER BY created_at DESC, rowid DESC`)
-      .all(res.locals.tenantId) as ReelAnalysis[];
+  app.get('/api/reel-analyses', asyncHandler(async (req, res) => {
+    const analyses = await queryAll<ReelAnalysis>(db, `SELECT * FROM reel_analyses WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`, res.locals.tenantId);
+    res.json({ analyses });
+  }));
 
-    res.json({ analyses: analyses.map((a) => ({ ...a, structure: JSON.parse(a.structure) })) });
-  });
-
-  app.get('/api/reel-analyses/:id', (req, res) => {
-    const analysis = getAnalysisForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.get('/api/reel-analyses/:id', asyncHandler(async (req, res) => {
+    const analysis = await getAnalysisForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!analysis) return res.status(404).json({ error: 'analysis not found' });
 
-    res.json({ analysis: { ...analysis, structure: JSON.parse(analysis.structure) } });
-  });
+    res.json({ analysis });
+  }));
 
-  app.post('/api/reel-analyses/:id/scripts', (req, res) => {
-    const analysis = getAnalysisForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.post('/api/reel-analyses/:id/scripts', asyncHandler(async (req, res) => {
+    const analysis = await getAnalysisForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!analysis) return res.status(404).json({ error: 'analysis not found' });
 
     const niche = typeof req.body?.niche === 'string' ? req.body.niche.trim() : '';
@@ -473,40 +852,32 @@ export function createApp(db: Database.Database): Express {
 
     const scriptText = generateScriptMock(analysis, niche);
     const id = randomUUID();
-    db.prepare(
-      `INSERT INTO generated_scripts (id, tenant_id, analysis_id, niche, script_text) VALUES (?, ?, ?, ?, ?)`
-    ).run(id, res.locals.tenantId, analysis.id, niche, scriptText);
+    await exec(db, `INSERT INTO generated_scripts (id, tenant_id, analysis_id, niche, script_text) VALUES (?, ?, ?, ?, ?)`, id, res.locals.tenantId, analysis.id, niche, scriptText);
 
     res.status(201).json({ script: { id, tenant_id: res.locals.tenantId, analysis_id: analysis.id, niche, script_text: scriptText } });
-  });
+  }));
 
-  app.get('/api/reel-analyses/:id/scripts', (req, res) => {
-    const analysis = getAnalysisForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.get('/api/reel-analyses/:id/scripts', asyncHandler(async (req, res) => {
+    const analysis = await getAnalysisForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!analysis) return res.status(404).json({ error: 'analysis not found' });
 
-    const scripts = db
-      .prepare(`SELECT * FROM generated_scripts WHERE analysis_id = ? ORDER BY created_at DESC, rowid DESC`)
-      .all(analysis.id) as GeneratedScript[];
+    const scripts = await queryAll<GeneratedScript>(db, `SELECT * FROM generated_scripts WHERE analysis_id = ? ORDER BY created_at DESC, seq DESC`, analysis.id);
     res.json({ scripts });
-  });
+  }));
 
   // "Поиск по тегам ниши" (ТЗ) across the whole library, not just one analysis.
-  app.get('/api/scripts', (req, res) => {
+  app.get('/api/scripts', asyncHandler(async (req, res) => {
     const niche = typeof req.query.niche === 'string' ? req.query.niche : undefined;
-    const scripts = (
-      niche
-        ? db
-            .prepare(`SELECT * FROM generated_scripts WHERE tenant_id = ? AND niche = ? ORDER BY created_at DESC, rowid DESC`)
-            .all(res.locals.tenantId, niche)
-        : db.prepare(`SELECT * FROM generated_scripts WHERE tenant_id = ? ORDER BY created_at DESC, rowid DESC`).all(res.locals.tenantId)
-    ) as GeneratedScript[];
+    const scripts = niche
+      ? await queryAll<GeneratedScript>(db, `SELECT * FROM generated_scripts WHERE tenant_id = ? AND niche = ? ORDER BY created_at DESC, seq DESC`, res.locals.tenantId, niche)
+      : await queryAll<GeneratedScript>(db, `SELECT * FROM generated_scripts WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`, res.locals.tenantId);
 
     res.json({ scripts });
-  });
+  }));
 
   // ---- Module 4: Carousel generation (mocked LLM text) --------------------
 
-  app.post('/api/brand-presets', (req, res) => {
+  app.post('/api/brand-presets', asyncHandler(async (req, res) => {
     const { name, fontFamily, primaryColor, secondaryColor, logoUrl } = req.body ?? {};
     if (!name) return res.status(400).json({ error: 'name is required' });
 
@@ -517,89 +888,94 @@ export function createApp(db: Database.Database): Express {
       secondary_color: secondaryColor ?? '#ffffff',
       logo_url: logoUrl ?? null,
     };
-    db.prepare(
+    await exec(
+      db,
       `INSERT INTO brand_presets (id, tenant_id, name, font_family, primary_color, secondary_color, logo_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, res.locals.tenantId, name, fields.font_family, fields.primary_color, fields.secondary_color, fields.logo_url);
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      res.locals.tenantId,
+      name,
+      fields.font_family,
+      fields.primary_color,
+      fields.secondary_color,
+      fields.logo_url
+    );
 
     res.status(201).json({ preset: { id, tenant_id: res.locals.tenantId, name, ...fields } });
-  });
+  }));
 
-  app.get('/api/brand-presets', (req, res) => {
-    const presets = db.prepare(`SELECT * FROM brand_presets WHERE tenant_id = ? ORDER BY name`).all(res.locals.tenantId);
+  app.get('/api/brand-presets', asyncHandler(async (req, res) => {
+    const presets = await queryAll(db, `SELECT * FROM brand_presets WHERE tenant_id = ? ORDER BY name`, res.locals.tenantId);
     res.json({ presets });
-  });
+  }));
 
-  // "Промпт → готовая карусель" — generateCarouselMock stands in for the
-  // LLM call; everything else (slide storage, editing, listing) is real.
-  app.post('/api/carousels', (req, res) => {
+  // "Промпт → готовая карусель" — generateCarouselSlides calls OpenAI when
+  // OPENAI_API_KEY is set, falling back to the deterministic mock otherwise
+  // (missing key, network error, malformed response); everything else
+  // (slide storage, editing, listing) is real either way.
+  app.post('/api/carousels', asyncHandler(async (req, res) => {
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
     if (!prompt) return res.status(400).json({ error: 'prompt is required' });
 
     const presetId = req.body?.presetId ?? null;
     if (presetId) {
-      const preset = db.prepare(`SELECT id FROM brand_presets WHERE id = ? AND tenant_id = ?`).get(presetId, res.locals.tenantId);
+      const preset = await queryOne(db, `SELECT id FROM brand_presets WHERE id = ? AND tenant_id = ?`, presetId, res.locals.tenantId);
       if (!preset) return res.status(404).json({ error: 'preset not found' });
     }
 
     const carouselId = randomUUID();
-    db.prepare(`INSERT INTO carousels (id, tenant_id, prompt, preset_id) VALUES (?, ?, ?, ?)`).run(
-      carouselId,
-      res.locals.tenantId,
-      prompt,
-      presetId
-    );
+    await exec(db, `INSERT INTO carousels (id, tenant_id, prompt, preset_id) VALUES (?, ?, ?, ?)`, carouselId, res.locals.tenantId, prompt, presetId);
 
-    const insertSlide = db.prepare(
-      `INSERT INTO carousel_slides (id, carousel_id, tenant_id, position, headline, body) VALUES (?, ?, ?, ?, ?, ?)`
-    );
-    generateCarouselMock(prompt).forEach((slide, i) => {
-      insertSlide.run(randomUUID(), carouselId, res.locals.tenantId, i, slide.headline, slide.body);
-    });
+    // One multi-row INSERT, not an awaited-per-slide loop: each slide is
+    // an independent Postgres round-trip now (unlike the old synchronous
+    // better-sqlite3 version, which committed the whole batch on one
+    // in-process call), so a sequential loop both serializes N round-trips
+    // and lets a concurrent reader observe a carousel with only some of
+    // its slides if the request fails partway through.
+    const slides = await generateCarouselSlides(prompt);
+    const slideParams = slides.flatMap((slide, i) => [randomUUID(), carouselId, res.locals.tenantId, i, slide.headline, slide.body]);
+    const valuesSql = slides.map(() => '(?, ?, ?, ?, ?, ?)').join(', ');
+    await exec(db, `INSERT INTO carousel_slides (id, carousel_id, tenant_id, position, headline, body) VALUES ${valuesSql}`, ...slideParams);
 
-    const carousel = getCarouselForTenant(db, carouselId, res.locals.tenantId as string)!;
-    res.status(201).json({ carousel, slides: getSlidesForCarousel(db, carouselId) });
-  });
+    const carousel = (await getCarouselForTenant(db, carouselId, res.locals.tenantId as string))!;
+    res.status(201).json({ carousel, slides: await getSlidesForCarousel(db, carouselId) });
+  }));
 
-  app.get('/api/carousels', (req, res) => {
-    const carousels = db
-      .prepare(`SELECT * FROM carousels WHERE tenant_id = ? ORDER BY created_at DESC, rowid DESC`)
-      .all(res.locals.tenantId);
+  app.get('/api/carousels', asyncHandler(async (req, res) => {
+    const carousels = await queryAll(db, `SELECT * FROM carousels WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`, res.locals.tenantId);
     res.json({ carousels });
-  });
+  }));
 
-  app.get('/api/carousels/:id', (req, res) => {
-    const carousel = getCarouselForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.get('/api/carousels/:id', asyncHandler(async (req, res) => {
+    const carousel = await getCarouselForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!carousel) return res.status(404).json({ error: 'carousel not found' });
 
-    res.json({ carousel, slides: getSlidesForCarousel(db, carousel.id) });
-  });
+    res.json({ carousel, slides: await getSlidesForCarousel(db, carousel.id) });
+  }));
 
   // Persists manual edits made in the Fabric.js editor (ТЗ: "ручное
   // редактирование слайдов после генерации"). Only text content is
   // persisted, not exact dragged element positions — a documented MVP
   // simplification, not an oversight.
-  app.patch('/api/carousels/:carouselId/slides/:slideId', (req, res) => {
-    const carousel = getCarouselForTenant(db, req.params.carouselId, res.locals.tenantId as string);
+  app.patch('/api/carousels/:carouselId/slides/:slideId', asyncHandler(async (req, res) => {
+    const carousel = await getCarouselForTenant(db, req.params.carouselId, res.locals.tenantId as string);
     if (!carousel) return res.status(404).json({ error: 'carousel not found' });
 
-    const slide = db
-      .prepare(`SELECT * FROM carousel_slides WHERE id = ? AND carousel_id = ?`)
-      .get(req.params.slideId, carousel.id) as CarouselSlide | undefined;
+    const slide = await queryOne<CarouselSlide>(db, `SELECT * FROM carousel_slides WHERE id = ? AND carousel_id = ?`, req.params.slideId, carousel.id);
     if (!slide) return res.status(404).json({ error: 'slide not found' });
 
     const headline = typeof req.body?.headline === 'string' ? req.body.headline : slide.headline;
     const body = typeof req.body?.body === 'string' ? req.body.body : slide.body;
 
-    db.prepare(`UPDATE carousel_slides SET headline = ?, body = ? WHERE id = ?`).run(headline, body, slide.id);
+    await exec(db, `UPDATE carousel_slides SET headline = ?, body = ? WHERE id = ?`, headline, body, slide.id);
     res.json({ slide: { ...slide, headline, body } });
-  });
+  }));
 
   // ---- Module 5: Cross-platform autoposting (mocked) ---------------------
 
   const PLATFORMS = ['instagram', 'tiktok', 'youtube_shorts'];
 
-  app.post('/api/scheduled-posts', (req, res) => {
+  app.post('/api/scheduled-posts', asyncHandler(async (req, res) => {
     const { platform, caption, scheduledAt, requiresApproval } = req.body ?? {};
     if (!PLATFORMS.includes(platform)) return res.status(400).json({ error: `platform must be one of: ${PLATFORMS.join(', ')}` });
     if (!caption || typeof caption !== 'string') return res.status(400).json({ error: 'caption is required' });
@@ -607,26 +983,47 @@ export function createApp(db: Database.Database): Express {
 
     const id = randomUUID();
     const status = requiresApproval ? 'pending_approval' : 'scheduled';
-    db.prepare(
+    await exec(
+      db,
       `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, requires_approval, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, res.locals.tenantId, platform, caption, new Date(scheduledAt).toISOString(), requiresApproval ? 1 : 0, status);
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      res.locals.tenantId,
+      platform,
+      caption,
+      new Date(scheduledAt).toISOString(),
+      Boolean(requiresApproval),
+      status
+    );
 
     if (status === 'pending_approval') {
-      notify(db, res.locals.tenantId as string, 'post_pending_approval', `Пост в ${platform} ждёт согласования`, id);
+      await notify(db, res.locals.tenantId as string, 'post_pending_approval', `Пост в ${platform} ждёт согласования`, id);
     }
 
-    res.status(201).json({ post: getScheduledPostForTenant(db, id, res.locals.tenantId as string) });
-  });
+    // toPublicScheduledPost, not the raw row: the background publisher
+    // timer (or a concurrent /process-due call) can claim this row to
+    // 'publishing' between the INSERT above and this read-back, and
+    // 'publishing' is an internal transient state every other endpoint
+    // in this file already hides from API consumers.
+    const created = await getScheduledPostForTenant(db, id, res.locals.tenantId as string);
+    res.status(201).json({ post: created && toPublicScheduledPost(created) });
+  }));
 
   // The calendar/queue screen from the ТЗ reads from here, filtered by
   // status and/or date range.
-  app.get('/api/scheduled-posts', (req, res) => {
+  app.get('/api/scheduled-posts', asyncHandler(async (req, res) => {
     const { status, from, to } = req.query as { status?: string; from?: string; to?: string };
     const conditions = ['tenant_id = ?'];
     const params: unknown[] = [res.locals.tenantId];
 
-    if (status) {
+    if (status === 'scheduled') {
+      // 'publishing' is the internal claim state a row passes through while
+      // the background publisher is mid-send — toPublicScheduledPost maps
+      // it back to 'scheduled' for every other endpoint, so a filter on the
+      // raw column must match both or it can drop a post mid-publish from
+      // the calendar/queue view for the seconds the claim is held.
+      conditions.push("status IN ('scheduled', 'publishing')");
+    } else if (status) {
       conditions.push('status = ?');
       params.push(status);
     }
@@ -639,99 +1036,110 @@ export function createApp(db: Database.Database): Express {
       params.push(new Date(to).toISOString());
     }
 
-    const posts = db
-      .prepare(`SELECT * FROM scheduled_posts WHERE ${conditions.join(' AND ')} ORDER BY scheduled_at ASC, rowid ASC`)
-      .all(...params) as Record<string, unknown>[];
+    const posts = await queryAll<ScheduledPost>(db, `SELECT * FROM scheduled_posts WHERE ${conditions.join(' AND ')} ORDER BY scheduled_at ASC, seq ASC`, ...params);
 
-    res.json({ posts: posts.map(withBooleanRequiresApproval) });
-  });
+    res.json({ posts: posts.map(toPublicScheduledPost) });
+  }));
 
-  app.get('/api/scheduled-posts/:id', (req, res) => {
-    const post = getScheduledPostForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.get('/api/scheduled-posts/:id', asyncHandler(async (req, res) => {
+    const post = await getScheduledPostForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!post) return res.status(404).json({ error: 'post not found' });
-    res.json({ post });
-  });
+    res.json({ post: toPublicScheduledPost(post) });
+  }));
 
   // Approval workflow is optional per the ТЗ — only posts created with
   // requiresApproval land in pending_approval in the first place.
-  app.post('/api/scheduled-posts/:id/approve', (req, res) => {
-    const post = getScheduledPostForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.post('/api/scheduled-posts/:id/approve', asyncHandler(async (req, res) => {
+    const post = await getScheduledPostForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!post) return res.status(404).json({ error: 'post not found' });
     if (post.status !== 'pending_approval') return res.status(422).json({ error: 'post is not pending approval' });
 
-    db.prepare(`UPDATE scheduled_posts SET status = 'scheduled' WHERE id = ?`).run(post.id);
-    res.json({ post: getScheduledPostForTenant(db, post.id, res.locals.tenantId as string) });
-  });
+    // WHERE status = 'pending_approval' guards this the same way
+    // publisher.ts's claim-UPDATE does — the check above is stale by the
+    // time this runs (another await point another request can land in),
+    // so a near-simultaneous approve+reject on the same post must not
+    // both be able to write; whichever call's WHERE no longer matches
+    // gets nothing back instead of silently overwriting the other's result.
+    const updated = await queryOne<{ id: string }>(
+      db,
+      `UPDATE scheduled_posts SET status = 'scheduled' WHERE id = ? AND status = 'pending_approval' RETURNING id`,
+      post.id
+    );
+    if (!updated) return res.status(409).json({ error: 'post was already approved or rejected by a concurrent request' });
 
-  app.post('/api/scheduled-posts/:id/reject', (req, res) => {
-    const post = getScheduledPostForTenant(db, req.params.id, res.locals.tenantId as string);
+    const fresh = await getScheduledPostForTenant(db, post.id, res.locals.tenantId as string);
+    res.json({ post: fresh && toPublicScheduledPost(fresh) });
+  }));
+
+  app.post('/api/scheduled-posts/:id/reject', asyncHandler(async (req, res) => {
+    const post = await getScheduledPostForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!post) return res.status(404).json({ error: 'post not found' });
     if (post.status !== 'pending_approval') return res.status(422).json({ error: 'post is not pending approval' });
 
-    db.prepare(`UPDATE scheduled_posts SET status = 'rejected' WHERE id = ?`).run(post.id);
-    res.json({ post: getScheduledPostForTenant(db, post.id, res.locals.tenantId as string) });
-  });
+    const updated = await queryOne<{ id: string }>(
+      db,
+      `UPDATE scheduled_posts SET status = 'rejected' WHERE id = ? AND status = 'pending_approval' RETURNING id`,
+      post.id
+    );
+    if (!updated) return res.status(409).json({ error: 'post was already approved or rejected by a concurrent request' });
+
+    const fresh = await getScheduledPostForTenant(db, post.id, res.locals.tenantId as string);
+    res.json({ post: fresh && toPublicScheduledPost(fresh) });
+  }));
 
   // Manual trigger for the polling publisher — there's no real queue to
   // fire an event, so this is what lets a demo/test see a due post
   // actually "publish" without waiting for the timer in server.ts.
-  app.post('/api/scheduled-posts/process-due', (_req, res) => {
-    res.json(publishDuePosts(db));
-  });
+  app.post('/api/scheduled-posts/process-due', asyncHandler(async (_req, res) => {
+    res.json(await publishDuePosts(db));
+  }));
 
   // ---- Module 6: Content plan from CRM + Module 3 (the real differentiator) --
   // No new tables — computeContentRecommendations reads Module 2's tags/
   // subscribers and Module 3's generated_scripts directly.
-  app.get('/api/content-recommendations', (req, res) => {
-    const all = computeContentRecommendations(db, res.locals.tenantId as string);
+  app.get('/api/content-recommendations', asyncHandler(async (req, res) => {
+    const all = await computeContentRecommendations(db, res.locals.tenantId as string);
     const segment = typeof req.query.segment === 'string' ? req.query.segment : undefined;
     const recommendations = segment ? all.filter((r) => r.segment.toLowerCase() === segment.toLowerCase()) : all;
     res.json({ recommendations });
-  });
+  }));
 
   // ---- Module 8: Video editing, Levels 1-2 (mocked Shotstack/Creatomate) --
 
   const VIDEO_TEMPLATES: VideoTemplate[] = ['auto_crop_916', 'template_with_transitions'];
 
-  app.post('/api/video-edit-jobs', (req, res) => {
+  app.post('/api/video-edit-jobs', asyncHandler(async (req, res) => {
     const sourceVideoUrl = typeof req.body?.sourceVideoUrl === 'string' ? req.body.sourceVideoUrl.trim() : '';
     const template = req.body?.template;
     if (!sourceVideoUrl) return res.status(400).json({ error: 'sourceVideoUrl is required' });
     if (!VIDEO_TEMPLATES.includes(template)) return res.status(400).json({ error: `template must be one of: ${VIDEO_TEMPLATES.join(', ')}` });
 
     const id = randomUUID();
-    db.prepare(`INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template) VALUES (?, ?, ?, ?)`).run(
-      id,
-      res.locals.tenantId,
-      sourceVideoUrl,
-      template
-    );
+    await exec(db, `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template) VALUES (?, ?, ?, ?)`, id, res.locals.tenantId, sourceVideoUrl, template);
 
-    res.status(201).json({ job: getVideoJobForTenant(db, id, res.locals.tenantId as string) });
-  });
+    res.status(201).json({ job: await getVideoJobForTenant(db, id, res.locals.tenantId as string) });
+  }));
 
-  app.get('/api/video-edit-jobs', (req, res) => {
-    const jobs = db
-      .prepare(`SELECT * FROM video_edit_jobs WHERE tenant_id = ? ORDER BY created_at DESC, rowid DESC`)
-      .all(res.locals.tenantId);
+  app.get('/api/video-edit-jobs', asyncHandler(async (req, res) => {
+    const jobs = await queryAll(db, `SELECT * FROM video_edit_jobs WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`, res.locals.tenantId);
     res.json({ jobs });
-  });
+  }));
 
   // The frontend polls this while a job is `processing` to drive the
   // progress bar the ТЗ calls for.
-  app.get('/api/video-edit-jobs/:id', (req, res) => {
-    const job = getVideoJobForTenant(db, req.params.id, res.locals.tenantId as string);
+  app.get('/api/video-edit-jobs/:id', asyncHandler(async (req, res) => {
+    const job = await getVideoJobForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!job) return res.status(404).json({ error: 'job not found' });
     res.json({ job });
-  });
+  }));
 
   // Manual trigger for the polling renderer — same reasoning as
   // /api/scheduled-posts/process-due in Module 5: no real queue to fire
   // an event, so this lets a demo see progress advance without waiting
   // for the timer in server.ts.
-  app.post('/api/video-edit-jobs/process-tick', (_req, res) => {
-    res.json(advanceRenderJobs(db));
-  });
+  app.post('/api/video-edit-jobs/process-tick', asyncHandler(async (_req, res) => {
+    res.json(await advanceRenderJobs(db));
+  }));
 
   // ---- Push notifications (shared by Modules 5 and 8) ---------------------
 
@@ -743,14 +1151,20 @@ export function createApp(db: Database.Database): Express {
     res.json({ publicKey: getOrCreateVapidKeys().publicKey });
   });
 
-  app.post('/api/push/subscribe', (req, res) => {
+  app.post('/api/push/subscribe', asyncHandler(async (req, res) => {
     const { endpoint, keys } = req.body ?? {};
     if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: 'endpoint and keys.{p256dh,auth} are required' });
 
     // Re-subscribing with the same endpoint (e.g. browser reloaded the
-    // page) replaces the old row instead of erroring or duplicating.
-    db.prepare(`DELETE FROM push_subscriptions WHERE endpoint = ?`).run(endpoint);
-    db.prepare(`INSERT INTO push_subscriptions (id, tenant_id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?, ?)`).run(
+    // page) updates the existing row instead of erroring or duplicating.
+    // A separate DELETE-then-INSERT isn't atomic under a connection pool —
+    // two concurrent subscribe calls for the same endpoint could otherwise
+    // both pass the DELETE and collide on the endpoint UNIQUE constraint —
+    // so this upserts in a single statement instead.
+    await exec(
+      db,
+      `INSERT INTO push_subscriptions (id, tenant_id, endpoint, p256dh, auth) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (endpoint) DO UPDATE SET tenant_id = EXCLUDED.tenant_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
       randomUUID(),
       res.locals.tenantId,
       endpoint,
@@ -759,53 +1173,51 @@ export function createApp(db: Database.Database): Express {
     );
 
     res.status(201).json({ status: 'subscribed' });
-  });
+  }));
 
-  app.post('/api/push/unsubscribe', (req, res) => {
+  app.post('/api/push/unsubscribe', asyncHandler(async (req, res) => {
     const { endpoint } = req.body ?? {};
     if (!endpoint) return res.status(400).json({ error: 'endpoint is required' });
 
-    db.prepare(`DELETE FROM push_subscriptions WHERE endpoint = ? AND tenant_id = ?`).run(endpoint, res.locals.tenantId);
+    await exec(db, `DELETE FROM push_subscriptions WHERE endpoint = ? AND tenant_id = ?`, endpoint, res.locals.tenantId);
     res.json({ status: 'unsubscribed' });
-  });
+  }));
 
   // The in-app fallback the ТЗ requires when push isn't permitted in the
   // browser — polled by the frontend regardless of push permission state.
-  app.get('/api/notifications', (req, res) => {
+  app.get('/api/notifications', asyncHandler(async (req, res) => {
     const unreadOnly = req.query.unreadOnly === 'true';
-    res.json({ notifications: listNotifications(db, res.locals.tenantId as string, unreadOnly) });
-  });
+    res.json({ notifications: await listNotifications(db, res.locals.tenantId as string, unreadOnly) });
+  }));
 
-  app.post('/api/notifications/:id/read', (req, res) => {
-    db.prepare(`UPDATE notifications SET is_read = 1 WHERE id = ? AND tenant_id = ?`).run(req.params.id, res.locals.tenantId);
+  app.post('/api/notifications/:id/read', asyncHandler(async (req, res) => {
+    await exec(db, `UPDATE notifications SET is_read = true WHERE id = ? AND tenant_id = ?`, req.params.id, res.locals.tenantId);
     res.json({ status: 'ok' });
-  });
+  }));
 
-  app.post('/api/notifications/read-all', (_req, res) => {
-    db.prepare(`UPDATE notifications SET is_read = 1 WHERE tenant_id = ? AND is_read = 0`).run(res.locals.tenantId);
+  app.post('/api/notifications/read-all', asyncHandler(async (_req, res) => {
+    await exec(db, `UPDATE notifications SET is_read = true WHERE tenant_id = ? AND is_read = false`, res.locals.tenantId);
     res.json({ status: 'ok' });
-  });
+  }));
 
   // ---- Mock Instagram webhook --------------------------------------------
   // Simulates Meta calling us — NOT protected by tenant API key (Meta
   // doesn't have one). The real POST /webhooks/instagram will carry this
   // same event_id-dedup contract, plus X-Hub-Signature-256 verification
   // that this mock intentionally does not implement yet.
-  app.post('/webhooks/mock/instagram', (req, res) => {
+  app.post('/webhooks/mock/instagram', asyncHandler(async (req, res) => {
     const { eventId, externalAccountId, externalUserId, messageText } = req.body ?? {};
     if (!eventId || !externalAccountId || !externalUserId || !messageText) {
       return res.status(400).json({ error: 'eventId, externalAccountId, externalUserId and messageText are required' });
     }
 
-    const bot = db.prepare(`SELECT * FROM bots WHERE external_account_id = ?`).get(externalAccountId) as
-      | Bot
-      | undefined;
+    const bot = await queryOne<Bot>(db, `SELECT * FROM bots WHERE external_account_id = ?`, externalAccountId);
     if (!bot) return res.status(404).json({ error: 'unknown externalAccountId' });
 
-    const claimed = tryClaimWebhookEvent(db, eventId, bot.id, req.body);
+    const claimed = await tryClaimWebhookEvent(db, eventId, bot.id, req.body);
     if (!claimed) return res.json({ status: 'already_processed' });
 
-    const outcome = runFlow(db, {
+    const outcome = await runFlow(db, {
       tenantId: bot.tenant_id,
       botId: bot.id,
       externalUserId,
@@ -813,10 +1225,10 @@ export function createApp(db: Database.Database): Express {
       isTest: false,
     });
 
-    db.prepare(`UPDATE webhook_events SET processed_at = ? WHERE event_id = ?`).run(new Date().toISOString(), eventId);
+    await exec(db, `UPDATE webhook_events SET processed_at = ? WHERE event_id = ?`, new Date().toISOString(), eventId);
 
     res.json({ outcome });
-  });
+  }));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     console.error(err);
@@ -826,15 +1238,75 @@ export function createApp(db: Database.Database): Express {
   return app;
 }
 
-function requireApiKey(db: Database.Database) {
+// Express doesn't await async route handlers on its own — an error thrown
+// inside one would become an unhandled rejection instead of reaching the
+// error middleware above. Wrapping every async handler through this keeps
+// that error path working without adding try/catch to every route.
+function asyncHandler(handler: (req: Request, res: Response) => Promise<unknown>) {
   return (req: Request, res: Response, next: NextFunction) => {
+    handler(req, res).catch(next);
+  };
+}
+
+// Product routes accept either credential issued by this service:
+// - tenant API keys remain supported for integrations and existing clients;
+// - session JWTs let the first-party browser product use the same routes
+//   immediately after signup/login.
+//
+// Missing/invalid credentials deliberately keep the historical API-key
+// error codes because existing API clients may branch on those values.
+function requireProductCredential(db: Db) {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const header = req.header('authorization') ?? '';
     if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'missing_api_key' });
 
-    const tenantId = resolveTenantIdFromApiKey(db, header.slice('Bearer '.length));
-    if (!tenantId) return res.status(401).json({ error: 'invalid_api_key' });
+    try {
+      const credential = header.slice('Bearer '.length);
 
-    res.locals.tenantId = tenantId;
+      // API key first preserves the exact old path (including support for a
+      // token whose textual shape happens to resemble a JWT).
+      const apiKeyTenantId = await resolveTenantIdFromApiKey(db, credential);
+      if (apiKeyTenantId) {
+        res.locals.tenantId = apiKeyTenantId;
+        return next();
+      }
+
+      const session = verifySession(credential);
+      if (session.ok) {
+        // A correctly signed token for a user/tenant pair that no longer
+        // exists is not a valid current product session.
+        const user = await queryOne<{ id: string }>(
+          db,
+          `SELECT id FROM users WHERE id = ? AND tenant_id = ?`,
+          session.payload.userId,
+          session.payload.tenantId
+        );
+        if (user) {
+          res.locals.tenantId = session.payload.tenantId;
+          res.locals.session = session.payload;
+          return next();
+        }
+      }
+
+      return res.status(401).json({ error: 'invalid_api_key' });
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+// Auth-profile routes specifically require a human session and keep their
+// more descriptive missing/expired/invalid session errors. Product routes
+// above intentionally preserve the older API-key errors for compatibility.
+function requireSession(_db: Db) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const header = req.header('authorization') ?? '';
+    if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'missing_session' });
+
+    const result = verifySession(header.slice('Bearer '.length));
+    if (!result.ok) return res.status(401).json({ error: result.reason === 'expired' ? 'session_expired' : 'invalid_session' });
+
+    res.locals.session = result.payload;
     next();
   };
 }
@@ -842,14 +1314,12 @@ function requireApiKey(db: Database.Database) {
 // Scoping every lookup to (id, tenant_id) together — rather than fetching
 // by id and checking tenant_id after — means "belongs to another tenant"
 // and "doesn't exist" are indistinguishable from the response (both 404).
-function getBotForTenant(db: Database.Database, botId: string, tenantId: string): Bot | undefined {
-  return db.prepare(`SELECT * FROM bots WHERE id = ? AND tenant_id = ?`).get(botId, tenantId) as Bot | undefined;
+function getBotForTenant(db: Db, botId: string, tenantId: string): Promise<Bot | undefined> {
+  return queryOne<Bot>(db, `SELECT * FROM bots WHERE id = ? AND tenant_id = ?`, botId, tenantId);
 }
 
-function getSubscriberForTenant(db: Database.Database, subscriberId: string, tenantId: string): Subscriber | undefined {
-  return db.prepare(`SELECT * FROM subscribers WHERE id = ? AND tenant_id = ?`).get(subscriberId, tenantId) as
-    | Subscriber
-    | undefined;
+function getSubscriberForTenant(db: Db, subscriberId: string, tenantId: string): Promise<Subscriber | undefined> {
+  return queryOne<Subscriber>(db, `SELECT * FROM subscribers WHERE id = ? AND tenant_id = ?`, subscriberId, tenantId);
 }
 
 interface SubscriberTagRef {
@@ -860,16 +1330,16 @@ interface SubscriberTagRef {
 // Returns {id, name} pairs, not just names — the UI needs the id to call
 // DELETE /api/subscribers/:id/tags/:tagId; a bare name isn't enough to
 // remove a tag.
-function tagsForSubscribers(db: Database.Database, subscriberIds: string[]): Record<string, SubscriberTagRef[]> {
+async function tagsForSubscribers(db: Db, subscriberIds: string[]): Promise<Record<string, SubscriberTagRef[]>> {
   if (subscriberIds.length === 0) return {};
   const placeholders = subscriberIds.map(() => '?').join(',');
-  const rows = db
-    .prepare(
-      `SELECT subscriber_tags.subscriber_id as subscriberId, tags.id as id, tags.name as name
-       FROM subscriber_tags JOIN tags ON subscriber_tags.tag_id = tags.id
-       WHERE subscriber_tags.subscriber_id IN (${placeholders})`
-    )
-    .all(...subscriberIds) as Array<{ subscriberId: string; id: string; name: string }>;
+  const rows = await queryAll<{ subscriberId: string; id: string; name: string }>(
+    db,
+    `SELECT subscriber_tags.subscriber_id as "subscriberId", tags.id as id, tags.name as name
+     FROM subscriber_tags JOIN tags ON subscriber_tags.tag_id = tags.id
+     WHERE subscriber_tags.subscriber_id IN (${placeholders})`,
+    ...subscriberIds
+  );
 
   const result: Record<string, SubscriberTagRef[]> = {};
   for (const row of rows) {
@@ -878,53 +1348,46 @@ function tagsForSubscribers(db: Database.Database, subscriberIds: string[]): Rec
   return result;
 }
 
-function getAnalysisForTenant(db: Database.Database, id: string, tenantId: string): ReelAnalysis | undefined {
-  return db.prepare(`SELECT * FROM reel_analyses WHERE id = ? AND tenant_id = ?`).get(id, tenantId) as
-    | ReelAnalysis
-    | undefined;
+function getAnalysisForTenant(db: Db, id: string, tenantId: string): Promise<ReelAnalysis | undefined> {
+  return queryOne<ReelAnalysis>(db, `SELECT * FROM reel_analyses WHERE id = ? AND tenant_id = ?`, id, tenantId);
 }
 
-function getCarouselForTenant(db: Database.Database, id: string, tenantId: string): Carousel | undefined {
-  return db.prepare(`SELECT * FROM carousels WHERE id = ? AND tenant_id = ?`).get(id, tenantId) as Carousel | undefined;
+function getCarouselForTenant(db: Db, id: string, tenantId: string): Promise<Carousel | undefined> {
+  return queryOne<Carousel>(db, `SELECT * FROM carousels WHERE id = ? AND tenant_id = ?`, id, tenantId);
 }
 
-function getSlidesForCarousel(db: Database.Database, carouselId: string): CarouselSlide[] {
-  return db.prepare(`SELECT * FROM carousel_slides WHERE carousel_id = ? ORDER BY position ASC`).all(carouselId) as CarouselSlide[];
+function getSlidesForCarousel(db: Db, carouselId: string): Promise<CarouselSlide[]> {
+  return queryAll<CarouselSlide>(db, `SELECT * FROM carousel_slides WHERE carousel_id = ? ORDER BY position ASC`, carouselId);
 }
 
-// SQLite has no boolean type — requires_approval is stored as 0/1.
-// Converting it here means every caller sees the real boolean the
-// ScheduledPost type promises, not a lying "0 | 1" that happens to work
-// in JS truthiness checks.
-function withBooleanRequiresApproval(row: Record<string, unknown>): ScheduledPost {
-  return { ...row, requires_approval: row.requires_approval === 1 } as ScheduledPost;
+function getScheduledPostForTenant(db: Db, id: string, tenantId: string): Promise<ScheduledPost | undefined> {
+  return queryOne<ScheduledPost>(db, `SELECT * FROM scheduled_posts WHERE id = ? AND tenant_id = ?`, id, tenantId);
 }
 
-function getScheduledPostForTenant(db: Database.Database, id: string, tenantId: string): ScheduledPost | undefined {
-  const row = db.prepare(`SELECT * FROM scheduled_posts WHERE id = ? AND tenant_id = ?`).get(id, tenantId) as
-    | Record<string, unknown>
-    | undefined;
-  return row ? withBooleanRequiresApproval(row) : undefined;
+// 'publishing' is an internal claim state a row can be observed in between
+// the poller's claim UPDATE and its follow-up UPDATE (an await gap that
+// didn't exist under the old synchronous SQLite version) — API consumers
+// were never designed to handle it, so it's presented as 'scheduled' (what
+// it effectively still is, from the outside) rather than leaking the
+// implementation detail.
+function toPublicScheduledPost(post: ScheduledPost): ScheduledPost {
+  return post.status === 'publishing' ? { ...post, status: 'scheduled' } : post;
 }
 
-function getVideoJobForTenant(db: Database.Database, id: string, tenantId: string): VideoEditJob | undefined {
-  return db.prepare(`SELECT * FROM video_edit_jobs WHERE id = ? AND tenant_id = ?`).get(id, tenantId) as VideoEditJob | undefined;
+function getVideoJobForTenant(db: Db, id: string, tenantId: string): Promise<VideoEditJob | undefined> {
+  return queryOne<VideoEditJob>(db, `SELECT * FROM video_edit_jobs WHERE id = ? AND tenant_id = ?`, id, tenantId);
 }
 
 // Returns false if this event_id was already claimed by a prior (or
 // concurrent) delivery — the INSERT's PRIMARY KEY(event_id) is the actual
 // guarantee, not a prior SELECT, so a race between two deliveries of the
 // same webhook can't double-process it.
-function tryClaimWebhookEvent(db: Database.Database, eventId: string, botId: string, payload: unknown): boolean {
+async function tryClaimWebhookEvent(db: Db, eventId: string, botId: string, payload: unknown): Promise<boolean> {
   try {
-    db.prepare(`INSERT INTO webhook_events (event_id, bot_id, payload) VALUES (?, ?, ?)`).run(
-      eventId,
-      botId,
-      JSON.stringify(payload)
-    );
+    await exec(db, `INSERT INTO webhook_events (event_id, bot_id, payload) VALUES (?, ?, ?)`, eventId, botId, JSON.stringify(payload));
     return true;
   } catch (err) {
-    if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) return false;
+    if (isUniqueViolation(err)) return false;
     throw err;
   }
 }

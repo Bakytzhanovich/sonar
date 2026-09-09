@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import { createDb } from '../src/db';
+import type { Db } from '../src/db';
 import { createApp } from '../src/api';
+import { createTestDb, dropTestDb } from './dbTestHelper';
 
 async function createTenant(app: Express, email = 'crm@example.com') {
   const res = await request(app).post('/api/tenants').send({ name: 'Blogger', email });
@@ -26,9 +27,15 @@ async function messageBot(app: Express, externalAccountId: string, externalUserI
 
 describe('CRM: subscribers, tags, notes, timeline', () => {
   let app: Express;
+  let db: Db;
 
-  beforeEach(() => {
-    app = createApp(createDb({ filePath: ':memory:' }));
+  beforeEach(async () => {
+    db = await createTestDb();
+    app = createApp(db);
+  });
+
+  afterEach(async () => {
+    if (db) await dropTestDb(db);
   });
 
   it('lists a subscriber created by a non-matching message (no trigger needed)', async () => {
@@ -84,6 +91,35 @@ describe('CRM: subscribers, tags, notes, timeline', () => {
     await request(app).delete(`/api/subscribers/${subscriberId}/tags/${tag1.body.tag.id}`).set('Authorization', `Bearer ${apiKey}`);
     const afterRemoval = await request(app).get(`/api/bots/${botId}/subscribers?tag=vip`).set('Authorization', `Bearer ${apiKey}`);
     expect(afterRemoval.body.subscribers).toHaveLength(1);
+  });
+
+  it('under true concurrency, two simultaneous tag creates with the same name resolve to one tag, not a duplicate', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    await messageBot(app, 'ig-crm', 'u1', 'привет', 'evt-1');
+    await messageBot(app, 'ig-crm', 'u2', 'привет', 'evt-2');
+    const subs = (await request(app).get(`/api/bots/${botId}/subscribers`).set('Authorization', `Bearer ${apiKey}`)).body.subscribers;
+    const sub1Id = subs.find((s: { external_user_id: string }) => s.external_user_id === 'u1').id;
+    const sub2Id = subs.find((s: { external_user_id: string }) => s.external_user_id === 'u2').id;
+
+    // Fired via Promise.all, not awaited one after another — both requests'
+    // pre-check SELECT can read "no tag named 'гонка' yet" before either
+    // INSERT lands. Unlike the trigger-keyword race, a duplicate tag name
+    // is not a business conflict here — the handler's catch block treats
+    // the loser's UNIQUE(tenant_id, name) violation as "someone already
+    // created it, use that row", so BOTH callers are expected to succeed,
+    // just against the same tag id, not one 201 + one 409.
+    const [a, b] = await Promise.all([
+      request(app).post(`/api/subscribers/${sub1Id}/tags`).set('Authorization', `Bearer ${apiKey}`).send({ name: 'гонка' }),
+      request(app).post(`/api/subscribers/${sub2Id}/tags`).set('Authorization', `Bearer ${apiKey}`).send({ name: 'гонка' }),
+    ]);
+
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+    expect(a.body.tag.id).toBe(b.body.tag.id);
+
+    const tags = await request(app).get(`/api/bots/${botId}/tags`).set('Authorization', `Bearer ${apiKey}`);
+    expect(tags.body.tags.filter((t: { name: string }) => t.name === 'гонка')).toHaveLength(1);
   });
 
   it('filters subscribers by leadStatus', async () => {

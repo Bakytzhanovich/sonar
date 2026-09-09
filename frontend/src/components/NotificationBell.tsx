@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type AppNotification } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import controls from './Controls.module.css';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -99,8 +100,8 @@ export default function NotificationBell() {
 
   return (
     <div style={{ position: 'relative' }}>
-      <button onClick={() => setOpen((v) => !v)}>
-        🔔{unreadCount > 0 && <span style={{ marginLeft: 4, color: '#c0392b', fontWeight: 'bold' }}>{unreadCount}</span>}
+      <button className={controls.buttonSecondary} onClick={() => setOpen((v) => !v)}>
+        🔔{unreadCount > 0 && <span style={{ marginLeft: 4, color: 'var(--status-failed)', fontWeight: 'bold' }}>{unreadCount}</span>}
       </button>
 
       {open && (
@@ -112,9 +113,9 @@ export default function NotificationBell() {
             width: 320,
             maxHeight: 400,
             overflowY: 'auto',
-            background: '#fff',
-            color: '#111',
-            border: '1px solid #ccc',
+            background: 'var(--background)',
+            color: 'var(--foreground)',
+            border: '1px solid var(--border)',
             borderRadius: 6,
             padding: 10,
             zIndex: 10,
@@ -122,18 +123,18 @@ export default function NotificationBell() {
         >
           {!pushEnabled && (
             <div style={{ marginBottom: 8 }}>
-              <button onClick={enablePush}>Включить push-уведомления</button>
-              {error && <p style={{ fontSize: 11, color: '#c0392b' }}>{error}</p>}
+              <button className={controls.buttonSecondary} onClick={enablePush}>Включить push-уведомления</button>
+              {error && <p style={{ fontSize: 11, color: 'var(--status-failed)' }}>{error}</p>}
             </div>
           )}
-          <button onClick={markAllRead} style={{ fontSize: 11 }}>
+          <button className={controls.buttonSecondary} onClick={markAllRead} style={{ fontSize: 11 }}>
             Отметить все прочитанными
           </button>
-          {notifications.length === 0 && <p style={{ fontSize: 12, color: '#888' }}>Пусто</p>}
+          {notifications.length === 0 && <p style={{ fontSize: 12, color: 'var(--foreground-muted)' }}>Пусто</p>}
           {notifications.map((n) => (
-            <div key={n.id} style={{ padding: '6px 0', borderBottom: '1px solid #eee', opacity: n.is_read ? 0.6 : 1 }}>
+            <div key={n.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)', opacity: n.is_read ? 0.6 : 1 }}>
               <div style={{ fontSize: 12 }}>{n.message}</div>
-              <div style={{ fontSize: 10, color: '#888' }}>{new Date(n.created_at).toLocaleString()}</div>
+              <div style={{ fontSize: 10, color: 'var(--foreground-muted)' }}>{new Date(n.created_at).toLocaleString()}</div>
             </div>
           ))}
         </div>

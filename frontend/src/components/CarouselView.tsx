@@ -1,13 +1,30 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { Canvas, Rect, Textbox } from 'fabric';
 import { api, type BrandPreset, type Carousel, type CarouselSlide } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import ModuleNav from './ModuleNav';
+import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
+import StatusMessage from './StatusMessage';
+import controls from './Controls.module.css';
+import styles from './CarouselView.module.css';
+import layout from './Layout.module.css';
 
 const CANVAS_W = 360;
 const CANVAS_H = 450;
+
+// The preset's actual primary/secondary colors, made visible wherever a
+// preset is referenced — real per-preset data, not a placeholder icon.
+function Swatch({ preset }: { preset: BrandPreset | null }) {
+  if (!preset) return null;
+  return (
+    <span className={styles.swatch} title={preset.name}>
+      <span className={styles.swatchHalf} style={{ background: preset.primary_color }} />
+      <span className={styles.swatchHalf} style={{ background: preset.secondary_color }} />
+    </span>
+  );
+}
 
 export default function CarouselView() {
   const [devConfig] = useDevConfig();
@@ -51,20 +68,26 @@ export default function CarouselView() {
     loadLibrary();
   }, [loadLibrary]);
 
-  // Fabric canvas is created once; slides are drawn into it imperatively
-  // whenever the current slide or preset changes (see the effect below).
+  // Unmount-only cleanup — creation happens lazily in the effect below
+  // instead of here, because the <canvas> element only exists in the DOM
+  // once selectedCarousel is set (it's behind that conditional in the JSX).
+  // A mount-time-only effect (empty deps) runs before that's ever true, so
+  // canvasElRef.current was always null and fabricCanvasRef.current never
+  // got set — the canvas silently stayed at the browser's 300x150 default
+  // and nothing ever drew onto it.
   useEffect(() => {
-    if (!canvasElRef.current) return;
-    const canvas = new Canvas(canvasElRef.current, { width: CANVAS_W, height: CANVAS_H });
-    fabricCanvasRef.current = canvas;
     return () => {
-      canvas.dispose();
+      fabricCanvasRef.current?.dispose();
+      fabricCanvasRef.current = null;
     };
   }, []);
 
   useEffect(() => {
+    if (!canvasElRef.current || !currentSlide) return;
+    if (!fabricCanvasRef.current) {
+      fabricCanvasRef.current = new Canvas(canvasElRef.current, { width: CANVAS_W, height: CANVAS_H });
+    }
     const canvas = fabricCanvasRef.current;
-    if (!canvas || !currentSlide) return;
 
     canvas.clear();
     const bg = new Rect({
@@ -163,84 +186,91 @@ export default function CarouselView() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'system-ui, sans-serif' }}>
-      <header style={{ padding: 12, borderBottom: '1px solid #ddd', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <strong>Sonar — Карусели (мок LLM, Fabric.js рендер)</strong>
-        <span style={{ fontSize: 11, color: '#888' }}>
-          {apiKey ? '' : 'Нет apiKey — зайди через редактор бота и нажми "Быстрый старт"'}
-        </span>
-        <Link href="/" style={{ marginLeft: 'auto' }}>
-          ← Редактор бота
-        </Link>
-        <Link href="/reels">Рилсы →</Link>
-        <Link href="/scheduler">Автопостинг →</Link>
-        <Link href="/content-plan">Контент-план →</Link>
-        <Link href="/video">Видео →</Link>
+    <div className={styles.page}>
+      <header className={layout.header}>
+        <div>
+          <span className={styles.panelEyebrow}>СТУДИЯ КОНТЕНТА</span>
+          <span className={layout.title}>Карусели</span>
+        </div>
+        <ModuleNav current="/carousels" />
       </header>
 
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <div style={{ width: 300, borderRight: '1px solid #ddd', padding: 12, overflowY: 'auto' }}>
-          <h4>Промпт → карусель</h4>
-          <input value={prompt} onChange={(e) => setPrompt(e.target.value)} style={{ width: '100%' }} />
-          <select value={presetId} onChange={(e) => setPresetId(e.target.value)} style={{ width: '100%', margin: '4px 0' }}>
-            <option value="">без пресета</option>
-            {presets.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <button onClick={generate}>Сгенерировать (1 клик)</button>
+      <div className={`${layout.twoPane} ${styles.workspace}`}>
+        <div className={`${layout.sidebar} ${styles.sidebar}`}>
+          {!apiKey && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
+          <div className={styles.panelHeading}><span className={styles.panelEyebrow}>БЫСТРЫЙ СТАРТ</span><h2>Создать карусель</h2></div>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Тема</span>
+            <input className={controls.input} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
+          </label>
+          <div className={styles.presetRow}>
+            <select className={controls.input} value={presetId} onChange={(e) => setPresetId(e.target.value)}>
+              <option value="">без пресета</option>
+              {presets.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <Swatch preset={activePreset} />
+          </div>
+          <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={generate}>Сгенерировать</button>
 
-          <h4 style={{ marginTop: 16 }}>Брендовый пресет</h4>
-          <input value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="название" style={{ width: '100%' }} />
-          <input type="color" value={presetColor} onChange={(e) => setPresetColor(e.target.value)} />
-          <button onClick={createPreset}>Сохранить пресет</button>
+          <div className={styles.divider} />
+          <div className={styles.panelHeading}><span className={styles.panelEyebrow}>БРЕНД</span><h2>Визуальный пресет</h2></div>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Название</span>
+            <input className={controls.input} value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="напр. Мой бренд" />
+          </label>
+          <div className={styles.colorRow}>
+            <input type="color" value={presetColor} onChange={(e) => setPresetColor(e.target.value)} />
+            <span className={styles.fieldLabel}>Основной цвет</span>
+          </div>
+          <button className={`${controls.buttonSecondary} ${styles.fullButton}`} onClick={createPreset}>Сохранить пресет</button>
 
-          <h4 style={{ marginTop: 16 }}>Библиотека каруселей</h4>
+          <div className={styles.divider} />
+          <div className={styles.panelHeading}><span className={styles.panelEyebrow}>БИБЛИОТЕКА</span><h2>Последние карусели</h2></div>
           {carousels.map((c) => (
             <div
               key={c.id}
               onClick={() => openCarousel(c)}
-              style={{
-                cursor: 'pointer',
-                padding: 6,
-                border: '1px solid #ccc',
-                borderRadius: 4,
-                marginBottom: 6,
-                background: c.id === selectedCarousel?.id ? '#eef' : undefined,
-                fontSize: 12,
-              }}
+              className={`${styles.libraryItem} ${c.id === selectedCarousel?.id ? styles.libraryItemActive : ''}`}
             >
-              {c.prompt}
+              <Swatch preset={presets.find((p) => p.id === c.preset_id) ?? null} />
+              <span className={styles.libraryItemPrompt}>{c.prompt}</span>
             </div>
           ))}
         </div>
 
-        <div style={{ flex: 1, padding: 12, overflowY: 'auto' }}>
+        <div className={`${layout.main} ${styles.main}`}>
           {!selectedCarousel ? (
-            <p>Сгенерируй карусель или выбери из библиотеки слева.</p>
+            <div className={styles.emptyState}><div className={styles.emptyShape}>✦</div><span className={styles.panelEyebrow}>ПУСТАЯ СТУДИЯ</span><h2>Здесь появится твоя карусель</h2><p>Сформулируй тему слева или выбери готовый проект из библиотеки.</p></div>
           ) : (
             <>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
-                <button disabled={slideIndex === 0} onClick={() => setSlideIndex((i) => i - 1)}>
+              <div className={styles.toolbar}>
+                <button className={controls.buttonSecondary} disabled={slideIndex === 0} onClick={() => setSlideIndex((i) => i - 1)}>
                   ← слайд
                 </button>
-                <span>
-                  {slideIndex + 1} / {slides.length}
+                {/* Real position among this carousel's actual slides, not a
+                    decorative row — one dot per slide, exactly slides.length
+                    of them. */}
+                <span className={styles.dots}>
+                  {slides.map((s, i) => (
+                    <span key={s.id} className={`${styles.dot} ${i === slideIndex ? styles.dotActive : ''}`} />
+                  ))}
                 </span>
-                <button disabled={slideIndex === slides.length - 1} onClick={() => setSlideIndex((i) => i + 1)}>
+                <button className={controls.buttonSecondary} disabled={slideIndex === slides.length - 1} onClick={() => setSlideIndex((i) => i + 1)}>
                   слайд →
                 </button>
-                <button onClick={saveEdits}>Сохранить правки</button>
-                <button onClick={exportPng}>Экспорт PNG</button>
+                <button className={controls.buttonPrimary} onClick={saveEdits}>Сохранить правки</button>
+                <button className={controls.buttonSecondary} onClick={exportPng}>Экспорт PNG</button>
               </div>
-              <p style={{ fontSize: 11, color: '#888' }}>Дважды кликни по тексту на канвасе, чтобы отредактировать его.</p>
-              <canvas ref={canvasElRef} style={{ border: '1px solid #ccc' }} />
+              <p className={styles.helper}>Дважды кликни по тексту на канвасе, чтобы отредактировать его.</p>
+              <div className={styles.canvasStage}><canvas ref={canvasElRef} /></div>
             </>
           )}
 
-          {status && <div style={{ fontSize: 12, color: '#555', marginTop: 8 }}>{status}</div>}
+          <StatusMessage>{status}</StatusMessage>
         </div>
       </div>
     </div>

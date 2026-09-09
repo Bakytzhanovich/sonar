@@ -8,17 +8,22 @@
     "build": "tsc && cp src/schema.sql dist/schema.sql",
     "test": "vitest run",
     "demo": "tsx src/demo.ts",
-    "dev": "tsx watch src/server.ts"
+    "dev": "tsx watch --env-file-if-exists=.env src/server.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
+    "bcryptjs": "^3.0.3",
     "express": "^4.21.0",
+    "express-rate-limit": "^8.7.0",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.23.0",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
+    "@types/bcryptjs": "^2.4.6",
     "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.14.0",
+    "@types/pg": "^8.23.1",
     "@types/supertest": "^6.0.2",
     "@types/web-push": "^3.6.4",
     "supertest": "^7.0.0",

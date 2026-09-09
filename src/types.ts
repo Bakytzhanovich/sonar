@@ -189,7 +189,7 @@ export interface ReelAnalysis {
   hook: string;
   duration_seconds: number;
   on_screen_text: string;
-  structure: string; // JSON: StructureBeat[] — parse before use
+  structure: StructureBeat[];
   created_at: string;
 }
 
@@ -236,7 +236,9 @@ export interface CarouselSlide {
 // ---- Module 5: Cross-platform autoposting (mocked) ----------------------
 
 export type PostingPlatform = 'instagram' | 'tiktok' | 'youtube_shorts';
-export type ScheduledPostStatus = 'pending_approval' | 'scheduled' | 'published' | 'failed' | 'rejected';
+// 'publishing' is a transient claim state — a row sits in it only for the
+// duration of publishDuePosts' processing, never observed at rest.
+export type ScheduledPostStatus = 'pending_approval' | 'scheduled' | 'publishing' | 'published' | 'failed' | 'rejected';
 export type PublishFailureReason = 'token_expired' | 'rejected_by_platform' | 'rate_limited';
 
 export interface ScheduledPost {
@@ -247,6 +249,7 @@ export interface ScheduledPost {
   scheduled_at: string;
   requires_approval: boolean;
   status: ScheduledPostStatus;
+  claimed_at: string | null;
   failure_reason: PublishFailureReason | null;
   published_at: string | null;
   external_post_url: string | null;
@@ -291,5 +294,15 @@ export interface AppNotification {
   message: string;
   related_id: string | null;
   is_read: boolean;
+  created_at: string;
+}
+
+// ---- Auth (Логика Б: public self-serve signup) ----------------------------
+
+export interface User {
+  id: string;
+  tenant_id: string;
+  email: string;
+  password_hash: string;
   created_at: string;
 }
