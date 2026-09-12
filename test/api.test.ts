@@ -207,7 +207,7 @@ describe('api', () => {
       .send({ externalUserId: 'test-user', messageText: 'цена?' });
     expect(testRun.body.outcome.status).toBe('completed');
 
-    const webhook = await request(app).post('/webhooks/mock/instagram').send({
+    const webhook = await request(app).post('/webhooks/mock/instagram').set('x-sonar-webhook-secret', 'test-mock-webhook-secret').send({
       eventId: 'evt-1',
       externalAccountId: 'ig-1',
       externalUserId: 'real-user-1',
@@ -235,8 +235,8 @@ describe('api', () => {
       .send({ keyword: 'цена', flowId, flowVersion });
 
     const payload = { eventId: 'evt-dup', externalAccountId: 'ig-1', externalUserId: 'user-1', messageText: 'цена?' };
-    const first = await request(app).post('/webhooks/mock/instagram').send(payload);
-    const second = await request(app).post('/webhooks/mock/instagram').send(payload);
+    const first = await request(app).post('/webhooks/mock/instagram').set('x-sonar-webhook-secret', 'test-mock-webhook-secret').send(payload);
+    const second = await request(app).post('/webhooks/mock/instagram').set('x-sonar-webhook-secret', 'test-mock-webhook-secret').send(payload);
 
     expect(first.body.outcome.status).toBe('completed');
     expect(second.body).toEqual({ status: 'already_processed' });

@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { randomBytes } from 'node:crypto';
 
 // Falls back to a fixed dev secret only under vitest (which sets
 // NODE_ENV=test itself), so `npm test` works with no setup. Any other
@@ -37,6 +38,15 @@ export async function hashPassword(password: string): Promise<string> {
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   return bcrypt.compare(password, hash);
 }
+
+// A real bcrypt hash (of an unguessable random string) for the login route
+// to compare against when no user matched the submitted email. Verifying
+// against this costs the same ~100ms as verifying a genuine user's hash,
+// which is what keeps "no such account" and "wrong password" — already
+// identical in their response bodies — also identical in response time.
+// Generated once at module load rather than hardcoded so no fixed hash of
+// a known value ever ships in the repository.
+export const DUMMY_PASSWORD_HASH = bcrypt.hashSync(randomBytes(32).toString('hex'), BCRYPT_COST);
 
 export interface SessionPayload {
   userId: string;

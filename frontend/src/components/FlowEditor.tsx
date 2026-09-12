@@ -152,7 +152,11 @@ const nodeTypes: NodeTypes = { trigger: TriggerNode, send_message: ActionNode };
 
 export default function FlowEditor() {
   const [devConfig, setDevConfig] = useDevConfig();
-  const { baseUrl, apiKey, botId, externalAccountId, devMode } = devConfig;
+  // externalAccountId is no longer read here: the "входящее сообщение" panel
+  // used to need it to address the public mock webhook, and now posts to the
+  // tenant-scoped /api/bots/:botId/simulate-incoming instead. It stays in
+  // useDevConfig because creating a bot still sets it.
+  const { baseUrl, apiKey, botId, devMode } = devConfig;
   const setBaseUrl = (v: string) => setDevConfig((c) => ({ ...c, baseUrl: v }));
   const setApiKey = (v: string) => setDevConfig((c) => ({ ...c, apiKey: v }));
   const setBotId = (v: string) => setDevConfig((c) => ({ ...c, botId: v }));
@@ -370,14 +374,16 @@ export default function FlowEditor() {
     }
   }
 
-  // Sends a REAL (non-test) inbound message through the mock webhook —
-  // unlike "Тест-режим" below, this persists (subscriber, messages,
-  // flow_runs), so it's what actually populates the CRM at /crm.
+  // Sends a REAL (non-test) inbound message through the authenticated
+  // simulator route — unlike "Тест-режим" below, this persists (subscriber,
+  // messages, flow_runs), so it's what actually populates the CRM at /crm.
+  // Requires only the bot id now, not its externalAccountId: the server
+  // resolves the bot within this tenant.
   async function sendWebhook() {
-    if (!externalAccountId) return setStatus('Нет externalAccountId — сначала "Быстрый старт" или создай бота с ним вручную');
+    if (!botId) return setStatus('Нет бота — сначала "Быстрый старт" или создай бота вручную');
     try {
-      const res = await api.sendMockWebhook(config, externalAccountId, webhookUser, webhookMessage);
-      setStatus(`Вебхук: ${JSON.stringify(res)}`);
+      const res = await api.simulateIncoming(config, botId, webhookUser, webhookMessage);
+      setStatus(`Входящее сообщение: ${JSON.stringify(res)}`);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
     }

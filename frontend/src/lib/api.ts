@@ -328,16 +328,17 @@ export const api = {
   removeTag: (config: ApiConfig, subscriberId: string, tagId: string) =>
     apiRequest(config, 'DELETE', `/api/subscribers/${subscriberId}/tags/${tagId}`),
 
-  // Not a Bearer-key call — this simulates Meta calling OUR webhook, so it
-  // deliberately does not go through apiRequest's auth header. eventId is
-  // generated per call so repeated clicks aren't silently deduped as
-  // "already_processed" against each other.
-  sendMockWebhook: (config: ApiConfig, externalAccountId: string, externalUserId: string, messageText: string) =>
-    fetch(`${config.baseUrl}/webhooks/mock/instagram`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ eventId: crypto.randomUUID(), externalAccountId, externalUserId, messageText }),
-    }).then((res) => res.json()),
+  // Drives a REAL (non-test) inbound message through the same handler the
+  // Instagram webhook uses, but over an authenticated, tenant-scoped route.
+  //
+  // This used to POST straight to /webhooks/mock/instagram with no
+  // credential — which is precisely why that endpoint was reachable by
+  // anyone. It is now secret-gated, and the secret must not live in a
+  // browser bundle, so the product calls its own API instead: the bot is
+  // resolved inside the caller's tenant and eventId is generated
+  // server-side (a UI click is not a redelivered platform event).
+  simulateIncoming: (config: ApiConfig, botId: string, externalUserId: string, messageText: string) =>
+    apiRequest(config, 'POST', `/api/bots/${botId}/simulate-incoming`, { externalUserId, messageText }),
 
   // ---- Module 3: Reel analysis (mocked pipeline) -------------------------
 

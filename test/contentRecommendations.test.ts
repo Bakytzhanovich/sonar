@@ -121,7 +121,7 @@ describe('GET /api/content-recommendations', () => {
     const bot = await request(app).post('/api/bots').set('Authorization', `Bearer ${apiKey}`).send({ name: 'Bot', externalAccountId: 'ig-1' });
     const botId = bot.body.bot.id;
 
-    await request(app).post('/webhooks/mock/instagram').send({
+    await request(app).post('/webhooks/mock/instagram').set('x-sonar-webhook-secret', 'test-mock-webhook-secret').send({
       eventId: 'e1',
       externalAccountId: 'ig-1',
       externalUserId: 'u1',

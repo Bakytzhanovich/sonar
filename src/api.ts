@@ -1,9 +1,11 @@
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 import { randomUUID } from 'node:crypto';
 import { exec, isUniqueViolation, queryAll, queryOne, type Db } from './db';
 import { createApiKeyForTenant, resolveTenantIdFromApiKey } from './apiKeys';
-import { hashPassword, verifyPassword, signSession, verifySession } from './auth';
+import { hashPassword, verifyPassword, signSession, verifySession, DUMMY_PASSWORD_HASH } from './auth';
+import { MOCK_WEBHOOK_SECRET_HEADER, isMockWebhookEnabled, verifyMockWebhookSecret } from './webhookAuth';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { analyzeReelMock, generateScriptMock } from './reelAnalysis';
@@ -37,6 +39,24 @@ function demoExternalAccountId(tenantId: string): string {
 
 export function createApp(db: Db): Express {
   const app = express();
+
+  // Rate limiting keys on req.ip, which behind a reverse proxy is the
+  // proxy's own address unless Express is told how many hops to trust —
+  // every user then shares one bucket, so 20 attempts from one attacker
+  // locked login for everybody (a DoS, out of the very control meant to
+  // stop brute force). Trusting X-Forwarded-For is only safe when a proxy
+  // actually overwrites it, so this is opt-in per deployment rather than
+  // on by default: Render sets TRUST_PROXY=1 (see render.yaml), local dev
+  // leaves it unset, where trusting a client-supplied header would instead
+  // let anyone bypass the limiter by inventing a new address per request.
+  app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 0));
+
+  // Baseline response headers (HSTS, nosniff, frameguard, referrer policy).
+  // contentSecurityPolicy is off: this process serves JSON to a separate
+  // Next.js origin and never returns HTML, so a CSP here would protect
+  // nothing while risking breaking the frontend's own headers.
+  app.use(helmet({ contentSecurityPolicy: false }));
+
   app.use(express.json());
 
   // Credential endpoints are the most commonly attacked surface (password
@@ -55,13 +75,32 @@ export function createApp(db: Db): Express {
     message: { error: 'too_many_requests' },
   });
 
-  // Permissive for now — protected routes use a Bearer credential (an API
-  // key for integrations or a session JWT for the first-party product),
-  // not a cookie, so there's no CSRF surface to widen by allowing any
-  // origin. Worth tightening to a specific origin once there's a real
-  // deployed frontend URL to pin it to.
+  // The mock webhook authenticates with a shared secret rather than a
+  // tenant credential, so it gets its own limiter: without one, a caller
+  // holding the secret (or brute-forcing it) could drive unbounded flow
+  // runs, and every run is a DM sent from a client's real account once the
+  // platform integration is live — exactly the account-ban risk CLAUDE.md
+  // calls out. Keyed the same way as authRateLimit, so it inherits the
+  // trust-proxy setting above.
+  const webhookRateLimit = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'too_many_requests' },
+  });
+
+  // CORS_ORIGIN pins this to the deployed frontend once one exists;
+  // defaults to permissive for local dev. `||` rather than `??` on purpose:
+  // a declared-but-unset host env var (Render's `sync: false` leaves the
+  // dashboard field blank) arrives as '' and would emit an empty
+  // Access-Control-Allow-Origin header, breaking every cross-origin call.
+  // Protected routes use a Bearer credential (an API key for integrations
+  // or a session JWT for the first-party product), not a cookie, so
+  // there's no CSRF surface being widened by the permissive default.
+  const corsOrigin = process.env.CORS_ORIGIN || '*';
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Origin', corsOrigin);
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -145,8 +184,15 @@ export function createApp(db: Db): Express {
     // Same error for "no such user" and "wrong password" — a distinct
     // "no such user" response would let a caller enumerate registered
     // emails by probing this endpoint.
+    //
+    // The hash comparison also runs when no user matched, against a fixed
+    // dummy hash: bcrypt at cost 12 takes ~100ms, so skipping it for an
+    // unknown email made "not registered" answer measurably faster than
+    // "wrong password" — the identical error message above could then be
+    // sidestepped by timing the response instead of reading it.
     const user = await queryOne<User>(db, `SELECT * FROM users WHERE email = ?`, email);
-    if (!user || !(await verifyPassword(password, user.password_hash))) {
+    const passwordMatches = await verifyPassword(password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
+    if (!user || !passwordMatches) {
       return res.status(401).json({ error: 'invalid_credentials' });
     }
 
@@ -427,7 +473,18 @@ export function createApp(db: Db): Express {
     const bot = await getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
     if (!bot) return res.status(404).json({ error: 'bot not found' });
 
-    const flows = await queryAll(db, `SELECT id, version, status, created_at FROM flows WHERE bot_id = ? ORDER BY id, version DESC`, bot.id);
+    // Newest first. The previous `ORDER BY id, version DESC` grouped
+    // versions under their flow but ordered the groups by UUID, i.e.
+    // arbitrarily — and the editor treats flows[0] as "the working
+    // scenario", so with more than one flow it opened a random one and
+    // announced it as the live one. created_at DESC makes that first
+    // element actually mean something; id is the tiebreaker for rows
+    // sharing a timestamp, so the order stays deterministic.
+    const flows = await queryAll(
+      db,
+      `SELECT id, version, status, created_at FROM flows WHERE bot_id = ? ORDER BY created_at DESC, id DESC, version DESC`,
+      bot.id
+    );
 
     res.json({ flows });
   }));
@@ -671,10 +728,15 @@ export function createApp(db: Db): Express {
     const params: unknown[] = [bot.id];
 
     if (tag) {
+      // tags.tenant_id as well as the name: tag names are only unique per
+      // tenant, so matching on the name alone meant this subquery could
+      // resolve another tenant's tag id. No data leaked (the outer query is
+      // already restricted to this tenant's bot), but the filter would
+      // match or miss rows for reasons outside the caller's own data.
       conditions.push(
-        `id IN (SELECT subscriber_id FROM subscriber_tags JOIN tags ON subscriber_tags.tag_id = tags.id WHERE tags.name = ?)`
+        `id IN (SELECT subscriber_id FROM subscriber_tags JOIN tags ON subscriber_tags.tag_id = tags.id WHERE tags.name = ? AND tags.tenant_id = ?)`
       );
-      params.push(tag);
+      params.push(tag, res.locals.tenantId);
     }
     if (leadStatus) {
       conditions.push('lead_status = ?');
@@ -687,7 +749,7 @@ export function createApp(db: Db): Express {
       ...params
     );
 
-    const tagsBySubscriber = await tagsForSubscribers(db, subscribers.map((s) => s.id));
+    const tagsBySubscriber = await tagsForSubscribers(db, subscribers.map((s) => s.id), res.locals.tenantId as string);
     res.json({ subscribers: subscribers.map((s) => ({ ...s, tags: tagsBySubscriber[s.id] ?? [] })) });
   }));
 
@@ -695,7 +757,7 @@ export function createApp(db: Db): Express {
     const subscriber = await getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!subscriber) return res.status(404).json({ error: 'subscriber not found' });
 
-    const tags = (await tagsForSubscribers(db, [subscriber.id]))[subscriber.id] ?? [];
+    const tags = (await tagsForSubscribers(db, [subscriber.id], res.locals.tenantId as string))[subscriber.id] ?? [];
     res.json({ subscriber: { ...subscriber, tags } });
   }));
 
@@ -796,6 +858,46 @@ export function createApp(db: Db): Express {
     if (!subscriber) return res.status(404).json({ error: 'subscriber not found' });
 
     await exec(db, `DELETE FROM subscriber_tags WHERE subscriber_id = ? AND tag_id = ?`, subscriber.id, req.params.tagId);
+    res.status(204).send();
+  }));
+
+  // CLAUDE.md's security section requires a right to erasure under
+  // Kazakhstan's personal data law, and a CRM contact is the one place this
+  // product holds personal data. There was no way to delete one at all.
+  //
+  // The rows are removed explicitly, child-first, inside one transaction
+  // rather than leaning on ON DELETE CASCADE: schema.sql has no cascades,
+  // and since it is applied once to an empty database (no migration
+  // framework yet — see the audit note in CLAUDE.md), adding them would only
+  // affect newly created databases and silently leave every existing
+  // deployment unable to erase anything. Doing it in application code works
+  // identically on both. All of it is one transaction so a failure halfway
+  // cannot leave a contact half-erased, which would be worse than not
+  // having started.
+  app.delete('/api/subscribers/:id', asyncHandler(async (req, res) => {
+    const subscriber = await getSubscriberForTenant(db, req.params.id, res.locals.tenantId as string);
+    if (!subscriber) return res.status(404).json({ error: 'subscriber not found' });
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      // mock_sent_messages references flow_runs, so it goes before them.
+      await exec(client, `DELETE FROM mock_sent_messages WHERE subscriber_id = ?`, subscriber.id);
+      await exec(client, `DELETE FROM flow_runs WHERE subscriber_id = ?`, subscriber.id);
+      await exec(client, `DELETE FROM messages WHERE subscriber_id = ?`, subscriber.id);
+      await exec(client, `DELETE FROM notes WHERE subscriber_id = ?`, subscriber.id);
+      await exec(client, `DELETE FROM subscriber_tags WHERE subscriber_id = ?`, subscriber.id);
+      // Tags themselves are tenant-level vocabulary, not personal data, so
+      // they stay — only this contact's assignment to them is removed.
+      await exec(client, `DELETE FROM subscribers WHERE id = ? AND tenant_id = ?`, subscriber.id, res.locals.tenantId);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
     res.status(204).send();
   }));
 
@@ -1090,8 +1192,11 @@ export function createApp(db: Db): Express {
   // Manual trigger for the polling publisher — there's no real queue to
   // fire an event, so this is what lets a demo/test see a due post
   // actually "publish" without waiting for the timer in server.ts.
+  // Scoped to the calling tenant — see publishDuePosts' own comment: the
+  // unscoped form here let any tenant publish every other tenant's due
+  // posts. The server-side timer in server.ts keeps the unscoped sweep.
   app.post('/api/scheduled-posts/process-due', asyncHandler(async (_req, res) => {
-    res.json(await publishDuePosts(db));
+    res.json(await publishDuePosts(db, new Date(), res.locals.tenantId as string));
   }));
 
   // ---- Module 6: Content plan from CRM + Module 3 (the real differentiator) --
@@ -1137,8 +1242,9 @@ export function createApp(db: Db): Express {
   // /api/scheduled-posts/process-due in Module 5: no real queue to fire
   // an event, so this lets a demo see progress advance without waiting
   // for the timer in server.ts.
+  // Tenant-scoped for the same reason as process-due above.
   app.post('/api/video-edit-jobs/process-tick', asyncHandler(async (_req, res) => {
-    res.json(await advanceRenderJobs(db));
+    res.json(await advanceRenderJobs(db, new Date(), res.locals.tenantId as string));
   }));
 
   // ---- Push notifications (shared by Modules 5 and 8) ---------------------
@@ -1200,22 +1306,20 @@ export function createApp(db: Db): Express {
     res.json({ status: 'ok' });
   }));
 
-  // ---- Mock Instagram webhook --------------------------------------------
-  // Simulates Meta calling us — NOT protected by tenant API key (Meta
-  // doesn't have one). The real POST /webhooks/instagram will carry this
-  // same event_id-dedup contract, plus X-Hub-Signature-256 verification
-  // that this mock intentionally does not implement yet.
-  app.post('/webhooks/mock/instagram', asyncHandler(async (req, res) => {
-    const { eventId, externalAccountId, externalUserId, messageText } = req.body ?? {};
-    if (!eventId || !externalAccountId || !externalUserId || !messageText) {
-      return res.status(400).json({ error: 'eventId, externalAccountId, externalUserId and messageText are required' });
-    }
-
-    const bot = await queryOne<Bot>(db, `SELECT * FROM bots WHERE external_account_id = ?`, externalAccountId);
-    if (!bot) return res.status(404).json({ error: 'unknown externalAccountId' });
-
-    const claimed = await tryClaimWebhookEvent(db, eventId, bot.id, req.body);
-    if (!claimed) return res.json({ status: 'already_processed' });
+  // ---- Incoming message handling -----------------------------------------
+  // Shared by the two entry points below: the public mock webhook (Meta's
+  // stand-in) and the authenticated in-product simulator. Both must apply
+  // the same event_id dedup contract that the real POST /webhooks/instagram
+  // will, so the logic lives in one place rather than being duplicated.
+  async function handleIncomingMessage(
+    bot: Bot,
+    eventId: string,
+    externalUserId: string,
+    messageText: string,
+    rawPayload: unknown
+  ): Promise<{ status: 'already_processed' } | { outcome: Awaited<ReturnType<typeof runFlow>> }> {
+    const claimed = await tryClaimWebhookEvent(db, eventId, bot.id, rawPayload);
+    if (!claimed) return { status: 'already_processed' };
 
     const outcome = await runFlow(db, {
       tenantId: bot.tenant_id,
@@ -1226,8 +1330,65 @@ export function createApp(db: Db): Express {
     });
 
     await exec(db, `UPDATE webhook_events SET processed_at = ? WHERE event_id = ?`, new Date().toISOString(), eventId);
+    return { outcome };
+  }
 
-    res.json({ outcome });
+  // The in-product "simulate an incoming DM" panel (FlowEditor's test box)
+  // calls this instead of the public webhook below. It authenticates with
+  // the credential the browser already holds and resolves the bot within
+  // the caller's own tenant, so the frontend needs no webhook secret — a
+  // secret shipped in a browser bundle would not be a secret at all.
+  // eventId is generated here rather than accepted from the client: this
+  // route is an explicit user action, not a redelivered platform event, so
+  // there is nothing for the caller to deduplicate against.
+  app.post('/api/bots/:botId/simulate-incoming', asyncHandler(async (req, res) => {
+    const bot = await getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
+    if (!bot) return res.status(404).json({ error: 'bot not found' });
+
+    const externalUserId = typeof req.body?.externalUserId === 'string' ? req.body.externalUserId.trim() : '';
+    const messageText = typeof req.body?.messageText === 'string' ? req.body.messageText.trim() : '';
+    if (!externalUserId) return res.status(400).json({ error: 'externalUserId is required' });
+    if (!messageText) return res.status(400).json({ error: 'messageText is required' });
+
+    const eventId = randomUUID();
+    const result = await handleIncomingMessage(bot, eventId, externalUserId, messageText, {
+      source: 'in_product_simulator',
+      eventId,
+      externalUserId,
+      messageText,
+    });
+    res.json(result);
+  }));
+
+  // ---- Mock Instagram webhook --------------------------------------------
+  // Simulates Meta calling us, so it cannot carry a tenant credential —
+  // which is exactly why it is gated twice (see webhookAuth.ts): the route
+  // only exists when MOCK_WEBHOOK_ENABLED is set, and then only answers
+  // callers presenting MOCK_WEBHOOK_SECRET. Left open, it was a remote
+  // trigger for sending DMs from any client's account (a bot's
+  // external_account_id is a public Instagram handle) and for injecting
+  // contacts into their CRM.
+  //
+  // The real POST /webhooks/instagram will keep this same event_id-dedup
+  // contract and swap the shared secret for X-Hub-Signature-256, verified
+  // with webhookAuth.ts's timing-safe comparison.
+  app.post('/webhooks/mock/instagram', webhookRateLimit, asyncHandler(async (req, res) => {
+    // 404, not 403: a disabled simulator should be indistinguishable from
+    // one that was never built, so probing cannot confirm it exists.
+    if (!isMockWebhookEnabled()) return res.status(404).json({ error: 'not_found' });
+    if (!verifyMockWebhookSecret(req.header(MOCK_WEBHOOK_SECRET_HEADER))) {
+      return res.status(401).json({ error: 'invalid_webhook_secret' });
+    }
+
+    const { eventId, externalAccountId, externalUserId, messageText } = req.body ?? {};
+    if (!eventId || !externalAccountId || !externalUserId || !messageText) {
+      return res.status(400).json({ error: 'eventId, externalAccountId, externalUserId and messageText are required' });
+    }
+
+    const bot = await queryOne<Bot>(db, `SELECT * FROM bots WHERE external_account_id = ?`, externalAccountId);
+    if (!bot) return res.status(404).json({ error: 'unknown externalAccountId' });
+
+    res.json(await handleIncomingMessage(bot, eventId, externalUserId, messageText, req.body));
   }));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
@@ -1330,15 +1491,21 @@ interface SubscriberTagRef {
 // Returns {id, name} pairs, not just names — the UI needs the id to call
 // DELETE /api/subscribers/:id/tags/:tagId; a bare name isn't enough to
 // remove a tag.
-async function tagsForSubscribers(db: Db, subscriberIds: string[]): Promise<Record<string, SubscriberTagRef[]>> {
+// tenantId is required rather than inferred: every caller has already
+// restricted its subscriber ids to one tenant, so this was not leaking
+// anything, but a tenant filter that exists only in the callers is one
+// refactor away from being dropped. Defence in depth on the one helper that
+// takes raw ids.
+async function tagsForSubscribers(db: Db, subscriberIds: string[], tenantId: string): Promise<Record<string, SubscriberTagRef[]>> {
   if (subscriberIds.length === 0) return {};
   const placeholders = subscriberIds.map(() => '?').join(',');
   const rows = await queryAll<{ subscriberId: string; id: string; name: string }>(
     db,
     `SELECT subscriber_tags.subscriber_id as "subscriberId", tags.id as id, tags.name as name
      FROM subscriber_tags JOIN tags ON subscriber_tags.tag_id = tags.id
-     WHERE subscriber_tags.subscriber_id IN (${placeholders})`,
-    ...subscriberIds
+     WHERE subscriber_tags.subscriber_id IN (${placeholders}) AND tags.tenant_id = ?`,
+    ...subscriberIds,
+    tenantId
   );
 
   const result: Record<string, SubscriberTagRef[]> = {};

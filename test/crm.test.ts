@@ -22,7 +22,11 @@ async function createBot(app: Express, apiKey: string, externalAccountId = 'ig-c
 // through the mock webhook — since there's no direct "create subscriber"
 // endpoint (subscribers only ever come from real interactions).
 async function messageBot(app: Express, externalAccountId: string, externalUserId: string, messageText: string, eventId: string) {
-  return request(app).post('/webhooks/mock/instagram').send({ eventId, externalAccountId, externalUserId, messageText });
+  // The mock webhook is secret-gated (see src/webhookAuth.ts); under
+  // NODE_ENV=test the expected value is a fixed dev constant.
+  return request(app).post('/webhooks/mock/instagram')
+   .set('x-sonar-webhook-secret', 'test-mock-webhook-secret')
+    .send({ eventId, externalAccountId, externalUserId, messageText });
 }
 
 describe('CRM: subscribers, tags, notes, timeline', () => {

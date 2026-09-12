@@ -2,7 +2,7 @@
   "name": "sonar-module1",
   "version": "0.1.0",
   "private": true,
-  "description": "Sonar Module 1 — chat-bot constructor backend (trigger -> flow -> action)",
+  "description": "Sonar Module 1 \u2014 chat-bot constructor backend (trigger -> flow -> action)",
   "main": "dist/api.js",
   "scripts": {
     "build": "tsc && cp src/schema.sql dist/schema.sql",
@@ -14,6 +14,7 @@
     "bcryptjs": "^3.0.3",
     "express": "^4.21.0",
     "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.23.0",
     "web-push": "^3.6.7"
@@ -30,5 +31,8 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }

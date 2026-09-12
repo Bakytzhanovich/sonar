@@ -25,9 +25,16 @@ function normalizeSegment(value: string): string {
   return value.trim().toLocaleLowerCase('ru');
 }
 
+// Server timestamps can land slightly ahead of the browser clock (the two
+// clocks are independent, and a contact created seconds ago is the most
+// likely one to be looked at). Requiring elapsed >= 0 dropped exactly those
+// contacts out of the signature "N диалогов активны сейчас" counter, so a
+// small negative skew counts as "just now" instead.
+const CLOCK_SKEW_TOLERANCE_MS = 60_000;
+
 function hasRecentActivity(subscriber: Subscriber, now: number): boolean {
   const elapsed = now - new Date(subscriber.last_interacted_at).getTime();
-  return elapsed >= 0 && elapsed < ACTIVE_WINDOW_MS;
+  return elapsed >= -CLOCK_SKEW_TOLERANCE_MS && elapsed < ACTIVE_WINDOW_MS;
 }
 
 function contactInitial(identifier: string): string {

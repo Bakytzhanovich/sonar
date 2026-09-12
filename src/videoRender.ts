@@ -10,8 +10,21 @@ const PROGRESS_STEP = 25; // reaches 100% after 4 ticks
 // with incremental progress across polling ticks instead of resolving
 // instantly, so the progress bar has something real to show rather than
 // jumping straight to 100%.
-export async function advanceRenderJobs(db: Db, now: Date = new Date()): Promise<{ advanced: number }> {
-  const jobs = await queryAll<VideoEditJob>(db, `SELECT * FROM video_edit_jobs WHERE status = 'processing'`);
+// tenantId is optional for the same reason as publisher.ts's
+// publishDuePosts: server.ts's timer sweeps every tenant by design, while
+// the tenant-reachable POST /api/video-edit-jobs/process-tick endpoint must
+// pass its own id — otherwise one tenant advances and resolves another
+// tenant's render jobs, and the resulting push notification goes to the
+// other tenant's owner.
+export async function advanceRenderJobs(db: Db, now: Date = new Date(), tenantId?: string): Promise<{ advanced: number }> {
+  const jobs = await queryAll<VideoEditJob>(
+    db,
+    // ?::text — a NULL bound to a bare placeholder leaves Postgres unable to
+    // infer the parameter's type and the statement is rejected.
+    `SELECT * FROM video_edit_jobs WHERE status = 'processing' AND (?::text IS NULL OR tenant_id = ?)`,
+    tenantId ?? null,
+    tenantId ?? null
+  );
 
   // Each job is independently compare-and-swapped below (own row, own
   // WHERE-guarded UPDATE) — nothing here depends on another job's

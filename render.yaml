@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: sonar-api
+    runtime: node
+    plan: free
+    region: frankfurt
+    # --include=dev is required: NODE_ENV=production below makes npm omit
+    # devDependencies, and tsc (needed by `npm run build`) lives there.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node dist/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: NODE_ENV
+        value: production
+      # Render terminates TLS at its own proxy and overwrites
+      # X-Forwarded-For, so exactly one hop is trustworthy. Without this the
+      # auth rate limiter sees every request as coming from the proxy and
+      # shares one bucket across all users.
+      - key: TRUST_PROXY
+        value: 1
+      # Push notification keypair. Must be set, not left to the on-disk
+      # fallback: this filesystem is ephemeral, so a generated key would be
+      # replaced on every deploy and silently break every browser
+      # subscription. Generate with:
+      #   node -e "console.log(JSON.stringify(require('web-push').generateVAPIDKeys()))"
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      # The Instagram webhook simulator stays off in production — it can
+      # trigger DMs from a client's connected account. If a staff-assisted
+      # demo needs it, set both of these together (the server refuses to
+      # start with the flag on and no secret).
+      - key: MOCK_WEBHOOK_ENABLED
+        value: false

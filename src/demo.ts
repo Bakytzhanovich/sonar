@@ -154,6 +154,13 @@ async function request(baseUrl: string, method: string, urlPath: string, body: u
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (apiKey) headers.authorization = `Bearer ${apiKey}`;
 
+  // The mock webhook is gated by a shared secret (src/webhookAuth.ts) since
+  // it can drive real flow runs. The demo drives it over HTTP like Meta
+  // would, so it has to present the same secret the server was started with.
+  if (urlPath.startsWith('/webhooks/') && process.env.MOCK_WEBHOOK_SECRET) {
+    headers['x-sonar-webhook-secret'] = process.env.MOCK_WEBHOOK_SECRET;
+  }
+
   const res = await fetch(`${baseUrl}${urlPath}`, {
     method,
     headers,
@@ -174,6 +181,11 @@ function log(message: string) {
 }
 
 main().catch((err) => {
+  if (!process.env.MOCK_WEBHOOK_SECRET) {
+    console.error(
+      '\nПодсказка: шаги с вебхуком требуют MOCK_WEBHOOK_SECRET (и сервера, запущенного с MOCK_WEBHOOK_ENABLED=true и тем же секретом).\n'
+    );
+  }
   console.error(err);
   process.exit(1);
 });

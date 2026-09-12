@@ -53,9 +53,16 @@ function isSlideContentFields(value: unknown): value is SlideContentFields {
   );
 }
 
+// Without a deadline a stalled TCP connection held POST /api/carousels open
+// indefinitely: fetch has no default timeout, and because nothing ever threw,
+// the mock fallback below could not step in either — the request simply never
+// answered. 20s is well above a normal completion for this small prompt.
+const OPENAI_TIMEOUT_MS = 20_000;
+
 async function generateCarouselWithOpenAI(prompt: string, apiKey: string, fetchImpl: typeof fetch): Promise<SlideContentFields[]> {
   const response = await fetchImpl(OPENAI_CHAT_COMPLETIONS_URL, {
     method: 'POST',
+    signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: OPENAI_MODEL,

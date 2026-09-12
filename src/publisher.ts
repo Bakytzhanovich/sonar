@@ -35,7 +35,17 @@ export function mockPublish(
 // directly with an injected `now` by tests and by the manual
 // "process due now" endpoint (useful for demos, since there's no real
 // queue to trigger).
-export async function publishDuePosts(db: Db, now: Date = new Date()): Promise<{ processed: number }> {
+// tenantId scopes the claim to one tenant's rows. It is optional because
+// there are two legitimate callers with different trust levels: the
+// setInterval timer in server.ts is server-side infrastructure and
+// deliberately sweeps every tenant, while the manual
+// POST /api/scheduled-posts/process-due endpoint is reachable by any
+// authenticated tenant and MUST pass its own id — without that, tenant B
+// calling the endpoint published tenant A's private scheduled posts (a real
+// post to A's real Instagram, plus a push notification to A's owner), which
+// breaks CLAUDE.md's requirement that one client's data is never visible to
+// another.
+export async function publishDuePosts(db: Db, now: Date = new Date(), tenantId?: string): Promise<{ processed: number }> {
   // Claims due rows atomically in the same statement that selects them, by
   // flipping them out of 'scheduled' — the setInterval timer in server.ts
   // and the manual POST /api/scheduled-posts/process-due endpoint can now
@@ -56,21 +66,53 @@ export async function publishDuePosts(db: Db, now: Date = new Date()): Promise<{
     db,
     `UPDATE scheduled_posts
      SET status = 'publishing', claimed_at = ?
-     WHERE (status = 'scheduled' AND scheduled_at <= ?)
-        OR (status = 'publishing' AND claimed_at < ?)
+     WHERE ((status = 'scheduled' AND scheduled_at <= ?)
+        OR (status = 'publishing' AND claimed_at < ?))
+       AND (?::text IS NULL OR tenant_id = ?)
      RETURNING *`,
     now.toISOString(),
     now.toISOString(),
-    new Date(now.getTime() - STUCK_PUBLISHING_MS).toISOString()
+    new Date(now.getTime() - STUCK_PUBLISHING_MS).toISOString(),
+    // Cast is required, not cosmetic: with a NULL bound to a bare
+    // placeholder Postgres has nothing to infer the parameter type from and
+    // rejects the statement outright ("could not determine data type").
+    tenantId ?? null,
+    tenantId ?? null
   );
 
   // Each post was already atomically claimed above (own row, own
   // WHERE-guarded UPDATE) — nothing here depends on another post's
   // outcome, so processing them concurrently instead of one at a time is
   // safe and turns N sequential round-trips into N parallel ones.
-  await Promise.all(due.map((post) => processOnePost(db, post, now)));
+  //
+  // Bounded, though, rather than one Promise.all over the whole batch: the
+  // pg pool holds 10 connections, so a large due batch left its tail
+  // waiting on a connection while already claimed. Once that wait pushed a
+  // row past STUCK_PUBLISHING_MS, the next tick reclaimed it as orphaned
+  // and published it a second time — a duplicate post on the client's real
+  // account. Keeping in-flight work under the pool size means a claimed row
+  // is always actively being processed, which is the assumption the stale-
+  // claim reclaim above is built on.
+  await forEachBounded(due, PUBLISH_CONCURRENCY, (post) => processOnePost(db, post, now));
 
   return { processed: due.length };
+}
+
+// Stays under the pg pool's 10 connections so claimed rows are never left
+// queueing for one (see publishDuePosts above).
+const PUBLISH_CONCURRENCY = 5;
+
+// A fixed number of workers pulling from a shared cursor — keeps at most
+// `limit` tasks in flight without pulling in a dependency.
+async function forEachBounded<T>(items: T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < items.length) {
+      const item = items[cursor++];
+      await task(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
 async function processOnePost(db: Db, post: ScheduledPost, now: Date): Promise<void> {
