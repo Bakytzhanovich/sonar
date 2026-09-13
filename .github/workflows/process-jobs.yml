@@ -1,0 +1,46 @@
+# Заменяет очередь задач на бесплатном тарифе Render.
+#
+# Два повода существовать:
+#   1. В server.ts крутится setInterval, но бесплатный веб-сервис Render
+#      засыпает примерно через 15 минут без входящих запросов — вместе с
+#      таймером. Отложенные посты (Модуль 5) и рендер видео (Модуль 8)
+#      просто перестали бы двигаться. Эти запросы будят сервис.
+#   2. Cron на самом Render доступен только на платном тарифе.
+#
+# Эндпоинты требуют авторизации и работают в пределах одного тенанта, так
+# что ключ ниже — это ключ конкретного рабочего пространства. Пока клиентов
+# несколько, этого достаточно; когда тенантов станет много, правильным
+# решением будет постоянно живущий воркер (или платный тариф), а не список
+# ключей в секретах.
+name: Обработка отложенных задач
+
+on:
+  schedule:
+    # Каждые 10 минут. Чаще нет смысла: холодный старт занимает ~50 секунд,
+    # а публикация постов не требует секундной точности.
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # ручной запуск из вкладки Actions
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Публикация постов, время которых наступило
+        run: |
+          curl --fail --silent --show-error --max-time 120 \
+            -X POST "$API_URL/api/scheduled-posts/process-due" \
+            -H "Authorization: Bearer $API_KEY" \
+            -H 'content-type: application/json' -d '{}'
+        env:
+          API_URL: ${{ secrets.SONAR_API_URL }}
+          API_KEY: ${{ secrets.SONAR_API_KEY }}
+
+      - name: Продвижение задач рендера видео
+        run: |
+          curl --fail --silent --show-error --max-time 120 \
+            -X POST "$API_URL/api/video-edit-jobs/process-tick" \
+            -H "Authorization: Bearer $API_KEY" \
+            -H 'content-type: application/json' -d '{}'
+        env:
+          API_URL: ${{ secrets.SONAR_API_URL }}
+          API_KEY: ${{ secrets.SONAR_API_KEY }}

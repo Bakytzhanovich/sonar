@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState, type SetStateAction } from 'react';
+import { API_BASE_URL } from './apiConfig';
 
 const STORAGE_KEY = 'sonar-dev-config';
 
@@ -12,7 +13,14 @@ export interface DevConfig {
   devMode: boolean;
 }
 
-const DEFAULT_CONFIG: DevConfig = { baseUrl: 'http://localhost:4001', apiKey: '', botId: '', externalAccountId: '', devMode: false };
+// baseUrl defaults to the same env-driven value the auth screens use, not a
+// hardcoded localhost. Onboarding does write API_BASE_URL in here, but that
+// is the only path that did: a returning user logging in on a fresh browser
+// (empty localStorage, no onboarding run) landed on a product screen still
+// pointed at localhost:4001, so every CRM/editor/scheduler call failed in
+// production while signup and login worked fine. Locally the env var is
+// unset and this resolves to the same localhost default as before.
+const DEFAULT_CONFIG: DevConfig = { baseUrl: API_BASE_URL, apiKey: '', botId: '', externalAccountId: '', devMode: false };
 
 function readStoredConfig(): DevConfig {
   try {
