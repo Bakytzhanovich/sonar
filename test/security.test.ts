@@ -277,3 +277,71 @@ describe('security: login does not leak which emails are registered', () => {
     expect(unknownEmailMs).toBeGreaterThan(wrongPasswordMs / 4);
   });
 });
+
+describe('security: bad input answers as bad input, not as a server fault', () => {
+  let app: Express;
+  let db: Db;
+  beforeEach(async () => { db = await createTestDb(); app = createApp(db); });
+  afterEach(async () => { if (db) await dropTestDb(db); });
+
+  // Each case below used to return 500 "internal_error". None was a breach,
+  // but all four told the caller its own malformed request was a server
+  // fault, and each one went through console.error — so anyone could flood
+  // the logs with requests that are merely invalid and bury real incidents.
+  it('rejects a NUL byte instead of letting Postgres fail the statement', async () => {
+    const apiKey = await createTenant(app, 'a@example.com');
+    const res = await request(app)
+      .post('/api/reel-analyses')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ sourceUrl: `https://example.com/${String.fromCharCode(0)}x` });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('null_byte_in_request');
+  });
+
+  it('answers an oversized body with 413, not 500', async () => {
+    const apiKey = await createTenant(app, 'a@example.com');
+    const res = await request(app)
+      .post('/api/reel-analyses')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ sourceUrl: 'https://example.com/x', pad: 'x'.repeat(2 * 1024 * 1024) });
+
+    expect(res.status).toBe(413);
+  });
+
+  it('answers malformed JSON with 400, not 500', async () => {
+    const apiKey = await createTenant(app, 'a@example.com');
+    const res = await request(app)
+      .post('/api/reel-analyses')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .set('Content-Type', 'application/json')
+      .send('{broken');
+
+    expect(res.status).toBe(400);
+  });
+
+  // 'NaN', 'Infinity', '1e400' and '1.5' all survive Number() and then reach
+  // Postgres as invalid integer syntax.
+  it('treats a non-integer version as not found rather than erroring', async () => {
+    const apiKey = await createTenant(app, 'a@example.com');
+    for (const version of ['NaN', 'Infinity', '999999999999999999999', '1e400', '1.5', '-1']) {
+      const res = await request(app)
+        .get(`/api/flows/any-id/versions/${encodeURIComponent(version)}`)
+        .set('Authorization', `Bearer ${apiKey}`);
+      expect(res.status, `version=${version}`).toBe(404);
+    }
+  });
+
+  it('rejects a rollback to a non-integer version without reaching the database', async () => {
+    const apiKey = await createTenant(app, 'a@example.com');
+    const bot = await createBotWithLiveTrigger(app, apiKey, 'handle-a');
+    const triggers = await request(app).get(`/api/bots/${bot.id}/flows`).set('Authorization', `Bearer ${apiKey}`);
+    expect(triggers.status).toBe(200);
+
+    const res = await request(app)
+      .post('/api/triggers/any-id/rollback')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ toVersion: 'Infinity' });
+    expect(res.status).toBeLessThan(500);
+  });
+});

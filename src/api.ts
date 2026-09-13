@@ -59,6 +59,13 @@ export function createApp(db: Db): Express {
 
   app.use(express.json());
 
+  // See containsNullByte: a NUL anywhere in the body would otherwise reach
+  // Postgres and fail the statement, turning bad input into a server error.
+  app.use((req, res, next) => {
+    if (containsNullByte(req.body)) return res.status(400).json({ error: 'null_byte_in_request' });
+    next();
+  });
+
   // Credential endpoints are the most commonly attacked surface (password
   // brute force, credential stuffing, mass account creation) — CLAUDE.md
   // calls out rate limiting explicitly for autoposting; these need the same
@@ -493,7 +500,11 @@ export function createApp(db: Db): Express {
   // existing draft/published flow for editing; without this the canvas
   // could only ever create new flows, never load one back in.
   app.get('/api/flows/:flowId/versions/:version', asyncHandler(async (req, res) => {
-    const version = Number(req.params.version);
+    const version = parsePositiveInt(req.params.version);
+    // 404 rather than 400, matching what a well-formed but unknown version
+    // already returns below — a malformed one is no more "found" than that,
+    // and keeping the two indistinguishable gives nothing away.
+    if (version === undefined) return res.status(404).json({ error: 'flow not found' });
     const row = await queryOne<{ id: string; version: number; definition: FlowDefinition; status: string; tenant_id: string }>(
       db,
       `SELECT flows.id, flows.version, flows.definition, flows.status, bots.tenant_id
@@ -511,7 +522,8 @@ export function createApp(db: Db): Express {
   // Publishing is where an invalid graph gets rejected — drafts can be
   // incomplete while being edited, but nothing incomplete can go live.
   app.post('/api/flows/:flowId/versions/:version/publish', asyncHandler(async (req, res) => {
-    const version = Number(req.params.version);
+    const version = parsePositiveInt(req.params.version);
+    if (version === undefined) return res.status(404).json({ error: 'flow not found' });
     const row = await queryOne<{ definition: FlowDefinition; tenant_id: string }>(
       db,
       `SELECT flows.definition, bots.tenant_id
@@ -651,8 +663,10 @@ export function createApp(db: Db): Express {
 
     if (!trigger || trigger.bot_tenant_id !== res.locals.tenantId) return res.status(404).json({ error: 'trigger not found' });
 
-    const toVersion = Number(req.body?.toVersion);
-    if (!toVersion) return res.status(400).json({ error: 'toVersion is required' });
+    // parsePositiveInt, not Number: 'Infinity' and '1.5' passed the old
+    // truthiness check and then failed inside Postgres as a 500.
+    const toVersion = parsePositiveInt(req.body?.toVersion);
+    if (toVersion === undefined) return res.status(400).json({ error: 'toVersion is required' });
 
     const targetFlow = await queryOne<{ status: string }>(db, `SELECT status FROM flows WHERE id = ? AND version = ?`, trigger.flow_id, toVersion);
 
@@ -1391,7 +1405,19 @@ export function createApp(db: Db): Express {
     res.json(await handleIncomingMessage(bot, eventId, externalUserId, messageText, req.body));
   }));
 
+  // Not every error reaching here is the server's fault. express.json()
+  // rejects an oversized body with a 413 and malformed JSON with a 400,
+  // attaching the status to the error — blanket-500ing those told the
+  // client its own bad request was a server fault, and, worse, buried each
+  // one in console.error: a caller could flood the logs (and a hosted
+  // platform's log bill) with requests that are merely invalid, while
+  // genuine 5xx incidents became impossible to spot among them.
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    const status = clientErrorStatus(err);
+    if (status) return res.status(status).json({ error: clientErrorCode(status) });
+
+    // Everything else really is unexpected — keep the full log and the
+    // opaque body (no stack or message is ever returned to the caller).
     console.error(err);
     res.status(500).json({ error: 'internal_error' });
   });
@@ -1403,6 +1429,51 @@ export function createApp(db: Db): Express {
 // inside one would become an unhandled rejection instead of reaching the
 // error middleware above. Wrapping every async handler through this keeps
 // that error path working without adding try/catch to every route.
+// body-parser marks its own failures with a 4xx status; anything without
+// one is an unexpected server-side error. Narrowed to 4xx deliberately: a
+// library that attaches a 5xx status is still reporting a server fault and
+// must keep the full logging path below.
+function clientErrorStatus(err: unknown): number | undefined {
+  if (typeof err !== 'object' || err === null) return undefined;
+  const candidate = (err as { status?: unknown; statusCode?: unknown });
+  const raw = typeof candidate.status === 'number' ? candidate.status : candidate.statusCode;
+  if (typeof raw !== 'number' || raw < 400 || raw >= 500) return undefined;
+  return raw;
+}
+
+function clientErrorCode(status: number): string {
+  if (status === 413) return 'payload_too_large';
+  if (status === 400) return 'malformed_request';
+  return 'bad_request';
+}
+
+// Route params and body fields that end up in an integer SQL comparison.
+// Number() alone was not enough: 'NaN', 'Infinity', '1e400' and '1.5' all
+// survive it and then reach Postgres, which rejects them as invalid integer
+// syntax — surfacing a plain client typo as a 500. Returns undefined for
+// anything that is not a positive, safe, whole number so callers can answer
+// 404/400 themselves.
+function parsePositiveInt(value: unknown): number | undefined {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(n) || n < 1) return undefined;
+  return n;
+}
+
+// Postgres TEXT cannot hold a NUL byte — it rejects the whole statement, so
+// any user-supplied string containing one turned into a 500. It is never
+// meaningful content here, so it is refused at the edge, once, instead of
+// being stripped (silently altering what the user submitted) or repeated as
+// a check in every route.
+function containsNullByte(value: unknown, depth = 0): boolean {
+  if (depth > 20) return false;
+  if (typeof value === 'string') return value.includes('\u0000');
+  if (Array.isArray(value)) return value.some((item) => containsNullByte(item, depth + 1));
+  if (typeof value === 'object' && value !== null) {
+    return Object.values(value).some((item) => containsNullByte(item, depth + 1));
+  }
+  return false;
+}
+
 function asyncHandler(handler: (req: Request, res: Response) => Promise<unknown>) {
   return (req: Request, res: Response, next: NextFunction) => {
     handler(req, res).catch(next);
