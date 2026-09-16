@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { useSession } from '@/lib/useSession';
 import ModuleNav from './ModuleNav';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
@@ -130,6 +131,14 @@ export default function VideoEditView() {
   const apiKey = devConfig.apiKey;
   const config = { baseUrl, apiKey };
 
+  // Access is no longer the same thing as holding a key. The session became
+  // an httpOnly cookie, which this code cannot see — so a signed-in user has
+  // an empty apiKey and their requests still authenticate. Gating on the key
+  // alone locked them out of a screen that works: the button sat disabled
+  // saying "no access" while the cookie rode along on every fetch.
+  const [session] = useSession();
+  const hasAccess = Boolean(apiKey) || session !== null;
+
   const [sourceVideoUrl, setSourceVideoUrl] = useState('https://example.com/my-video.mp4');
   const [template, setTemplate] = useState<VideoTemplate>('ai_smart_cut');
   const [file, setFile] = useState<File | null>(null);
@@ -143,7 +152,7 @@ export default function VideoEditView() {
   const [status, setStatus] = useState('');
 
   const load = useCallback(async () => {
-    if (!apiKey) return;
+    if (!hasAccess) return;
     try {
       const res = await api.listVideoJobs(config);
       setJobs(res.jobs);
@@ -151,7 +160,7 @@ export default function VideoEditView() {
       setStatus(err instanceof Error ? err.message : String(err));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, baseUrl]);
+  }, [hasAccess, baseUrl]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -162,10 +171,10 @@ export default function VideoEditView() {
   // tell us when a job finishes (that's the deferred push-notification
   // piece), so the progress bar has to pull.
   useEffect(() => {
-    if (!apiKey || !jobs.some((j) => j.status === 'processing')) return;
+    if (!hasAccess || !jobs.some((j) => j.status === 'processing')) return;
     const id = setInterval(load, 2000);
     return () => clearInterval(id);
-  }, [apiKey, jobs, load]);
+  }, [hasAccess, jobs, load]);
 
   async function submit() {
     if (template === 'ai_smart_cut') return submitSmartCut();
@@ -250,7 +259,7 @@ export default function VideoEditView() {
 
   // Why the submit button is unavailable, in the order the user hits them:
   // no key means every request 401s, so say that before asking for a file.
-  const blockedReason = !apiKey
+  const blockedReason = !hasAccess
     ? 'Нет доступа — войди в аккаунт или создай тестовый workspace:'
     : template === 'ai_smart_cut'
       ? file
@@ -272,7 +281,7 @@ export default function VideoEditView() {
       </header>
 
       <main className={styles.main}>
-        {!apiKey && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
+        {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
 
         <div className={styles.hero}>
           <div>
@@ -385,7 +394,7 @@ export default function VideoEditView() {
           {blockedReason && (
             <p className={styles.blockedHint}>
               {blockedReason}
-              {!apiKey && (
+              {!hasAccess && (
                 <button className={styles.inlineAction} onClick={quickSetup}>
                   Создать сейчас
                 </button>

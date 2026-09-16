@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type GeneratedScript, type ReelAnalysis } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import StatusMessage from './StatusMessage';
@@ -14,6 +15,9 @@ export default function ReelsView() {
   const [devConfig] = useDevConfig();
   const { baseUrl, apiKey } = devConfig;
   const config = { baseUrl, apiKey };
+  // Not the same as holding a key — see useApiAccess: the session is a cookie
+  // this code cannot read.
+  const { hasAccess } = useApiAccess();
 
   const [sourceUrl, setSourceUrl] = useState('https://instagram.com/reel/example');
   const [analyses, setAnalyses] = useState<ReelAnalysis[]>([]);
@@ -27,7 +31,7 @@ export default function ReelsView() {
   const selected = analyses.find((a) => a.id === selectedId) ?? null;
 
   const loadAnalyses = useCallback(async () => {
-    if (!apiKey) return;
+    if (!hasAccess) return;
     try {
       const res = await api.listAnalyses(config);
       setAnalyses(res.analyses);
@@ -95,7 +99,7 @@ export default function ReelsView() {
 
       <div className={layout.twoPane}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>
-          {!apiKey && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
+          {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
           <div className={styles.panelHeading}><span className={styles.eyebrow}>НОВЫЙ РАЗБОР</span><h2>Источник видео</h2></div>
           <input className={controls.input} value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} style={{ width: '100%' }} />
           <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={analyze}>

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { api, type ContentRecommendation } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import StatusMessage from './StatusMessage';
@@ -27,6 +28,9 @@ export default function ContentPlanView() {
   const [devConfig] = useDevConfig();
   const { baseUrl, apiKey } = devConfig;
   const config = { baseUrl, apiKey };
+  // Not the same as holding a key — see useApiAccess: the session is a cookie
+  // this code cannot read.
+  const { hasAccess } = useApiAccess();
 
   const [segmentFilter, setSegmentFilter] = useState(requestedSegment);
   const [recommendations, setRecommendations] = useState<ContentRecommendation[]>([]);
@@ -44,7 +48,7 @@ export default function ContentPlanView() {
 
   const load = useCallback(async () => {
     setStatus('');
-    if (!apiKey) {
+    if (!hasAccess) {
       setRecommendations([]);
       setHasLoaded(true);
       return;
@@ -76,7 +80,7 @@ export default function ContentPlanView() {
       </header>
 
       <main className={styles.main}>
-        {!apiKey && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
+        {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
 
         <div className={styles.intro}><div><h1>Темы, которые ведут к сделке</h1><p>
           Sonar сравнивает сегменты CRM: сколько контактов получили тег, кто из них стал клиентом и есть ли уже сценарии на эту тему. Объяснение сейчас формируется по правилам, без AI-прогноза.

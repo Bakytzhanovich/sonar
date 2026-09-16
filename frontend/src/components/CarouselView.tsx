@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Canvas, Rect, Textbox } from 'fabric';
 import { api, type BrandPreset, type Carousel, type CarouselSlide } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import StatusMessage from './StatusMessage';
@@ -30,6 +31,9 @@ export default function CarouselView() {
   const [devConfig] = useDevConfig();
   const { baseUrl, apiKey } = devConfig;
   const config = { baseUrl, apiKey };
+  // Not the same as holding a key — see useApiAccess: the session is a cookie
+  // this code cannot read.
+  const { hasAccess } = useApiAccess();
 
   const [prompt, setPrompt] = useState('5 привычек продуктивности');
   const [presets, setPresets] = useState<BrandPreset[]>([]);
@@ -52,7 +56,7 @@ export default function CarouselView() {
   const currentSlide = slides[slideIndex] ?? null;
 
   const loadLibrary = useCallback(async () => {
-    if (!apiKey) return;
+    if (!hasAccess) return;
     try {
       const [c, p] = await Promise.all([api.listCarousels(config), api.listBrandPresets(config)]);
       setCarousels(c.carousels);
@@ -197,7 +201,7 @@ export default function CarouselView() {
 
       <div className={`${layout.twoPane} ${styles.workspace}`}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>
-          {!apiKey && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
+          {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
           <div className={styles.panelHeading}><span className={styles.panelEyebrow}>БЫСТРЫЙ СТАРТ</span><h2>Создать карусель</h2></div>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Тема</span>

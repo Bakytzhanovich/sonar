@@ -23,6 +23,7 @@ import '@xyflow/react/dist/style.css';
 import { api, ApiError, type ApiConfig, type FlowDefinition, type MatchType, type FallbackChannel } from '@/lib/api';
 import Link from 'next/link';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
 import styles from './FlowEditor.module.css';
 import controls from './Controls.module.css';
@@ -152,6 +153,8 @@ const nodeTypes: NodeTypes = { trigger: TriggerNode, send_message: ActionNode };
 
 export default function FlowEditor() {
   const [devConfig, setDevConfig] = useDevConfig();
+  // A signed-in user's credential is a cookie this code cannot see.
+  const { hasAccess } = useApiAccess();
   // externalAccountId is no longer read here: the "входящее сообщение" panel
   // used to need it to address the public mock webhook, and now posts to the
   // tenant-scoped /api/bots/:botId/simulate-incoming instead. It stays in
@@ -216,7 +219,7 @@ export default function FlowEditor() {
   const onConnect = useCallback((connection: Connection) => setEdges((eds) => addEdge(connection, eds)), []);
 
   useEffect(() => {
-    if (!apiKey || !botId || flowId || autoLoadAttemptRef.current === botId) return;
+    if (!hasAccess || !botId || flowId || autoLoadAttemptRef.current === botId) return;
     autoLoadAttemptRef.current = botId;
 
     api
@@ -415,7 +418,7 @@ export default function FlowEditor() {
         </div>
 
         <aside className={styles.sidebar}>
-          {(!apiKey || !botId) && (
+          {(!hasAccess || !botId) && (
             <div className={styles.setupNotice}>
               <strong>Начните с демо-пространства</strong>
               <p>Sonar подготовит первый связанный сценарий без API-ключей и технических идентификаторов.</p>

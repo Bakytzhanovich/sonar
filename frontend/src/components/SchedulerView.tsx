@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type PostingPlatform, type ScheduledPost } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
@@ -44,6 +45,9 @@ export default function SchedulerView() {
   const [devConfig] = useDevConfig();
   const { baseUrl, apiKey } = devConfig;
   const config = { baseUrl, apiKey };
+  // Not the same as holding a key — see useApiAccess: the session is a cookie
+  // this code cannot read.
+  const { hasAccess } = useApiAccess();
 
   const [platform, setPlatform] = useState<PostingPlatform>('instagram');
   const [caption, setCaption] = useState('Новый пост');
@@ -53,7 +57,7 @@ export default function SchedulerView() {
   const [status, setStatus] = useState('');
 
   const load = useCallback(async () => {
-    if (!apiKey) return;
+    if (!hasAccess) return;
     try {
       const res = await api.listScheduledPosts(config);
       setPosts(res.posts);
@@ -125,7 +129,7 @@ export default function SchedulerView() {
 
       <div className={layout.twoPane}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>
-          {!apiKey && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
+          {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
           <div className={styles.panelHeading}><span className={styles.eyebrow}>COMPOSER</span><h2>Новый пост</h2></div>
 
           <label className={styles.field}>
