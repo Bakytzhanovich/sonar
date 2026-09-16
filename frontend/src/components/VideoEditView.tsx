@@ -293,24 +293,46 @@ export default function VideoEditView() {
 
           {template === 'ai_smart_cut' ? (
             <>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Файл видео</span>
+              {/* The native file input renders as an OS button with English
+                  text next to it, which is the single most out-of-place thing
+                  on a phone. It stays in the DOM for accessibility and is
+                  driven by this label instead. */}
+              <label className={`${styles.dropzone} ${file ? styles.dropzoneFilled : ''}`}>
                 <input
-                  className={`${controls.input} ${styles.input}`}
+                  className={styles.hiddenFileInput}
                   type="file"
                   accept="video/mp4,video/quicktime,video/webm"
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 />
+                {file ? (
+                  <>
+                    <span className={styles.dropzoneIcon} aria-hidden="true">▶</span>
+                    <span className={styles.dropzoneName}>{file.name}</span>
+                    <span className={styles.dropzoneHint}>
+                      {(file.size / 1024 / 1024).toFixed(1)} МБ · нажмите, чтобы заменить
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className={styles.dropzoneIcon} aria-hidden="true">+</span>
+                    <span className={styles.dropzoneName}>Выбрать видео</span>
+                    <span className={styles.dropzoneHint}>MP4, MOV или WebM</span>
+                  </>
+                )}
               </label>
-              {file && (
-                <div className={styles.jobMeta}>
-                  {file.name} · {(file.size / 1024 / 1024).toFixed(1)} МБ
-                </div>
-              )}
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>
-                  <input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} /> Вжечь динамические субтитры
 
+              {/* A real switch, not a system checkbox: on a phone the native
+                  control is a ~13px tap target next to 15px text. */}
+              <label className={styles.switchRow}>
+                <span className={styles.switchLabel}>Вжечь динамические субтитры</span>
+                <input
+                  type="checkbox"
+                  className={styles.switchInput}
+                  checked={subtitles}
+                  onChange={(e) => setSubtitles(e.target.checked)}
+                />
+                <span className={styles.switchTrack} aria-hidden="true">
+                  <span className={styles.switchThumb} />
                 </span>
               </label>
             </>
@@ -346,13 +368,18 @@ export default function VideoEditView() {
             ))}
           </div>
 
-          <button
-            className={`${controls.buttonPrimary} ${styles.submitButton}`}
-            onClick={submit}
-            disabled={uploading || blockedReason !== null}
-          >
-            {uploading ? 'Загружаю…' : template === 'ai_smart_cut' ? 'Смонтировать' : 'Запустить рендер'}
-          </button>
+          {/* On a phone this becomes a fixed bar at the bottom. It needs to be
+              a real element with its own background: a bare fixed button lets
+              the page scroll visibly through it, and a disabled button is
+              semi-transparent on top of that. */}
+          <div className={styles.actionBar}>
+            <button
+              className={`${controls.buttonPrimary} ${styles.submitButton}`}
+              onClick={submit}
+              disabled={uploading || blockedReason !== null}
+            >
+              {uploading ? 'Загружаю…' : template === 'ai_smart_cut' ? 'Смонтировать' : 'Запустить рендер'}
+            </button>
           {/* A disabled button that does not say what it is waiting for reads
             * as broken rather than as blocked. */}
           {blockedReason && (
@@ -365,6 +392,7 @@ export default function VideoEditView() {
               )}
             </p>
           )}
+          </div>
 
           {/* Feedback belongs next to the control that caused it. This used to
             * render at the bottom of the queue section, a screen below the

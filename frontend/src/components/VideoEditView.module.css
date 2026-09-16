@@ -133,6 +133,64 @@
 @media (max-width: 760px) {
   .hero { align-items: start; flex-direction: column; }
   .templateGrid { grid-template-columns: 1fr; }
+
+  /* On a phone the whole page is the app. Vertical space is the scarce
+   * resource: the intro cost half a screen before the first control, and
+   * the card borders drew boxes inside a box. */
+  .main { padding: 14px 14px 120px; }
+  .hero { margin-bottom: 14px; }
+  .hero h1 { font-size: 24px; }
+
+  /* The explanation is for a first visit, not for every render. */
+  .lead { display: none; }
+
+  /* The composer stops being a card and becomes the page. */
+  .composer { padding: 0; border: 0; background: none; }
+  /* "Преврати исходник в ролик" and "Загрузи исходник" say the same thing.
+   * On a laptop that reads as a title and a section heading; on a phone it
+   * is two thirds of the first screen spent before any control. */
+  .composerHead { display: none; }
+
+  .templateLabel { margin: 16px 0 8px; }
+  .templateCard { padding: 12px 14px; }
+  /* The descriptions are reference material; the titles are the choice. */
+  .templateDesc { display: none; }
+  .templateCardActive .templateDesc { display: block; margin-top: 2px; }
+
+  /* The primary action sits above the fold instead of below three cards —
+   * the same place a phone app puts it, reachable with one thumb. The bar
+   * carries the background so the page cannot be read through the button. */
+  .actionBar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 6px;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border);
+    background: var(--background);
+  }
+
+  .submitButton {
+    width: 100%;
+    margin: 0;
+    min-height: 50px;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 650;
+  }
+
+  .blockedHint { margin: 0; text-align: center; }
+
+  .queue { margin-top: 24px; }
+  .jobCard { padding: 14px; }
+  .jobPlayer { max-width: 100%; max-height: 50vh; }
+  .review { padding: 10px; }
+  .reviewInput { font-size: 16px; }
+  .reviewLine { gap: 6px; }
 }
 
 /* Level-3 result preview. Capped in height so a 9:16 render does not push the
@@ -183,3 +241,91 @@
 /* What the pipeline decided on its own. Quiet by design — it is an
  * explanation, not something the user has to act on. */
 .autoNote { margin: 8px 0 0; color: var(--foreground-muted); font-size: 12px; line-height: 1.45; }
+
+/* ---- Mobile-app surface -------------------------------------------------
+ * The screen is used on a phone far more than on a laptop: these controls
+ * are sized for a thumb, not a cursor. 44px is the smallest reliably
+ * tappable target, and the native file input and checkbox are both well
+ * under half that. */
+
+.hiddenFileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 26px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.dropzone:hover,
+.dropzone:focus-within { border-color: var(--accent); }
+.dropzoneFilled { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+
+.dropzoneIcon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 4px;
+  border-radius: 12px 50% 50% 50%;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.dropzoneName { font-size: 15px; font-weight: 650; word-break: break-all; }
+.dropzoneHint { color: var(--foreground-muted); font-size: 12px; }
+
+/* Switch instead of a checkbox — the row itself is the tap target. */
+.switchRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  margin-top: 14px;
+  cursor: pointer;
+}
+
+.switchLabel { font-size: 14px; }
+.switchInput { position: absolute; opacity: 0; pointer-events: none; }
+
+.switchTrack {
+  flex: 0 0 auto;
+  position: relative;
+  width: 46px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.switchThumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--foreground-muted);
+  transition: transform 150ms ease, background 150ms ease;
+}
+
+.switchInput:checked + .switchTrack { background: var(--accent); border-color: var(--accent); }
+.switchInput:checked + .switchTrack .switchThumb { transform: translateX(18px); background: #fff; }
+.switchInput:focus-visible + .switchTrack { outline: 2px solid var(--accent); outline-offset: 2px; }
