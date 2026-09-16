@@ -258,8 +258,46 @@ export interface ScheduledPost {
 
 // ---- Module 8: Video editing, Levels 1-2 (mocked) -----------------------
 
-export type VideoTemplate = 'auto_crop_916' | 'template_with_transitions';
+// 'ai_smart_cut' is the Level-3 (own FFmpeg engine) pipeline; the other two
+// are the Level-1/2 presets that go to Shotstack/Creatomate. They share one
+// table and one status contract so the frontend has a single list to render.
+export type VideoTemplate = 'auto_crop_916' | 'template_with_transitions' | 'ai_smart_cut';
 export type VideoJobStatus = 'processing' | 'completed' | 'failed';
+export type VideoPipeline = 'preset' | 'smart_cut';
+export type VideoStage = 'probe' | 'transcribe' | 'plan_cuts' | 'subtitles' | 'render' | 'upload';
+
+// Machine-readable, like Module 5's PublishFailureReason — the frontend maps
+// these to Russian copy, so the wording can change without a data migration.
+export type VideoFailureReason =
+  | 'video_processing_error'
+  | 'storage_not_configured'
+  | 'ffmpeg_not_available'
+  | 'source_unreadable'
+  | 'source_missing'
+  | 'no_audio_track'
+  | 'video_too_long'
+  | 'transcription_not_configured'
+  | 'audio_too_large'
+  | 'transcription_failed'
+  | 'nothing_to_cut'
+  | 'render_failed'
+  | 'upload_failed';
+
+// Per-stage checkpoints, accumulated in video_edit_jobs.artifacts. Each stage
+// writes its own key and never rewrites an earlier one, which is what lets a
+// retry skip straight to the stage that failed.
+export interface VideoJobArtifacts {
+  probe?: { durationSec: number; hasAudio: boolean; width: number | null; height: number | null };
+  transcript?: { words: Array<{ word: string; start: number; end: number }>; language: string | null };
+  plan?: {
+    segments: Array<{ start: number; end: number }>;
+    keptDurationSec: number;
+    removedDurationSec: number;
+    droppedFillerCount: number;
+    degraded: boolean;
+  };
+  subtitles?: { chunkCount: number; wordCount: number };
+}
 
 export interface VideoEditJob {
   id: string;
@@ -269,9 +307,17 @@ export interface VideoEditJob {
   status: VideoJobStatus;
   progress_percent: number;
   output_url: string | null;
-  failure_reason: string | null;
+  failure_reason: VideoFailureReason | null;
   created_at: string;
   completed_at: string | null;
+  pipeline: VideoPipeline;
+  source_object_key: string | null;
+  output_object_key: string | null;
+  stage: VideoStage | null;
+  artifacts: VideoJobArtifacts;
+  attempt_count: number;
+  claimed_at: string | null;
+  subtitles: boolean;
 }
 
 // ---- Push notifications (shared by Modules 5 and 8) ----------------------

@@ -21,7 +21,11 @@ export async function advanceRenderJobs(db: Db, now: Date = new Date(), tenantId
     db,
     // ?::text — a NULL bound to a bare placeholder leaves Postgres unable to
     // infer the parameter's type and the statement is rejected.
-    `SELECT * FROM video_edit_jobs WHERE status = 'processing' AND (?::text IS NULL OR tenant_id = ?)`,
+    // pipeline = 'preset' excludes Level-3 smart_cut jobs, which are driven by
+    // videoPipeline.ts in the worker process. Without this filter the mock
+    // ticker would march a real render's progress bar to 100% and declare it
+    // completed with a fabricated output_url while ffmpeg was still running.
+    `SELECT * FROM video_edit_jobs WHERE status = 'processing' AND pipeline = 'preset' AND (?::text IS NULL OR tenant_id = ?)`,
     tenantId ?? null,
     tenantId ?? null
   );

@@ -174,8 +174,25 @@ export interface ScheduledPost {
   created_at: string;
 }
 
-export type VideoTemplate = 'auto_crop_916' | 'template_with_transitions';
+// 'ai_smart_cut' is the Level-3 pipeline (own ffmpeg engine): real cutting,
+// real transcription, burned-in captions. The other two are the mocked
+// Shotstack/Creatomate presets.
+export type VideoTemplate = 'auto_crop_916' | 'template_with_transitions' | 'ai_smart_cut';
 export type VideoJobStatus = 'processing' | 'completed' | 'failed';
+export type VideoStage = 'probe' | 'transcribe' | 'plan_cuts' | 'subtitles' | 'render' | 'upload';
+
+export interface VideoJobArtifacts {
+  probe?: { durationSec: number; hasAudio: boolean; width: number | null; height: number | null };
+  transcript?: { words: Array<{ word: string; start: number; end: number }>; language: string | null };
+  plan?: {
+    segments: Array<{ start: number; end: number }>;
+    keptDurationSec: number;
+    removedDurationSec: number;
+    droppedFillerCount: number;
+    degraded: boolean;
+  };
+  subtitles?: { chunkCount: number; wordCount: number };
+}
 
 export interface VideoEditJob {
   id: string;
@@ -187,6 +204,18 @@ export interface VideoEditJob {
   failure_reason: string | null;
   created_at: string;
   completed_at: string | null;
+  pipeline?: 'preset' | 'smart_cut';
+  stage?: VideoStage | null;
+  artifacts?: VideoJobArtifacts;
+  subtitles?: boolean;
+}
+
+export interface VideoUploadTicket {
+  objectKey: string;
+  uploadUrl: string;
+  contentType: string;
+  expiresInSec: number;
+  storage: 'r2' | 'local';
 }
 
 export interface PushSubscriptionPayload {
@@ -408,6 +437,30 @@ export const api = {
 
   createVideoJob: (config: ApiConfig, sourceVideoUrl: string, template: VideoTemplate) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', { sourceVideoUrl, template }) as Promise<{ job: VideoEditJob }>,
+
+  // ---- Module 8, Level 3: own ffmpeg engine ------------------------------
+
+  createVideoUpload: (config: ApiConfig, contentType: string) =>
+    apiRequest(config, 'POST', '/api/video-uploads', { contentType }) as Promise<VideoUploadTicket>,
+
+  createSmartCutJob: (config: ApiConfig, sourceObjectKey: string, subtitles: boolean) =>
+    apiRequest(config, 'POST', '/api/video-edit-jobs', {
+      template: 'ai_smart_cut',
+      sourceObjectKey,
+      subtitles,
+    }) as Promise<{ job: VideoEditJob }>,
+
+  // Uploads straight to storage with the presigned URL — deliberately NOT
+  // through apiRequest, which would add an Authorization header the signature
+  // does not cover and JSON-encode a binary body.
+  uploadVideoFile: async (ticket: VideoUploadTicket, file: File) => {
+    const res = await fetch(ticket.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': ticket.contentType },
+      body: file,
+    });
+    if (!res.ok) throw new Error(`Загрузка не удалась: ${res.status}`);
+  },
 
   listVideoJobs: (config: ApiConfig) => apiRequest(config, 'GET', '/api/video-edit-jobs') as Promise<{ jobs: VideoEditJob[] }>,
 

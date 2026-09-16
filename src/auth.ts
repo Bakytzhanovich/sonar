@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 
 // Falls back to a fixed dev secret only under vitest (which sets
 // NODE_ENV=test itself), so `npm test` works with no setup. Any other
@@ -22,6 +22,15 @@ function requireSessionSecret(): string {
     return 'dev-insecure-secret-change-in-production';
   }
   throw new Error('SESSION_SECRET must be set (see .env) — refusing to sign sessions with a guessable default');
+}
+
+// Derives a purpose-scoped key from the session secret, so a subsystem that
+// needs to sign something (local media URLs) never receives the secret that
+// signs sessions. A leak of one derived key cannot be turned into a forged
+// session, and two subsystems can never accidentally accept each other's
+// tokens.
+export function deriveKey(purpose: string): string {
+  return createHmac('sha256', SESSION_SECRET).update(`sonar:${purpose}`).digest('hex');
 }
 
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days

@@ -332,18 +332,45 @@ CREATE TABLE video_edit_jobs (
   seq               BIGSERIAL,
   tenant_id         TEXT NOT NULL REFERENCES tenants(id),
   source_video_url  TEXT NOT NULL,
-  template          TEXT NOT NULL, -- auto_crop_916 | template_with_transitions
+  template          TEXT NOT NULL, -- auto_crop_916 | template_with_transitions | ai_smart_cut
   status            TEXT NOT NULL DEFAULT 'processing', -- processing | completed | failed
   progress_percent  INTEGER NOT NULL DEFAULT 0,
   output_url        TEXT,
   failure_reason    TEXT,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-  completed_at      TIMESTAMPTZ
+  completed_at      TIMESTAMPTZ,
+  -- ---- Level 3 (own FFmpeg engine) fields ---------------------------------
+  -- 'preset' jobs are the mocked Shotstack/Creatomate path above and ignore
+  -- everything below. 'smart_cut' jobs are processed by videoPipeline.ts in a
+  -- separate worker process, because ffmpeg is CPU-bound for minutes at a
+  -- time and would starve the API's event loop.
+  pipeline          TEXT NOT NULL DEFAULT 'preset', -- preset | smart_cut
+  -- Object-storage keys, not URLs: the bucket is ours, and a stored presigned
+  -- URL would expire while the row outlives it. Rendered into a URL on read.
+  source_object_key TEXT,
+  output_object_key TEXT,
+  -- Which stage the job is in, and the accumulated per-stage results
+  -- (probe output, transcript, cut plan). Checkpointing these is what makes a
+  -- retry resume at the failed stage instead of paying for transcription
+  -- again.
+  stage             TEXT, -- probe | transcribe | plan_cuts | render | upload
+  artifacts         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  attempt_count     INTEGER NOT NULL DEFAULT 0,
+  -- Burn dynamic captions into the render. On by default: it is what the
+  -- Level-3 output is for. Stored per job because burning is irreversible —
+  -- a client who wants a clean master must be able to ask for one.
+  subtitles         BOOLEAN NOT NULL DEFAULT true,
+  -- Worker lease. Unlike the preset path, a smart_cut job legitimately sits
+  -- in 'processing' for minutes, so a timestamped claim is the only way to
+  -- tell "another worker is on it" from "a worker died holding it".
+  claimed_at        TIMESTAMPTZ
 );
 
 CREATE INDEX idx_video_edit_jobs_tenant ON video_edit_jobs(tenant_id);
 -- What the polling renderer scans on every tick.
 CREATE INDEX idx_video_edit_jobs_processing ON video_edit_jobs(status);
+-- What the Level-3 worker claims from: unfinished jobs of its own pipeline.
+CREATE INDEX idx_video_edit_jobs_pipeline ON video_edit_jobs(pipeline, status, claimed_at);
 
 -- ---- Push notifications (shared by Modules 5 and 8, per both ТЗ) --------
 -- Deliberately one shared implementation, not duplicated per module — the

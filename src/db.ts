@@ -63,6 +63,8 @@ export async function createDb(options: DbOptions = {}): Promise<Db> {
     if (rows.length === 0) {
       const schema = fs.readFileSync(SCHEMA_PATH, 'utf-8');
       await client.query(schema);
+    } else {
+      await applyMigrations(client);
     }
   } finally {
     await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_INIT_LOCK_ID]);
@@ -70,6 +72,33 @@ export async function createDb(options: DbOptions = {}): Promise<Db> {
   }
 
   return pool;
+}
+
+// schema.sql is only ever applied to an empty database, so columns added
+// after a deployment already exists would never appear there. Until this
+// project adopts a real migration framework, additive changes go here as
+// idempotent ALTERs — safe to run on every boot, and they keep a deployed
+// Render/Neon database in step with schema.sql without a manual step.
+//
+// Additive only. A change that drops or rewrites a column does not belong in
+// a boot-time hook running concurrently with live traffic.
+const MIGRATIONS: string[] = [
+  // Module 8, Level 3 (own FFmpeg engine) — see schema.sql for what each is.
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS pipeline TEXT NOT NULL DEFAULT 'preset'`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS source_object_key TEXT`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS output_object_key TEXT`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS stage TEXT`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS artifacts JSONB NOT NULL DEFAULT '{}'::jsonb`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitles BOOLEAN NOT NULL DEFAULT true`,
+  `CREATE INDEX IF NOT EXISTS idx_video_edit_jobs_pipeline ON video_edit_jobs(pipeline, status, claimed_at)`,
+];
+
+async function applyMigrations(client: PoolClient): Promise<void> {
+  for (const statement of MIGRATIONS) {
+    await client.query(statement);
+  }
 }
 
 export async function closeDb(db: Db): Promise<void> {

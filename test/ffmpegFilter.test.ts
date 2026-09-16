@@ -1,0 +1,77 @@
+import { describe, it, expect } from 'vitest';
+import { buildConcatFilter, escapeFilterPath, OUTPUT_HEIGHT, OUTPUT_WIDTH, OUTPUT_FPS } from '../src/ffmpeg';
+
+// Pure string construction — no binary involved, which is the point: the
+// filter graph is the part of the render that fails silently (a wrong label
+// produces a video with no audio, or the removed pauses still present) and
+// this is the only place it can be checked cheaply.
+describe('buildConcatFilter', () => {
+  const segments = [{ start: 0, end: 1.5 }, { start: 4, end: 6 }];
+
+  it('emits one video and one audio branch per segment, then concatenates them', () => {
+    const filter = buildConcatFilter(segments);
+
+    expect(filter).toContain('[0:v]trim=start=0.0000:end=1.5000');
+    expect(filter).toContain('[0:a]atrim=start=4.0000:end=6.0000');
+    expect(filter).toContain('[v0][a0][v1][a1]concat=n=2:v=1:a=1[vcat][aout]');
+  });
+
+  it('rebases timestamps on every fragment', () => {
+    // Without setpts/asetpts each fragment keeps its original timeline and
+    // concat reproduces exactly the gaps the edit just removed.
+    const filter = buildConcatFilter(segments);
+    // ',setpts' excludes ',asetpts', which contains it as a substring.
+    expect(filter.match(/,setpts=PTS-STARTPTS/g)).toHaveLength(2);
+    expect(filter.match(/,asetpts=PTS-STARTPTS/g)).toHaveLength(2);
+  });
+
+  it('fades each audio fragment in and out to kill join clicks', () => {
+    const filter = buildConcatFilter(segments);
+    expect(filter.match(/afade=t=in/g)).toHaveLength(2);
+    // The fade-out is anchored to the fragment's own length, not the source's.
+    expect(filter).toContain('afade=t=out:st=1.4850');
+    expect(filter).toContain('afade=t=out:st=1.9850');
+  });
+
+  it('normalizes the output to 1080x1920 at 30fps with padding, not cropping', () => {
+    const filter = buildConcatFilter(segments);
+    expect(filter).toContain(`scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease`);
+    expect(filter).toContain(`pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}`);
+    expect(filter).toContain(`fps=${OUTPUT_FPS}`);
+  });
+
+  it('handles a single-segment plan (nothing was cut)', () => {
+    const filter = buildConcatFilter([{ start: 0, end: 10 }]);
+    expect(filter).toContain('concat=n=1:v=1:a=1[vcat][aout]');
+  });
+});
+
+describe('burned-in subtitles', () => {
+  const segments = [{ start: 0, end: 1.5 }, { start: 4, end: 6 }];
+
+  it('omits the ass filter entirely when no subtitle file is given', () => {
+    expect(buildConcatFilter(segments)).not.toContain('ass=');
+  });
+
+  it('burns captions after scaling, not before', () => {
+    const filter = buildConcatFilter(segments, '/tmp/job/captions.ass');
+
+    // libass renders at the frame size it is handed; scaling afterwards would
+    // resample the text and soften every edge.
+    expect(filter).toMatch(/fps=30,ass=filename=\/tmp\/job\/captions\.ass,format=yuv420p\[vout\]/);
+  });
+
+  it('stays inside the single filter_complex pass', () => {
+    // ffmpeg rejects -vf together with -filter_complex on the same output, and
+    // a separate pass would decode and re-encode the whole video twice.
+    const filter = buildConcatFilter(segments, '/tmp/job/captions.ass');
+    expect(filter.match(/\[vout\]/g)).toHaveLength(1);
+  });
+
+  it('escapes the characters that would break the filter argument', () => {
+    // ':' separates filter options and '\\' is the escape — an unescaped path
+    // containing either fails as an unrelated-looking "no such filter".
+    expect(escapeFilterPath('/tmp/a:b/c.ass')).toBe('/tmp/a\\:b/c.ass');
+    expect(escapeFilterPath("/tmp/it's/c.ass")).toBe("/tmp/it\\'s/c.ass");
+  });
+});

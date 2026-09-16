@@ -134,3 +134,15 @@
   .hero { align-items: start; flex-direction: column; }
   .templateGrid { grid-template-columns: 1fr; }
 }
+
+/* Level-3 result preview. Capped in height so a 9:16 render does not push the
+   rest of the queue off the screen; the intrinsic aspect ratio is preserved. */
+.jobPlayer {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  max-height: 460px;
+  margin-top: 12px;
+  border-radius: 10px;
+  background: #000;
+}

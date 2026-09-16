@@ -2,9 +2,11 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { randomUUID } from 'node:crypto';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { exec, isUniqueViolation, queryAll, queryOne, type Db } from './db';
 import { createApiKeyForTenant, resolveTenantIdFromApiKey } from './apiKeys';
-import { hashPassword, verifyPassword, signSession, verifySession, DUMMY_PASSWORD_HASH } from './auth';
+import { hashPassword, verifyPassword, signSession, verifySession, deriveKey, DUMMY_PASSWORD_HASH } from './auth';
 import { MOCK_WEBHOOK_SECRET_HEADER, isMockWebhookEnabled, verifyMockWebhookSecret } from './webhookAuth';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
@@ -13,6 +15,8 @@ import { generateCarouselSlides } from './carouselGeneration';
 import { publishDuePosts } from './publisher';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
+import { presign, storageConfigFromEnv } from './storage';
+import { localMediaConfigFromEnv, resolveKeyPath, signLocalUrl, verifyLocalUrl } from './localMedia';
 import { notify, listNotifications } from './notifications';
 import { getOrCreateVapidKeys } from './vapidKeys';
 import type {
@@ -29,6 +33,20 @@ import type {
   VideoEditJob,
   VideoTemplate,
 } from './types';
+
+// Allow-list rather than a prefix check on 'video/': the value is signed
+// into the upload URL and then echoed by the storage on download, so an
+// unconstrained one lets a presigned "video" URL host anything, including
+// text/html served from our own bucket domain.
+const UPLOAD_CONTENT_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
+const UPLOAD_EXTENSIONS: Record<string, string> = { 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm' };
+// Long enough to upload a large clip on a phone connection, short enough that
+// a leaked URL is not a lasting write grant on our bucket.
+const UPLOAD_URL_TTL_SEC = 30 * 60;
+// Ceiling for a single upload through the local dev store. A reel is a few
+// hundred megabytes at most; without a cap one request can exhaust the
+// process's memory, since express.raw buffers the whole body.
+const MAX_UPLOAD_BYTES = 600 * 1024 * 1024;
 
 const DEMO_BOT_NAME = 'Sonar Demo';
 const DEMO_EXTERNAL_USER_ID = 'sonar-demo-contact';
@@ -109,12 +127,50 @@ export function createApp(db: Db): Express {
   app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', corsOrigin);
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Methods', 'GET, PUT, POST, PATCH, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
     next();
   });
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
+  // ---- Local media store (development stand-in for R2) --------------------
+  // Mounted BEFORE requireProductCredential on purpose: like a presigned S3
+  // URL, the signature in the query string IS the credential. A <video> tag
+  // cannot send an Authorization header, so a token-in-URL scheme is what
+  // makes a finished render playable in the browser at all.
+  const localMedia = localMediaConfigFromEnv(deriveKey('local-media'));
+
+  if (localMedia) {
+    app.put('/api/media/*', express.raw({ type: '*/*', limit: MAX_UPLOAD_BYTES }), asyncHandler(async (req, res) => {
+      const key = decodeURIComponent((req.params as unknown as string[])[0] ?? '');
+      if (!verifyLocalUrl(localMedia, 'PUT', key, req.query.exp, req.query.token)) {
+        return res.status(403).json({ error: 'invalid_or_expired_upload_url' });
+      }
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) return res.status(400).json({ error: 'empty_body' });
+
+      const target = resolveKeyPath(localMedia, key);
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.writeFile(target, req.body);
+      res.status(200).json({ objectKey: key, bytes: req.body.length });
+    }));
+
+    app.get('/api/media/*', asyncHandler(async (req, res) => {
+      const key = decodeURIComponent((req.params as unknown as string[])[0] ?? '');
+      if (!verifyLocalUrl(localMedia, 'GET', key, req.query.exp, req.query.token)) {
+        return res.status(403).json({ error: 'invalid_or_expired_url' });
+      }
+      try {
+        const target = resolveKeyPath(localMedia, key);
+        await fsp.access(target);
+        // sendFile rather than reading into memory: a render is tens of
+        // megabytes and the browser seeks around it while playing.
+        res.sendFile(target);
+      } catch {
+        res.status(404).json({ error: 'not_found' });
+      }
+    }));
+  }
 
   // ---- Tenant bootstrap (not API-key protected — this is how a tenant
   // gets its first key; equivalent to a signup step). --------------------
@@ -1225,18 +1281,86 @@ export function createApp(db: Db): Express {
 
   // ---- Module 8: Video editing, Levels 1-2 (mocked Shotstack/Creatomate) --
 
-  const VIDEO_TEMPLATES: VideoTemplate[] = ['auto_crop_916', 'template_with_transitions'];
+  const VIDEO_TEMPLATES: VideoTemplate[] = ['auto_crop_916', 'template_with_transitions', 'ai_smart_cut'];
+
+  // Level 3 needs the actual file, which the Level 1-2 presets never did
+  // (they take a URL string). The browser uploads straight to object storage
+  // with this presigned URL — the API never sees the bytes, because proxying
+  // a few hundred megabytes of video through an Express process on a small
+  // instance is what takes the whole API down.
+  app.post('/api/video-uploads', asyncHandler(async (req, res) => {
+    const storage = storageConfigFromEnv();
+    if (!storage && !localMedia) return res.status(503).json({ error: 'storage_not_configured' });
+
+    const contentType = typeof req.body?.contentType === 'string' ? req.body.contentType : '';
+    if (!UPLOAD_CONTENT_TYPES.includes(contentType)) {
+      return res.status(400).json({ error: `contentType must be one of: ${UPLOAD_CONTENT_TYPES.join(', ')}` });
+    }
+
+    // The key is derived server-side and namespaced by tenant; a
+    // client-supplied key would let one tenant write into another's prefix,
+    // and a moment later read it back as a "source" of their own job.
+    const objectKey = `tenants/${res.locals.tenantId}/sources/${randomUUID()}.${UPLOAD_EXTENSIONS[contentType]}`;
+    // R2 wins whenever it is configured — the local store is the fallback that
+    // makes the feature runnable before a bucket exists, not a preference.
+    const uploadUrl = storage
+      ? presign(storage, { method: 'PUT', key: objectKey, contentType, expiresInSec: UPLOAD_URL_TTL_SEC })
+      : signLocalUrl(localMedia!, 'PUT', objectKey, UPLOAD_URL_TTL_SEC);
+
+    res.status(201).json({
+      objectKey,
+      uploadUrl,
+      // With R2 the browser must send exactly this header on the PUT — it is
+      // part of what was signed, so anything else is rejected by the storage.
+      contentType,
+      expiresInSec: UPLOAD_URL_TTL_SEC,
+      storage: storage ? 'r2' : 'local',
+    });
+  }));
 
   app.post('/api/video-edit-jobs', asyncHandler(async (req, res) => {
-    const sourceVideoUrl = typeof req.body?.sourceVideoUrl === 'string' ? req.body.sourceVideoUrl.trim() : '';
     const template = req.body?.template;
-    if (!sourceVideoUrl) return res.status(400).json({ error: 'sourceVideoUrl is required' });
     if (!VIDEO_TEMPLATES.includes(template)) return res.status(400).json({ error: `template must be one of: ${VIDEO_TEMPLATES.join(', ')}` });
 
-    const id = randomUUID();
-    await exec(db, `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template) VALUES (?, ?, ?, ?)`, id, res.locals.tenantId, sourceVideoUrl, template);
+    const tenantId = res.locals.tenantId as string;
 
-    res.status(201).json({ job: await getVideoJobForTenant(db, id, res.locals.tenantId as string) });
+    if (template === 'ai_smart_cut') {
+      const sourceObjectKey = typeof req.body?.sourceObjectKey === 'string' ? req.body.sourceObjectKey.trim() : '';
+      if (!sourceObjectKey) return res.status(400).json({ error: 'sourceObjectKey is required for ai_smart_cut' });
+      // Multi-tenancy isolation (CLAUDE.md): the key came back from this
+      // tenant's own upload request, so it must still carry their prefix.
+      // Without this check a tenant could name any key in the bucket and have
+      // the worker render — and hand back — another tenant's private footage.
+      if (!sourceObjectKey.startsWith(`tenants/${tenantId}/sources/`)) {
+        return res.status(403).json({ error: 'source_object_key_not_owned' });
+      }
+
+      // Captions are burned into the pixels and cannot be removed afterwards,
+      // so this defaults to on (it is the point of the Level-3 output) but
+      // stays explicitly switchable per job.
+      const subtitles = req.body?.subtitles === undefined ? true : req.body.subtitles === true;
+
+      const id = randomUUID();
+      await exec(
+        db,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?)`,
+        id,
+        tenantId,
+        sourceObjectKey,
+        template,
+        sourceObjectKey,
+        subtitles
+      );
+      return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
+    }
+
+    const sourceVideoUrl = typeof req.body?.sourceVideoUrl === 'string' ? req.body.sourceVideoUrl.trim() : '';
+    if (!sourceVideoUrl) return res.status(400).json({ error: 'sourceVideoUrl is required' });
+
+    const id = randomUUID();
+    await exec(db, `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template) VALUES (?, ?, ?, ?)`, id, tenantId, sourceVideoUrl, template);
+
+    res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
   }));
 
   app.get('/api/video-edit-jobs', asyncHandler(async (req, res) => {
