@@ -13,19 +13,28 @@ export interface DevConfig {
   devMode: boolean;
 }
 
-// baseUrl defaults to the same env-driven value the auth screens use, not a
-// hardcoded localhost. Onboarding does write API_BASE_URL in here, but that
-// is the only path that did: a returning user logging in on a fresh browser
-// (empty localStorage, no onboarding run) landed on a product screen still
-// pointed at localhost:4001, so every CRM/editor/scheduler call failed in
-// production while signup and login worked fine. Locally the env var is
-// unset and this resolves to the same localhost default as before.
+// baseUrl is whatever API_BASE_URL resolves to — empty by default, meaning
+// "this origin", because the frontend proxies /api/* to the backend. It is
+// not a per-browser setting any more: addressing the API directly would make
+// every request cross-origin, and a SameSite=Lax session cookie is not sent
+// across origins.
 const DEFAULT_CONFIG: DevConfig = { baseUrl: API_BASE_URL, apiKey: '', botId: '', externalAccountId: '', devMode: false };
 
 function readStoredConfig(): DevConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...DEFAULT_CONFIG, ...JSON.parse(raw) } : DEFAULT_CONFIG;
+    if (!raw) return DEFAULT_CONFIG;
+    return {
+      ...DEFAULT_CONFIG,
+      ...JSON.parse(raw),
+      // baseUrl is NOT restored from storage. It stopped being a per-browser
+      // setting when the frontend started proxying /api/*: the browser must
+      // address this origin so the session cookie is same-site. A value saved
+      // before that change still pointed at the API's own host, which sent
+      // every request cross-origin — the cookie was withheld and the whole
+      // app 401'd for anyone who had used it before the switch.
+      baseUrl: API_BASE_URL,
+    };
   } catch {
     return DEFAULT_CONFIG;
   }

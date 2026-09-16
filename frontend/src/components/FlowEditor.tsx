@@ -160,7 +160,6 @@ export default function FlowEditor() {
   // tenant-scoped /api/bots/:botId/simulate-incoming instead. It stays in
   // useDevConfig because creating a bot still sets it.
   const { baseUrl, apiKey, botId, devMode } = devConfig;
-  const setBaseUrl = (v: string) => setDevConfig((c) => ({ ...c, baseUrl: v }));
   const setApiKey = (v: string) => setDevConfig((c) => ({ ...c, apiKey: v }));
   const setBotId = (v: string) => setDevConfig((c) => ({ ...c, botId: v }));
   const setDevMode = (v: boolean) => setDevConfig((c) => ({ ...c, devMode: v }));
@@ -533,7 +532,11 @@ export default function FlowEditor() {
             <div className={controls.devPanel}>
               <div className={styles.card}>
                 <h4 className={styles.cardTitle}>Подключение</h4>
-                <input className={controls.input} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="API base URL" style={{ width: '100%' }} />
+                {/* The API base is no longer editable here. Requests go to
+                    this origin and Next forwards them, which is what keeps
+                    the session cookie same-site; pointing the browser
+                    somewhere else would silently stop the cookie being sent
+                    and 401 the whole app. */}
                 <input className={controls.input} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="apiKey" style={{ width: '100%' }} />
                 <input className={controls.input} value={botId} onChange={(e) => setBotId(e.target.value)} placeholder="botId" style={{ width: '100%' }} />
                 <button className={controls.buttonSecondary} onClick={quickSetup}>
