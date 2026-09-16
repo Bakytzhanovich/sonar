@@ -100,7 +100,8 @@ describe('denoise (RNNoise / arnndn)', () => {
   it('resamples to 48kHz around the filter, the rate RNNoise expects', () => {
     const chain = buildDenoiseChain('/models/cb.rnnn');
     expect(chain).toBe(
-      'aresample=48000,arnndn=m=/models/cb.rnnn,volume=7dB,alimiter=limit=0.95,aresample=48000'
+      'highpass=f=80,aresample=48000,arnndn=m=/models/cb.rnnn,afftdn=nf=-30,' +
+        'volume=6dB,alimiter=limit=0.95,aresample=48000'
     );
   });
 

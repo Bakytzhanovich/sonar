@@ -53,8 +53,22 @@ export const RNNOISE_MODEL_PATH =
 // alimiter catches the peaks the boost would otherwise clip.
 export function buildDenoiseChain(modelPath: string = RNNOISE_MODEL_PATH): string {
   return (
+    // Wind and handling rumble live below the voice and are what RNNoise
+    // handles worst — a high-pass takes them out before the network sees
+    // them, so it can spend its capacity on the noise it is actually good at.
+    'highpass=f=80,' +
     `aresample=48000,arnndn=m=${escapeFilterPath(modelPath)},` +
-    `volume=7dB,alimiter=limit=0.95,aresample=48000`
+    // A gentle spectral pass after the network cleans up what it leaves
+    // behind. -30dB noise floor is deliberately conservative: pushed harder
+    // this filter starts eating consonants.
+    'afftdn=nf=-30,' +
+    // +6dB, not the +10 that would restore the original peak level. Gain
+    // lifts signal and noise together, so matching the source's loudness
+    // would hand back the noise this chain just removed — measured on real
+    // footage, +10dB put the floor back at -30dB, exactly where it started.
+    // At +6 the floor sits at -34dB and speech at -5.4dB, which the
+    // platforms' own loudness normalisation brings up the rest of the way.
+    'volume=6dB,alimiter=limit=0.95,aresample=48000'
   );
 }
 
