@@ -26,6 +26,10 @@ const MODEL = 'whisper-1';
 // reason rather than a 413 from a third party.
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
+// Generous: a 20-minute clip's audio takes a while to upload and transcribe.
+// The point is a ceiling, not a tight bound.
+const WHISPER_TIMEOUT_MS = 300_000;
+
 export interface TranscriptionResult {
   words: TranscriptWord[];
   language: string | null;
@@ -65,6 +69,10 @@ export async function transcribeWithWhisper(audioPath: string): Promise<Transcri
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}` },
     body: form,
+    // fetch has no default timeout. The worker processes one job at a time,
+    // so a stalled connection here does not fail a request — it stops the
+    // whole worker until someone notices.
+    signal: AbortSignal.timeout(WHISPER_TIMEOUT_MS),
   });
 
   if (!response.ok) {

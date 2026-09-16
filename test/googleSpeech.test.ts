@@ -4,6 +4,7 @@ import {
   chunkPlan,
   dominantLanguage,
   MAX_CHUNK_SEC,
+  mergeOverlappingWords,
   parseDuration,
   recognizeChunk,
   wordsFromResponse,
@@ -23,11 +24,22 @@ describe('chunkPlan', () => {
 
   it('covers the whole file, including the remainder', () => {
     const plan = chunkPlan(130);
-    const covered = plan.reduce((sum, c) => sum + c.durationSec, 0);
-    // A short final chunk that got dropped would cut the captions off before
-    // the speaker stops — invisible until someone watches the end.
-    expect(covered).toBeCloseTo(130, 5);
+    // Chunks overlap, so the durations sum to more than the file — what
+    // matters is that the coverage has no gap and reaches the end. A dropped
+    // final chunk would cut the captions off before the speaker stops,
+    // invisible until someone watches the end.
+    expect(plan[0].startSec).toBe(0);
+    for (let i = 1; i < plan.length; i++) {
+      const previousEnd = plan[i - 1].startSec + plan[i - 1].durationSec;
+      expect(plan[i].startSec).toBeLessThanOrEqual(previousEnd);
+    }
     expect(plan[plan.length - 1].startSec + plan[plan.length - 1].durationSec).toBeCloseTo(130, 5);
+  });
+
+  it('overlaps neighbours so a word on the boundary is not split', () => {
+    const plan = chunkPlan(130);
+    const firstEnd = plan[0].startSec + plan[0].durationSec;
+    expect(plan[1].startSec).toBeLessThan(firstEnd);
   });
 
   it('never exceeds the synchronous-recognition limit', () => {
@@ -162,5 +174,33 @@ describe('recognizeChunk', () => {
     // A silent empty result here would render a video with no captions and
     // call it a success.
     await expect(recognizeChunk(CONFIG, 'YXVkaW8=', 16000, 0, fakeFetch)).rejects.toThrow(/400/);
+  });
+});
+
+describe('mergeOverlappingWords', () => {
+  it('drops the words the overlap recognised twice', () => {
+    const existing = [
+      { word: 'ақша', start: 53.0, end: 53.5 },
+      { word: 'келеді', start: 53.5, end: 54.2 },
+    ];
+    // The next chunk starts 1s earlier and hears the same two words again.
+    const incoming = [
+      { word: 'ақша', start: 53.1, end: 53.6 },
+      { word: 'келеді', start: 53.6, end: 54.3 },
+      { word: 'деп', start: 54.4, end: 54.9 },
+    ];
+    expect(mergeOverlappingWords(existing, incoming).map((w) => w.word)).toEqual(['деп']);
+  });
+
+  it('keeps a genuine repeat spoken later', () => {
+    const existing = [{ word: 'қиын', start: 10, end: 10.4 }];
+    // Same word, far from the boundary — the speaker really said it twice.
+    const incoming = [{ word: 'қиын', start: 30, end: 30.4 }];
+    expect(mergeOverlappingWords(existing, incoming)).toHaveLength(1);
+  });
+
+  it('passes everything through for the first chunk', () => {
+    const incoming = [{ word: 'бір', start: 0, end: 0.4 }];
+    expect(mergeOverlappingWords([], incoming)).toEqual(incoming);
   });
 });

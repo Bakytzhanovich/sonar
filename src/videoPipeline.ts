@@ -157,15 +157,18 @@ export async function claimSmartCutJobs(db: Db, now: Date, limit: number): Promi
 
 // ---- Stage checkpointing -------------------------------------------------
 
-async function setStage(db: Db, job: VideoEditJob, stage: VideoStage, now: Date): Promise<void> {
-  // claimed_at is refreshed on every stage transition — a long render keeps
-  // the lease alive without a separate heartbeat timer.
+async function setStage(db: Db, job: VideoEditJob, stage: VideoStage, _now: Date): Promise<void> {
+  // The lease is stamped with the CURRENT time, not the tick's `now`. The
+  // tick timestamp is taken once before the batch starts and never moves, so
+  // using it meant the lease expired 30 minutes after the batch began no
+  // matter how long the render was still running — and a second worker could
+  // claim a job mid-encode, overwrite its output key and notify twice.
   await exec(
     db,
     `UPDATE video_edit_jobs SET stage = ?, progress_percent = ?, claimed_at = ? WHERE id = ? AND status = 'processing'`,
     stage,
     STAGE_RANGE[stage][0],
-    now.toISOString(),
+    new Date().toISOString(),
     job.id
   );
 }
@@ -195,7 +198,9 @@ async function reportProgress(db: Db, jobId: string, stage: VideoStage, fraction
   // out-of-order write would make the bar jump back.
   await exec(
     db,
-    `UPDATE video_edit_jobs SET progress_percent = ? WHERE id = ? AND status = 'processing' AND progress_percent < ?`,
+    // Also refreshes the lease: render is the one stage long enough to
+    // outlive it, and it reports progress throughout.
+    `UPDATE video_edit_jobs SET progress_percent = ?, claimed_at = now() WHERE id = ? AND status = 'processing' AND progress_percent < ?`,
     percent,
     jobId,
     percent
@@ -321,10 +326,12 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     if (!job.artifacts.noise) {
       const measurement = await deps.ffmpeg.measureNoise(audioPath);
       if (measurement) {
-        await saveArtifact(db, job, 'noise', {
-          headroomDb: measurement.headroomDb,
-          denoised: shouldDenoise(job.denoise_mode, measurement.headroomDb),
-        });
+        // Whether the model is actually there decides this as much as the
+        // measurement does — a card claiming the noise was removed when no
+        // model was loaded is worse than saying nothing.
+        const willDenoise =
+          shouldDenoise(job.denoise_mode, measurement.headroomDb) && (await deps.ffmpeg.denoiseAvailable());
+        await saveArtifact(db, job, 'noise', { headroomDb: measurement.headroomDb, denoised: willDenoise });
       }
     }
 
@@ -367,7 +374,7 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // cut — only the words changed.
     const { ass, chunks } = approved
       ? buildSubtitlesFromLines(approved, deps.subtitleStyle)
-      : buildSubtitlesForPlan(transcript.words, plan.segments, deps.subtitleStyle, deps.chunkOptions);
+      : buildSubtitlesForPlan(plan.words, plan.segments, deps.subtitleStyle, deps.chunkOptions);
     // A transcript that survives the cut as zero chunks (all filler, or a
     // plan that kept only silence) is not a failure — render without them
     // rather than burning an empty subtitle track.
@@ -409,10 +416,9 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       subtitlePath,
       // A missing model file must not fail the render: the job still produces
       // a correct cut, just without the noise removal it asked for.
-      denoiseModelPath:
-        shouldDenoise(job.denoise_mode, job.artifacts.noise?.headroomDb) && (await deps.ffmpeg.denoiseAvailable())
-          ? RNNOISE_MODEL_PATH
-          : undefined,
+      // The recorded decision, not a re-evaluation: the card already told the
+      // user what would happen, and deciding twice invites the two to differ.
+      denoiseModelPath: job.artifacts.noise?.denoised ? RNNOISE_MODEL_PATH : undefined,
       // Fire-and-forget: a progress write must never be able to fail the
       // render it is only describing.
       onProgress: (fraction) => void reportProgress(db, job.id, 'render', fraction).catch(() => {}),

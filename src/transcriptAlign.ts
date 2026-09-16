@@ -96,7 +96,16 @@ function firstWordOfSlot(wordCount: number, slotCount: number, slot: number): nu
 // are listed.
 const LOW_CONFIDENCE_LANGUAGES = new Set(['kazakh', 'kk', 'kyrgyz', 'ky', 'uzbek', 'uz', 'tajik', 'tg']);
 
+// Providers disagree on how they name a language: whisper's verbose_json says
+// "kazakh", an explicit language= request echoes "kk", and Google returns the
+// full BCP-47 tag "kk-KZ". Matching the bare code against a regioned tag
+// fails silently — the caption review and the unreliable-language warning
+// would simply never fire on exactly the path they exist for.
 export function needsTextCorrection(language: string | null): boolean {
   if (!language) return false;
-  return LOW_CONFIDENCE_LANGUAGES.has(language.trim().toLowerCase());
+  const normalized = language.trim().toLowerCase();
+  if (LOW_CONFIDENCE_LANGUAGES.has(normalized)) return true;
+  // 'kk-kz' -> 'kk'
+  const base = normalized.split(/[-_]/)[0];
+  return LOW_CONFIDENCE_LANGUAGES.has(base);
 }

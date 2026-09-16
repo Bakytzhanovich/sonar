@@ -156,6 +156,12 @@ export async function recognizeChunk(
   return { words: wordsFromResponse(payload, offsetSec), language: dominantLanguage(payload) };
 }
 
+// Chunks overlap by this much. A hard split lands mid-word often enough to
+// matter — the word is truncated in both halves and the recogniser returns
+// two fragments instead of one. The overlap is dropped again when the
+// results are merged.
+export const CHUNK_OVERLAP_SEC = 1;
+
 // Chunk boundaries for an audio file of `durationSec`, as [start, duration]
 // pairs. Exported for its own test: an off-by-one here silently drops the
 // last seconds of speech, which is invisible until someone watches the end of
@@ -163,8 +169,25 @@ export async function recognizeChunk(
 export function chunkPlan(durationSec: number, maxChunkSec = MAX_CHUNK_SEC): Array<{ startSec: number; durationSec: number }> {
   if (!Number.isFinite(durationSec) || durationSec <= 0) return [];
   const chunks: Array<{ startSec: number; durationSec: number }> = [];
-  for (let start = 0; start < durationSec; start += maxChunkSec) {
-    chunks.push({ startSec: start, durationSec: Math.min(maxChunkSec, durationSec - start) });
+  const step = Math.max(1, maxChunkSec - CHUNK_OVERLAP_SEC);
+  for (let start = 0; start < durationSec; start += step) {
+    const remaining = durationSec - start;
+    chunks.push({ startSec: start, durationSec: Math.min(maxChunkSec, remaining) });
+    if (remaining <= maxChunkSec) break;
   }
   return chunks;
+}
+
+// Drops words the overlap produced twice. A word is a duplicate when it
+// starts within the overlap window of the previous chunk's end and repeats
+// the text already recorded there.
+export function mergeOverlappingWords(existing: TranscriptWord[], incoming: TranscriptWord[]): TranscriptWord[] {
+  if (existing.length === 0) return incoming;
+  const lastEnd = existing[existing.length - 1].end;
+  return incoming.filter((word) => {
+    if (word.start >= lastEnd - 1e-6) return true;
+    // Inside the overlap: keep it only if nothing with the same text is
+    // already there at roughly the same time.
+    return !existing.some((prev) => prev.word === word.word && Math.abs(prev.start - word.start) < 0.5);
+  });
 }

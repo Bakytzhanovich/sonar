@@ -4,6 +4,7 @@ import path from 'node:path';
 import { extractAudioChunk, probe } from './ffmpeg';
 import {
   chunkPlan,
+  mergeOverlappingWords,
   googleSpeechConfigFromEnv,
   recognizeChunk,
   type GoogleSpeechConfig,
@@ -43,7 +44,7 @@ export async function transcribeWithGoogle(
       const audioBase64 = (await fs.readFile(chunkPath)).toString('base64');
 
       const result = await recognizeChunk(config, audioBase64, SAMPLE_RATE_HZ, chunk.startSec);
-      words.push(...result.words);
+      words.push(...mergeOverlappingWords(words, result.words));
       if (result.language) languages.push(result.language);
     }
 

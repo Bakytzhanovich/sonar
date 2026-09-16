@@ -55,6 +55,11 @@ export const DEFAULT_SMART_CUT_OPTIONS: SmartCutOptions = {
 
 export interface SmartCutPlan {
   segments: KeepSegment[];
+  // The words the plan was computed from — de-duplicated, clamped and
+  // re-ordered. Captions must be built from these, not the raw transcript:
+  // one out-of-order word from the model is enough to drop a caption line,
+  // and the cut has already been made against the repaired list.
+  words: TranscriptWord[];
   sourceDurationSec: number;
   keptDurationSec: number;
   removedDurationSec: number;
@@ -152,6 +157,7 @@ export function planSmartCut(
   if (clean.length === 0) {
     return {
       segments: durationSec > 0 ? [{ start: 0, end: durationSec }] : [],
+      words: clean,
       sourceDurationSec: durationSec,
       keptDurationSec: durationSec,
       removedDurationSec: 0,
@@ -215,6 +221,7 @@ export function planSmartCut(
 
   return {
     segments,
+    words: clean,
     sourceDurationSec: durationSec,
     keptDurationSec,
     removedDurationSec: Math.max(0, durationSec - keptDurationSec),

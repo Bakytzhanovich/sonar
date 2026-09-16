@@ -56,11 +56,26 @@ function unreliableLanguageLabel(language: string | null | undefined): string | 
   return UNRELIABLE_LANGUAGES[language.trim().toLowerCase()] ?? null;
 }
 
-// Adds the flag that makes the API send Content-Disposition: attachment.
-// The signed URL already carries exp/token query params, so this appends
-// rather than assuming it is the first parameter.
-function downloadUrl(url: string): string {
-  return url.includes('?') ? `${url}&download=1` : `${url}?download=1`;
+// Appending to the URL only works for the local dev store, whose signature
+// covers the path alone. An R2 presigned GET signs the query string too, so
+// an extra parameter invalidates it and the browser lands on a 403 XML page.
+// Fetching the bytes and saving them from a blob works for both, and keeps
+// the user on the page either way.
+async function saveFile(url: string, filename: string): Promise<void> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Не удалось скачать файл (${res.status})`);
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    a.click();
+  } finally {
+    // Same-tick revoke cancels the download in some browsers; a short delay
+    // is the usual workaround.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+  }
 }
 
 // The Level-3 pipeline reports which stage it is in. Showing "Расшифровка"
@@ -487,9 +502,16 @@ export default function VideoEditView() {
                           Content-Disposition the browser saves the file and
                           stays put. Opening a tab instead stranded people on
                           a bare video with no history to go back through. */}
-                      <a className={styles.jobOutputButton} href={downloadUrl(j.output_url)} rel="noreferrer">
+                      <button
+                        className={styles.jobOutputButton}
+                        onClick={() =>
+                          saveFile(j.output_url!, `sonar-${j.id.slice(0, 8)}.mp4`).catch((err) =>
+                            setStatus(err instanceof Error ? err.message : String(err))
+                          )
+                        }
+                      >
                         Скачать видео
-                      </a>
+                      </button>
                       {/* output_url is a mock link (render.mock doesn't resolve to a
                           real server) until a real Shotstack/Creatomate integration
                           replaces videoRender.ts — flagging that here so clicking

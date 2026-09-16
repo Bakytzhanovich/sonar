@@ -1392,7 +1392,19 @@ export function createApp(db: Db): Express {
   }));
 
   app.get('/api/video-edit-jobs', asyncHandler(async (req, res) => {
-    const jobs = await queryAll(db, `SELECT * FROM video_edit_jobs WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`, res.locals.tenantId);
+    // artifacts minus the transcript: the frontend polls this every 2s while
+    // anything renders, and a 20-minute clip's word list is tens of kilobytes
+    // that no screen displays. The single-job GET below still returns it in
+    // full for anything that needs the detail.
+    const jobs = await queryAll(
+      db,
+      `SELECT id, seq, tenant_id, source_video_url, template, status, progress_percent,
+              output_url, poster_url, failure_reason, created_at, completed_at,
+              pipeline, stage, subtitles, denoise_mode, review_mode,
+              artifacts - 'transcript' AS artifacts
+       FROM video_edit_jobs WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`,
+      res.locals.tenantId
+    );
     res.json({ jobs });
   }));
 

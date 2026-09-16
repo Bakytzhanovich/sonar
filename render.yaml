@@ -80,6 +80,15 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      # Required even though the worker serves no HTTP: auth.ts derives the
+      # local-media signing key from it at module load, and worker.ts imports
+      # that. Without it the process throws before its first poll and Render
+      # restarts it forever, so every job sits in the queue untouched.
+      # Must be the SAME value as the API service: the API signs media URLs
+      # the worker has to verify, and two different secrets would reject each
+      # other's links.
+      - key: SESSION_SECRET
+        sync: false
       # Transcription (Whisper API). The worker refuses to start without
       # storage, but an absent key here fails individual jobs with
       # 'transcription_not_configured' rather than at boot — the rest of the
@@ -98,6 +107,11 @@ services:
       - key: STORAGE_ACCESS_KEY_ID
         sync: false
       - key: STORAGE_SECRET_ACCESS_KEY
+        sync: false
+      # Speech-to-Text for languages Whisper cannot transcribe (Kazakh).
+      # Absent: the worker falls back to Whisper, which is why this is listed
+      # here rather than left to be discovered missing in production.
+      - key: GOOGLE_SPEECH_API_KEY
         sync: false
       # Optional public domain for finished renders. Without it the API hands
       # out a presigned GET that expires after a week.
