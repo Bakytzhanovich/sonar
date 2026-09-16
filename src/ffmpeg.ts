@@ -28,6 +28,45 @@ export const OUTPUT_FPS = 30;
 // to be inaudible as a fade and long enough to kill the step.
 const JOIN_FADE_SEC = 0.015;
 
+// RNNoise model for the arnndn filter — a recurrent network that separates
+// speech from background noise (street, wind, room tone). Committed to the
+// repo under assets/ (see the README there) rather than fetched at build
+// time. Overridable so a deployment can point at a different model without a
+// rebuild.
+export const RNNOISE_MODEL_PATH =
+  process.env.RNNOISE_MODEL_PATH ?? path.resolve(__dirname, '..', 'assets', 'rnnoise', 'bd.rnnn');
+
+// RNNoise is trained at 48 kHz and degrades measurably at other rates, so the
+// chain resamples into it and leaves the output at 48 kHz — which is what the
+// AAC encoder wants anyway.
+//
+// The gain after the filter is not cosmetic: the model that removes the most
+// noise also attenuates speech (-9.5 dB peak vs -2.8 dB untouched), so
+// without it "denoised" just means "quiet", and a quiet upload gets buried by
+// the platforms' own loudness normalisation.
+//
+// A FIXED gain, deliberately — not speechnorm or loudnorm. Those raise quiet
+// passages, which here means the pauses, which is exactly where the leftover
+// noise lives: measured on a real clip, speechnorm pulled the noise floor
+// from -37 dB back up to -20 dB and ended up WORSE than the weaker model.
+// A flat gain moves signal and noise together and preserves the gain in SNR.
+// alimiter catches the peaks the boost would otherwise clip.
+export function buildDenoiseChain(modelPath: string = RNNOISE_MODEL_PATH): string {
+  return (
+    `aresample=48000,arnndn=m=${escapeFilterPath(modelPath)},` +
+    `volume=7dB,alimiter=limit=0.95,aresample=48000`
+  );
+}
+
+export async function denoiseModelAvailable(modelPath: string = RNNOISE_MODEL_PATH): Promise<boolean> {
+  try {
+    await fs.access(modelPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface ProbeResult {
   durationSec: number;
   hasAudio: boolean;
@@ -133,6 +172,53 @@ export async function extractAudio(inputPath: string, outputPath: string): Promi
   ]);
 }
 
+// Cuts a slice of audio to FLAC for Google Speech, which caps synchronous
+// recognition at ~60s. FLAC because it is lossless: an MP3 re-encode of an
+// already-compressed source smears exactly the consonant detail a recogniser
+// depends on, and the file only travels to the API, never to a user.
+export async function extractAudioChunk(
+  inputPath: string,
+  outputPath: string,
+  startSec: number,
+  durationSec: number,
+  sampleRateHz: number
+): Promise<void> {
+  await run(FFMPEG, [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-ss', startSec.toFixed(3),
+    '-t', durationSec.toFixed(3),
+    '-i', inputPath,
+    '-vn',
+    '-ac', '1',
+    '-ar', String(sampleRateHz),
+    '-c:a', 'flac',
+    outputPath,
+  ]);
+}
+
+// Grabs one frame as the card's cover image. Taken from the finished render,
+// not the source, so the poster shows the actual result — subtitles burned in
+// and all — which is what makes a completed job recognisable at a glance.
+//
+// The frame comes from a fraction into the clip rather than 0s: the first
+// frame of a talking-head video is often mid-blink or a fade, and on a hard
+// cut it can be a black frame, which is exactly the "did this work?" state
+// the poster exists to avoid.
+export async function extractPosterFrame(inputPath: string, outputPath: string, atSec: number): Promise<void> {
+  await run(FFMPEG, [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    // Before -i, so ffmpeg seeks instead of decoding up to that point.
+    '-ss', atSec.toFixed(3),
+    '-i', inputPath,
+    '-frames:v', '1',
+    // Width 720 keeps the card crisp on a retina screen while staying a
+    // ~60KB JPEG, so the queue does not pull megabytes of posters.
+    '-vf', 'scale=720:-2',
+    '-q:v', '4',
+    outputPath,
+  ]);
+}
+
 // Builds the trim/concat graph. One [v]/[a] pair per kept segment, all fed
 // into a single concat — this is a single-pass re-encode, not N renders
 // stitched together, so the cost is roughly one encode of the *output*
@@ -145,7 +231,7 @@ export function escapeFilterPath(filePath: string): string {
   return filePath.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
 }
 
-export function buildConcatFilter(segments: KeepSegment[], subtitlePath?: string): string {
+export function buildConcatFilter(segments: KeepSegment[], subtitlePath?: string, denoiseModelPath?: string): string {
   const parts: string[] = [];
   const labels: string[] = [];
 
@@ -163,7 +249,15 @@ export function buildConcatFilter(segments: KeepSegment[], subtitlePath?: string
     labels.push(`[v${i}][a${i}]`);
   });
 
-  parts.push(`${labels.join('')}concat=n=${segments.length}:v=1:a=1[vcat][aout]`);
+  // Denoising AFTER the concat, not per segment: arnndn is a recurrent
+  // network with internal state, and restarting it on every fragment would
+  // make it re-learn the noise profile dozens of times per render — audible
+  // as the hiss swelling back at each cut.
+  const audioOut = denoiseModelPath ? '[acat]' : '[aout]';
+  parts.push(`${labels.join('')}concat=n=${segments.length}:v=1:a=1[vcat]${audioOut}`);
+  if (denoiseModelPath) {
+    parts.push(`[acat]${buildDenoiseChain(denoiseModelPath)}[aout]`);
+  }
   // force_original_aspect_ratio=decrease + pad keeps a source that is not
   // exactly 9:16 (a 4:3 phone clip, a 1:1 export) intact with bars rather
   // than cropping the speaker's head off.
@@ -192,18 +286,20 @@ export interface RenderOptions {
   // Absolute path to an .ass file to burn in. Optional: a job with subtitles
   // switched off renders the same graph without the filter.
   subtitlePath?: string;
+  // Path to an RNNoise model. Absent: the audio is passed through untouched.
+  denoiseModelPath?: string;
   onProgress?: (fraction: number) => void;
 }
 
 export async function renderSegments(options: RenderOptions): Promise<void> {
-  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, onProgress } = options;
+  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, onProgress } = options;
   if (segments.length === 0) throw new FfmpegError('no segments to render', '');
 
   // The graph is written to a file rather than passed as an argument: at a
   // few hundred segments the filter string runs past 100KB, and the OS
   // argument-length limit (ARG_MAX) turns that into an opaque E2BIG failure.
   const filterPath = path.join(workDir, 'filter.txt');
-  await fs.writeFile(filterPath, buildConcatFilter(segments, subtitlePath), 'utf-8');
+  await fs.writeFile(filterPath, buildConcatFilter(segments, subtitlePath, denoiseModelPath), 'utf-8');
 
   await run(
     FFMPEG,

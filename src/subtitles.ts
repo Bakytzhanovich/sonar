@@ -117,6 +117,19 @@ export function remapWordsToOutputTimeline(words: TranscriptWord[], segments: Ke
   return out;
 }
 
+// Where the cuts land on the OUTPUT timeline: the cumulative length of the
+// kept segments. These are the moments where speech that was seconds apart is
+// now back-to-back.
+export function joinBoundaries(segments: KeepSegment[]): number[] {
+  const boundaries: number[] = [];
+  let elapsed = 0;
+  for (const segment of segments.slice(0, -1)) {
+    elapsed += segment.end - segment.start;
+    boundaries.push(elapsed);
+  }
+  return boundaries;
+}
+
 // ---- Chunking ------------------------------------------------------------
 
 function displayLength(words: TranscriptWord[]): number {
@@ -128,7 +141,15 @@ function endsSentence(word: string): boolean {
   return /[.!?…]$/.test(word.trim());
 }
 
-export function chunkWords(words: TranscriptWord[], options: ChunkOptions = DEFAULT_CHUNK_OPTIONS): SubtitleChunk[] {
+export function chunkWords(
+  words: TranscriptWord[],
+  options: ChunkOptions = DEFAULT_CHUNK_OPTIONS,
+  // Cut points on the output timeline. A caption must never span one: after
+  // the pause is removed the two sides are adjacent in time, so the gap check
+  // below can never fire, and words spoken seconds apart would share a line —
+  // which is exactly what makes captions feel out of step with the delivery.
+  joins: number[] = []
+): SubtitleChunk[] {
   const chunks: SubtitleChunk[] = [];
   let current: TranscriptWord[] = [];
 
@@ -142,11 +163,16 @@ export function chunkWords(words: TranscriptWord[], options: ChunkOptions = DEFA
     if (!word.word.trim()) continue;
 
     const gapTooLong = current.length > 0 && word.start - current[current.length - 1].end > options.maxGapSec;
+    // A join between the previous word and this one: they were separated by a
+    // cut, so they belong to different breaths.
+    const crossesJoin =
+      current.length > 0 &&
+      joins.some((at) => current[current.length - 1].end <= at + 1e-6 && word.start >= at - 1e-6);
     const wouldOverflow = current.length > 0 && displayLength([...current, word]) > options.maxChars;
     // minWords is a preference, not a rule: a chunk is allowed to fall below
     // it when the line would otherwise be unreadably long, or when the speaker
     // paused. Enforcing it strictly is how captions end up running off-screen.
-    if (current.length >= options.maxWords || gapTooLong || wouldOverflow) flush();
+    if (current.length >= options.maxWords || gapTooLong || crossesJoin || wouldOverflow) flush();
 
     current.push(word);
 
@@ -277,6 +303,6 @@ export function buildSubtitlesForPlan(
   style: SubtitleStyle = DEFAULT_SUBTITLE_STYLE,
   chunkOptions: ChunkOptions = DEFAULT_CHUNK_OPTIONS
 ): { ass: string; chunks: SubtitleChunk[] } {
-  const chunks = chunkWords(remapWordsToOutputTimeline(words, segments), chunkOptions);
+  const chunks = chunkWords(remapWordsToOutputTimeline(words, segments), chunkOptions, joinBoundaries(segments));
   return { ass: buildAssFile(chunks, style), chunks };
 }

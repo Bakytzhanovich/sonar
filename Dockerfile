@@ -34,7 +34,15 @@ RUN npm ci --include=dev
 
 COPY tsconfig.json ./
 COPY src ./src
+# The RNNoise model the arnndn denoise filter loads at render time. Resolved
+# relative to dist/ at runtime (see RNNOISE_MODEL_PATH), so it has to sit
+# beside it, not inside src.
+COPY assets ./assets
 RUN npm run build && npm prune --omit=dev
+
+# Fail the build rather than ship an image where "убрать фоновый шум" silently
+# does nothing — same reasoning as the Montserrat check for subtitles.
+RUN test -f assets/rnnoise/bd.rnnn
 
 ENV NODE_ENV=production
 CMD ["node", "dist/worker.js"]

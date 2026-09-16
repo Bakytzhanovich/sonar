@@ -163,6 +163,22 @@ export function createApp(db: Db): Express {
       try {
         const target = resolveKeyPath(localMedia, key);
         await fsp.access(target);
+        // The <a download> attribute is ignored cross-origin, and the API is
+        // a different origin from the frontend (:4001 vs :3001), so a
+        // "download" link opened the raw file in a new tab with no history
+        // to go back through. Saying it server-side is what actually saves
+        // the file; the player omits the flag and still streams normally.
+        if (req.query.download !== undefined) {
+          res.setHeader('Content-Disposition', `attachment; filename="${path.basename(key)}"`);
+        }
+        // helmet defaults Cross-Origin-Resource-Policy to same-origin, and the
+        // frontend is a different origin from this API (:3001 vs :4001). The
+        // browser then refuses to paint a <video poster> from here — the
+        // request never even leaves it (ERR_BLOCKED_BY_RESPONSE.NotSameOrigin),
+        // so the card showed a black rectangle and the job looked like it had
+        // produced nothing. These URLs are already unguessable and expiring;
+        // the policy adds nothing here but the blockage.
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         // sendFile rather than reading into memory: a render is tens of
         // megabytes and the browser seeks around it while playing.
         res.sendFile(target);
@@ -1339,17 +1355,21 @@ export function createApp(db: Db): Express {
       // so this defaults to on (it is the point of the Level-3 output) but
       // stays explicitly switchable per job.
       const subtitles = req.body?.subtitles === undefined ? true : req.body.subtitles === true;
+      // Opt-in, unlike subtitles: stripping ambience is destructive and the
+      // caller has to ask for it.
+      const denoise = req.body?.denoise === true;
 
       const id = randomUUID();
       await exec(
         db,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
         template,
         sourceObjectKey,
-        subtitles
+        subtitles,
+        denoise
       );
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
     }

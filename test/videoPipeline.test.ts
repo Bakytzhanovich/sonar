@@ -5,7 +5,7 @@ import type { Express } from 'express';
 import { exec, queryOne, type Db } from '../src/db';
 import { createApp } from '../src/api';
 import { advanceRenderJobs } from '../src/videoRender';
-import { claimSmartCutJobs, processSmartCutJob, runSmartCutJobs, type PipelineDeps, type StorageIo } from '../src/videoPipeline';
+import { claimSmartCutJobs, posterKeyForOutput, posterTimeFor, processSmartCutJob, runSmartCutJobs, type PipelineDeps, type StorageIo } from '../src/videoPipeline';
 import { DEFAULT_SMART_CUT_OPTIONS } from '../src/smartCut';
 import type { VideoEditJob } from '../src/types';
 import { createTestDb, dropTestDb } from './dbTestHelper';
@@ -42,6 +42,8 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
       probe: async () => ({ durationSec: 6, hasAudio: true, width: 1080, height: 1920 }),
       extractAudio: async (_input, output) => { await fs.writeFile(output, 'fake-audio'); },
       render: async ({ outputPath }) => { await fs.writeFile(outputPath, 'rendered'); },
+      poster: async (_input, output) => { await fs.writeFile(output, 'poster-bytes'); },
+      denoiseAvailable: async () => true,
     },
     ...overrides,
   };
@@ -93,6 +95,36 @@ describe('smart cut pipeline', () => {
       { start: 0, end: 1.12 },
       { start: 4.88, end: 6 },
     ]);
+  });
+
+  it('stores a poster taken from the finished render, not the source', async () => {
+    await seedJob(db);
+    const uploaded: string[] = [];
+    const poster = vi.fn(async (_input: string, output: string) => { await fs.writeFile(output, 'poster-bytes'); });
+    await runSmartCutJobs(db, new Date(), deps({
+      storage: fakeStorage({ upload: async (key) => { uploaded.push(key); } }),
+      ffmpeg: { ...deps().ffmpeg, poster: poster as never },
+    }));
+
+    const job = await queryOne<VideoEditJob>(db, `SELECT * FROM video_edit_jobs LIMIT 1`);
+    expect(job?.poster_url).toBe(`https://cdn.test/${posterKeyForOutput(job!.output_object_key!)}`);
+    expect(uploaded).toContain(posterKeyForOutput(job!.output_object_key!));
+    // The frame must come from the rendered file — a poster off the source
+    // would show a moment the viewer cut out, with no subtitles on it.
+    expect(poster.mock.calls[0][0]).not.toContain('source');
+  });
+
+  it('still completes the job when the poster cannot be made', async () => {
+    await seedJob(db);
+    await runSmartCutJobs(db, new Date(), deps({
+      ffmpeg: { ...deps().ffmpeg, poster: (async () => { throw new Error('no ffmpeg jpeg encoder'); }) as never },
+    }));
+
+    const job = await queryOne<VideoEditJob>(db, `SELECT * FROM video_edit_jobs LIMIT 1`);
+    // Best-effort: the render succeeded, so the job did too.
+    expect(job?.status).toBe('completed');
+    expect(job?.output_url).toBeTruthy();
+    expect(job?.poster_url).toBeNull();
   });
 
   it('renders exactly the segments the plan produced', async () => {
@@ -210,7 +242,10 @@ describe('smart cut pipeline', () => {
     expect(assContent).not.toContain('0:00:05.00');
 
     const job = await readJob(db, 'job-1');
-    expect(job!.artifacts.subtitles).toEqual({ chunkCount: 1, wordCount: 2 });
+    // Two chunks, not one: "привет" and "мир" sit on opposite sides of a cut
+    // (the ~4s pause between them was removed), so they must not share a
+    // caption line even though they are now adjacent in the output.
+    expect(job!.artifacts.subtitles).toEqual({ chunkCount: 2, wordCount: 2 });
   });
 
   it('skips subtitles when the job asked for a clean master', async () => {
@@ -445,5 +480,24 @@ describe('video upload + smart cut API', () => {
     } finally {
       process.env.NODE_ENV = previous;
     }
+  });
+});
+
+describe('poster helpers', () => {
+  it('derives the poster key from the render key, so the two cannot drift', () => {
+    expect(posterKeyForOutput('tenants/t1/renders/job-1.mp4')).toBe('tenants/t1/renders/job-1.jpg');
+    expect(posterKeyForOutput('tenants/t1/renders/job-1.MP4')).toBe('tenants/t1/renders/job-1.jpg');
+  });
+
+  it('samples past the opening frame, which is often a fade or a blink', () => {
+    expect(posterTimeFor(20)).toBe(2);
+    expect(posterTimeFor(5)).toBe(0.5);
+    // Never seek past the end of a very short clip.
+    expect(posterTimeFor(1)).toBeCloseTo(0.1, 5);
+  });
+
+  it('falls back to the first frame for a duration it cannot use', () => {
+    expect(posterTimeFor(0)).toBe(0);
+    expect(posterTimeFor(Number.NaN)).toBe(0);
   });
 });

@@ -92,6 +92,8 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitles BOOLEAN NOT NULL DEFAULT true`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS poster_url TEXT`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS denoise BOOLEAN NOT NULL DEFAULT false`,
   `CREATE INDEX IF NOT EXISTS idx_video_edit_jobs_pipeline ON video_edit_jobs(pipeline, status, claimed_at)`,
 ];
 

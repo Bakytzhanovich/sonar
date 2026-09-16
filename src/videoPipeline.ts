@@ -3,9 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
-import { extractAudio, ffmpegAvailable, probe, renderSegments } from './ffmpeg';
+import { denoiseModelAvailable, extractAudio, extractPosterFrame, ffmpegAvailable, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
 import { DEFAULT_SMART_CUT_OPTIONS, planSmartCut, type SmartCutOptions } from './smartCut';
 import { buildSubtitlesForPlan, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, type ChunkOptions, type SubtitleStyle } from './subtitles';
+import { transcriberFromEnv } from './transcribeGoogle';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
 import { downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
 import { localMediaConfigFromEnv, localStorageIo } from './localMedia';
@@ -85,6 +86,8 @@ export interface PipelineDeps {
     probe: typeof probe;
     extractAudio: typeof extractAudio;
     render: typeof renderSegments;
+    poster: typeof extractPosterFrame;
+    denoiseAvailable: typeof denoiseModelAvailable;
   };
 }
 
@@ -102,11 +105,13 @@ export function defaultPipelineDeps(): PipelineDeps {
           publicUrl: (key) => publicUrlFor(config, key),
         }
       : localConfig && localStorageIo(localConfig),
-    transcribe: transcribeWithWhisper,
+    // Google when GOOGLE_SPEECH_API_KEY is set (Kazakh + code-switching),
+    // Whisper otherwise.
+    transcribe: transcriberFromEnv(transcribeWithWhisper),
     smartCutOptions: DEFAULT_SMART_CUT_OPTIONS,
     subtitleStyle: DEFAULT_SUBTITLE_STYLE,
     chunkOptions: DEFAULT_CHUNK_OPTIONS,
-    ffmpeg: { available: ffmpegAvailable, probe, extractAudio, render: renderSegments },
+    ffmpeg: { available: ffmpegAvailable, probe, extractAudio, render: renderSegments, poster: extractPosterFrame, denoiseAvailable: denoiseModelAvailable },
   };
 }
 
@@ -213,14 +218,15 @@ export async function processSmartCutJob(
   const workDir = await fs.mkdtemp(path.join(os.tmpdir(), `sonar-video-${job.id.slice(0, 8)}-`));
   try {
     const storage = requireStorage(deps);
-    const outputKey = await runStages(db, job, deps, workDir, now);
+    const { outputKey, posterKey } = await runStages(db, job, deps, workDir, now);
     await exec(
       db,
       `UPDATE video_edit_jobs
-       SET status = 'completed', progress_percent = 100, stage = NULL, output_object_key = ?, output_url = ?, completed_at = ?, claimed_at = NULL
+       SET status = 'completed', progress_percent = 100, stage = NULL, output_object_key = ?, output_url = ?, poster_url = ?, completed_at = ?, claimed_at = NULL
        WHERE id = ? AND status = 'processing'`,
       outputKey,
       storage.publicUrl(outputKey),
+      posterKey ? storage.publicUrl(posterKey) : null,
       now.toISOString(),
       job.id
     );
@@ -235,7 +241,13 @@ export async function processSmartCutJob(
   }
 }
 
-async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir: string, now: Date): Promise<string> {
+interface StageResult {
+  outputKey: string;
+  // null when the poster step failed — it is best-effort, never fatal.
+  posterKey: string | null;
+}
+
+async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir: string, now: Date): Promise<StageResult> {
   const storage = requireStorage(deps);
   if (!(await deps.ffmpeg.available())) throw new PipelineError('ffmpeg_not_available');
   if (!job.source_object_key) throw new PipelineError('source_missing');
@@ -336,6 +348,9 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       segments: plan.segments,
       expectedDurationSec: plan.keptDurationSec,
       subtitlePath,
+      // A missing model file must not fail the render: the job still produces
+      // a correct cut, just without the noise removal it asked for.
+      denoiseModelPath: job.denoise && (await deps.ffmpeg.denoiseAvailable()) ? RNNOISE_MODEL_PATH : undefined,
       // Fire-and-forget: a progress write must never be able to fail the
       // render it is only describing.
       onProgress: (fraction) => void reportProgress(db, job.id, 'render', fraction).catch(() => {}),
@@ -352,7 +367,35 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   } catch (err) {
     throw new PipelineError('upload_failed', err instanceof Error ? err.message : String(err));
   }
-  return outputKey;
+
+  // The poster is a convenience, not part of the result: a job that rendered
+  // and uploaded successfully must not fail because one extra frame did not
+  // encode. Without it the card falls back to a bare <video> element.
+  let posterKey: string | null = posterKeyForOutput(outputKey);
+  try {
+    const posterPath = path.join(workDir, 'poster.jpg');
+    await deps.ffmpeg.poster(outputPath, posterPath, posterTimeFor(plan.keptDurationSec));
+    await storage.upload(posterKey, posterPath, 'image/jpeg');
+  } catch (err) {
+    console.warn(`[video-pipeline] job ${job.id}: poster skipped: ${err instanceof Error ? err.message : String(err)}`);
+    posterKey = null;
+  }
+
+  return { outputKey, posterKey };
+}
+
+// Derives the poster's key from the render's, so nothing has to be stored:
+// one fewer column, and no way for the two to drift apart.
+export function posterKeyForOutput(outputKey: string): string {
+  return outputKey.replace(/\.mp4$/i, '.jpg');
+}
+
+// A tenth of the way in, capped at 2s. Far enough past the opening frame to
+// miss fades and blinks, early enough that a short clip does not land on its
+// own ending.
+export function posterTimeFor(durationSec: number): number {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return 0;
+  return Math.min(durationSec / 10, 2);
 }
 
 function requireStorage(deps: PipelineDeps): StorageIo {

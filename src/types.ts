@@ -307,6 +307,7 @@ export interface VideoEditJob {
   status: VideoJobStatus;
   progress_percent: number;
   output_url: string | null;
+  poster_url: string | null;
   failure_reason: VideoFailureReason | null;
   created_at: string;
   completed_at: string | null;
@@ -318,6 +319,7 @@ export interface VideoEditJob {
   attempt_count: number;
   claimed_at: string | null;
   subtitles: boolean;
+  denoise: boolean;
 }
 
 // ---- Push notifications (shared by Modules 5 and 8) ----------------------

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildConcatFilter, escapeFilterPath, OUTPUT_HEIGHT, OUTPUT_WIDTH, OUTPUT_FPS } from '../src/ffmpeg';
+import { buildConcatFilter, buildDenoiseChain, escapeFilterPath, OUTPUT_HEIGHT, OUTPUT_WIDTH, OUTPUT_FPS } from '../src/ffmpeg';
 
 // Pure string construction — no binary involved, which is the point: the
 // filter graph is the part of the render that fails silently (a wrong label
@@ -73,5 +73,48 @@ describe('burned-in subtitles', () => {
     // containing either fails as an unrelated-looking "no such filter".
     expect(escapeFilterPath('/tmp/a:b/c.ass')).toBe('/tmp/a\\:b/c.ass');
     expect(escapeFilterPath("/tmp/it's/c.ass")).toBe("/tmp/it\\'s/c.ass");
+  });
+});
+
+describe('denoise (RNNoise / arnndn)', () => {
+  const segments = [{ start: 0, end: 2 }, { start: 5, end: 7 }];
+
+  it('leaves the audio untouched when no model is given', () => {
+    const graph = buildConcatFilter(segments);
+    expect(graph).not.toContain('arnndn');
+    // concat must still land straight on the output label.
+    expect(graph).toContain('concat=n=2:v=1:a=1[vcat][aout]');
+  });
+
+  it('runs the network once on the joined audio, not per segment', () => {
+    const graph = buildConcatFilter(segments, undefined, '/models/cb.rnnn');
+
+    // Exactly one arnndn: restarting a recurrent denoiser at every cut makes
+    // it re-learn the noise profile and the hiss swells back on each join.
+    expect(graph.match(/arnndn/g)).toHaveLength(1);
+    expect(graph).toContain('concat=n=2:v=1:a=1[vcat][acat]');
+    expect(graph).toContain('[acat]');
+    expect(graph).toMatch(/\[acat\].*arnndn.*\[aout\]/);
+  });
+
+  it('resamples to 48kHz around the filter, the rate RNNoise expects', () => {
+    const chain = buildDenoiseChain('/models/cb.rnnn');
+    expect(chain).toBe(
+      'aresample=48000,arnndn=m=/models/cb.rnnn,volume=7dB,alimiter=limit=0.95,aresample=48000'
+    );
+  });
+
+  it('escapes a model path that would otherwise break the filter syntax', () => {
+    // ':' separates filter options, so an unescaped path reads as "no such
+    // filter" rather than as a missing file.
+    const chain = buildDenoiseChain('/opt/models: v2/cb.rnnn');
+    expect(chain).toContain('arnndn=m=/opt/models\\: v2/cb.rnnn');
+  });
+
+  it('still burns subtitles when denoising, since they share one pass', () => {
+    const graph = buildConcatFilter(segments, '/tmp/captions.ass', '/models/cb.rnnn');
+    expect(graph).toContain('ass=filename=/tmp/captions.ass');
+    expect(graph).toContain('arnndn');
+    expect(graph).toContain('[vout]');
   });
 });

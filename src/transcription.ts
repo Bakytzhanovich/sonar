@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { TranscriptWord } from './smartCut';
+import { alignTextToWordTimings, needsTextCorrection } from './transcriptAlign';
+import { AUDIO_PASSES, reconstructTranscript, transcribeWithAudioModel } from './transcriptEnsemble';
 
 // Stage 2 of the Level-3 pipeline. CLAUDE.md fixes transcription as "Whisper
 // API" (not a locally hosted model), which is the reason this whole pipeline
@@ -8,6 +10,15 @@ import type { TranscriptWord } from './smartCut';
 
 const TRANSCRIPTION_URL = 'https://api.openai.com/v1/audio/transcriptions';
 const MODEL = 'whisper-1';
+
+// Only used for languages whisper-1 mangles (see transcriptAlign.ts). It is
+// the better transcriber but returns no timestamps at all — verbose_json is
+// rejected outright — so it can never replace whisper-1, only correct it.
+// The /audio/transcriptions endpoints are no longer used for these
+// languages: measured on a real Kazakh clip, every one of them (whisper-1,
+// gpt-4o-transcribe, gpt-transcribe) produced phonetic nonsense and flattened
+// Russian inserts, while the audio-input chat model got the sentence — and
+// the mixed languages — right. whisper-1 stays only as the source of timings.
 
 // The API rejects anything larger outright. Our extracted audio is mono
 // 16kHz MP3 at roughly 0.5 MB/min, so this is ~50 minutes of speech — well
@@ -66,7 +77,7 @@ export async function transcribeWithWhisper(audioPath: string): Promise<Transcri
     words?: Array<{ word?: string; start?: number; end?: number }>;
   };
 
-  return {
+  const result: TranscriptionResult = {
     // A 200 with no words is a real outcome, not an error: silent video, or
     // audio the model found no speech in. planSmartCut handles an empty
     // transcript by keeping the source whole, so this is passed through
@@ -78,4 +89,39 @@ export async function transcribeWithWhisper(audioPath: string): Promise<Transcri
     language: payload.language ?? null,
     text: payload.text ?? '',
   };
+
+  if (!needsTextCorrection(result.language) || result.words.length === 0) return result;
+
+  // Extra passes, for these languages only. A failure here is not fatal: the
+  // cut itself only needs the timings we already have, so we fall back to
+  // whisper's own text rather than failing the whole job.
+  try {
+    // Several passes of the audio model on the same file. It is the only
+    // OpenAI model that both reads Kazakh and keeps code-switching intact,
+    // but it is not deterministic — and that is exactly what the repair step
+    // needs: where the passes agree the word is certain, where they diverge
+    // it is not.
+    const audioBase64 = (await fs.readFile(audioPath)).toString('base64');
+    const others = await Promise.all(
+      Array.from({ length: AUDIO_PASSES }, async (_unused, i) => ({
+        engine: `audio-${i + 1}`,
+        text: await transcribeWithAudioModel(audioBase64, 'mp3', apiKey).catch(() => ''),
+      }))
+    );
+
+    const variants = [{ engine: MODEL, text: result.text }, ...others];
+    const repaired = await reconstructTranscript(variants, apiKey);
+    if (repaired) {
+      return { ...result, words: alignTextToWordTimings(result.words, repaired), text: repaired };
+    }
+
+    // No usable reconstruction — fall back to the single best-sounding
+    // engine rather than to whisper's own output.
+    const best = others.find((v) => v.text.trim().length > 0);
+    if (!best) return result;
+    return { ...result, words: alignTextToWordTimings(result.words, best.text), text: best.text };
+  } catch (err) {
+    console.warn(`[transcribe] repair skipped: ${err instanceof Error ? err.message : String(err)}`);
+    return result;
+  }
 }

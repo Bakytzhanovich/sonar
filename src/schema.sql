@@ -336,6 +336,9 @@ CREATE TABLE video_edit_jobs (
   status            TEXT NOT NULL DEFAULT 'processing', -- processing | completed | failed
   progress_percent  INTEGER NOT NULL DEFAULT 0,
   output_url        TEXT,
+  -- Cover frame for the finished render, so a completed job is recognisable
+  -- in the queue without pressing play. Nullable: posters are best-effort.
+  poster_url        TEXT,
   failure_reason    TEXT,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   completed_at      TIMESTAMPTZ,
@@ -360,6 +363,10 @@ CREATE TABLE video_edit_jobs (
   -- Level-3 output is for. Stored per job because burning is irreversible —
   -- a client who wants a clean master must be able to ask for one.
   subtitles         BOOLEAN NOT NULL DEFAULT true,
+  -- Neural background-noise removal (ffmpeg arnndn / RNNoise). Off by
+  -- default: it is the right call for a street recording and the wrong one
+  -- for anything with deliberate ambience or music.
+  denoise           BOOLEAN NOT NULL DEFAULT false,
   -- Worker lease. Unlike the preset path, a smart_cut job legitimately sits
   -- in 'processing' for minutes, so a timestamped claim is the only way to
   -- tell "another worker is on it" from "a worker died holding it".

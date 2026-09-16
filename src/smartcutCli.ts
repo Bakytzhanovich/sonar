@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { extractAudio, ffmpegAvailable, probe, renderSegments } from './ffmpeg';
+import { denoiseModelAvailable, extractAudio, ffmpegAvailable, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
 import { DEFAULT_SMART_CUT_OPTIONS, planSmartCut, type TranscriptWord } from './smartCut';
 import { DEFAULT_SUBTITLE_STYLE, buildSubtitlesForPlan } from './subtitles';
 import { transcribeWithWhisper } from './transcription';
@@ -27,12 +27,13 @@ interface CliOptions {
   fillerWords: string[] | null;
   reuseTranscript: boolean;
   keepWork: boolean;
+  denoise: boolean;
 }
 
 function parseArgs(argv: string[]): CliOptions {
   const positional = argv.filter((a) => !a.startsWith('--'));
   if (positional.length === 0) {
-    throw new Error('usage: npm run smartcut -- <video> [--out result.mp4] [--max-pause 0.7] [--padding 0.12] [--no-subs] [--no-fillers] [--fresh] [--keep-work]');
+    throw new Error('usage: npm run smartcut -- <video> [--out result.mp4] [--max-pause 0.7] [--padding 0.12] [--no-subs] [--no-fillers] [--denoise] [--fresh] [--keep-work]');
   }
 
   const flag = (name: string): boolean => argv.includes(`--${name}`);
@@ -56,6 +57,10 @@ function parseArgs(argv: string[]): CliOptions {
     fillerWords: flag('no-fillers') ? [] : null,
     reuseTranscript: !flag('fresh'),
     keepWork: flag('keep-work'),
+    // Same switch the UI offers, here too: the thresholds this CLI exists to
+    // tune are judged by ear, and judging them on audio the product will
+    // denoise but the CLI will not is judging the wrong thing.
+    denoise: flag('denoise'),
   };
 }
 
@@ -140,6 +145,16 @@ async function main(): Promise<void> {
     }
   }
 
+  let denoiseModelPath: string | undefined;
+  if (options.denoise) {
+    if (await denoiseModelAvailable()) {
+      denoiseModelPath = RNNOISE_MODEL_PATH;
+      console.log(`\n▸ Шумодав: RNNoise (${path.basename(RNNOISE_MODEL_PATH)})`);
+    } else {
+      console.log(`\n▸ Шумодав: пропущен — нет модели ${RNNOISE_MODEL_PATH}`);
+    }
+  }
+
   console.log('\n▸ Рендер');
   const started = Date.now();
   let lastLogged = -1;
@@ -150,6 +165,7 @@ async function main(): Promise<void> {
     segments: plan.segments,
     expectedDurationSec: plan.keptDurationSec,
     subtitlePath,
+    denoiseModelPath,
     onProgress: (fraction) => {
       const percent = Math.floor(fraction * 10) * 10;
       if (percent > lastLogged) { lastLogged = percent; process.stdout.write(`  ${percent}%\r`); }

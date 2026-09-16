@@ -6,6 +6,7 @@ import {
   DEFAULT_CHUNK_OPTIONS,
   DEFAULT_SUBTITLE_STYLE,
   formatAssTime,
+  joinBoundaries,
   remapWordsToOutputTimeline,
 } from '../src/subtitles';
 import type { TranscriptWord } from '../src/smartCut';
@@ -208,5 +209,71 @@ describe('buildSubtitlesForPlan', () => {
     expect(chunks).toHaveLength(2); // the 8s gap is gone, but a break remains
     // Second caption is at 2.5s in the output, not 10.5s in the source.
     expect(ass).toContain('0:00:02.50');
+  });
+});
+
+describe('captions follow the rhythm of the delivery', () => {
+  it('marks a join after each kept segment except the last', () => {
+    // Two cuts kept 2s and 3s of speech: the joins land at 2s and 5s of the
+    // OUTPUT, which is where removed time was spliced out.
+    expect(joinBoundaries([
+      { start: 0, end: 2 },
+      { start: 10, end: 13 },
+      { start: 20, end: 21 },
+    ])).toEqual([2, 5]);
+  });
+
+  it('never puts words from opposite sides of a cut on one line', () => {
+    // After the pause is removed these two words are adjacent in time, so the
+    // ordinary gap check cannot see that the speaker paused between them.
+    const words: TranscriptWord[] = [
+      { word: 'ақша', start: 1.4, end: 1.9 },
+      { word: 'келеді', start: 1.9, end: 2.0 },
+      { word: 'Айтуды', start: 2.0, end: 2.4 },
+      { word: 'қиын', start: 2.4, end: 2.9 },
+    ];
+
+    const together = chunkWords(words, DEFAULT_CHUNK_OPTIONS);
+    const split = chunkWords(words, DEFAULT_CHUNK_OPTIONS, [2.0]);
+
+    expect(together).toHaveLength(1);
+    expect(split).toHaveLength(2);
+    expect(split[0].words.map((w) => w.word)).toEqual(['ақша', 'келеді']);
+    expect(split[1].words.map((w) => w.word)).toEqual(['Айтуды', 'қиын']);
+  });
+
+  it('still breaks on a real pause inside one segment', () => {
+    const words: TranscriptWord[] = [
+      { word: 'бір', start: 0, end: 0.3 },
+      { word: 'екі', start: 1.2, end: 1.5 }, // 0.9s gap > maxGapSec
+    ];
+    expect(chunkWords(words, DEFAULT_CHUNK_OPTIONS, [])).toHaveLength(2);
+  });
+
+  it('keeps mixed-language speech exactly as spoken', () => {
+    // Kazakh with Russian inserts is how people actually talk here; the
+    // caption must reproduce it, not normalise to one language.
+    const words: TranscriptWord[] = [
+      { word: 'ол', start: 0, end: 0.2 },
+      { word: 'энергия', start: 0.2, end: 0.7 },
+      { word: 'көтеру', start: 0.7, end: 1.1 },
+    ];
+    const [chunk] = chunkWords(words, DEFAULT_CHUNK_OPTIONS, []);
+    expect(chunk.words.map((w) => w.word)).toEqual(['ол', 'энергия', 'көтеру']);
+  });
+
+  it('applies joins end to end through buildSubtitlesForPlan', () => {
+    const words: TranscriptWord[] = [
+      { word: 'ақша', start: 0.0, end: 0.5 },
+      { word: 'келеді', start: 0.5, end: 1.0 },
+      { word: 'Айтуды', start: 5.0, end: 5.5 },
+      { word: 'қиын', start: 5.5, end: 6.0 },
+    ];
+    const segments = [{ start: 0, end: 1 }, { start: 5, end: 6 }];
+    const { chunks } = buildSubtitlesForPlan(words, segments);
+
+    // The 4s pause is gone from the output, but the caption break survives it.
+    expect(chunks).toHaveLength(2);
+    expect(chunks[1].words.map((w) => w.word)).toEqual(['Айтуды', 'қиын']);
   });
 });
