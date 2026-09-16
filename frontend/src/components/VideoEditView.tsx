@@ -35,6 +35,27 @@ const TEMPLATES: { value: VideoTemplate; level: string; title: string; descripti
 
 const STATUS_LABEL: Record<string, string> = { processing: 'Рендерится', completed: 'Готово', failed: 'Ошибка' };
 
+// Languages the speech models transcribe only approximately. Measured on real
+// footage: Kazakh comes back as plausible-looking phonetics, and mixed
+// Kazakh-Russian speech fares worst of all. The captions are burned into the
+// pixels and cannot be edited afterwards, so the card has to say this before
+// the video is published — not after a viewer points it out.
+const UNRELIABLE_LANGUAGES: Record<string, string> = {
+  kazakh: 'казахский',
+  kk: 'казахский',
+  kyrgyz: 'киргизский',
+  ky: 'киргизский',
+  uzbek: 'узбекский',
+  uz: 'узбекский',
+  tajik: 'таджикский',
+  tg: 'таджикский',
+};
+
+function unreliableLanguageLabel(language: string | null | undefined): string | null {
+  if (!language) return null;
+  return UNRELIABLE_LANGUAGES[language.trim().toLowerCase()] ?? null;
+}
+
 // Adds the flag that makes the API send Content-Disposition: attachment.
 // The signed URL already carries exp/token query params, so this appends
 // rather than assuming it is the first parameter.
@@ -377,6 +398,17 @@ export default function VideoEditView() {
                   {/* A Level-3 result is a real file, so it plays right here —
                       that is the whole point of the screen. The presets below
                       still hand back a mock link that resolves to nothing. */}
+                  {(() => {
+                    // Only worth saying when captions were actually burned in:
+                    // a job with subtitles off has nothing to mistrust.
+                    const label = j.subtitles === false ? null : unreliableLanguageLabel(j.artifacts?.transcript?.language);
+                    return label ? (
+                      <p className={styles.captionWarning}>
+                        Распознан {label}. Субтитры могут содержать ошибки — проверьте текст перед публикацией.
+                      </p>
+                    ) : null;
+                  })()}
+
                   {j.output_url && j.pipeline === 'smart_cut' && (
                     // poster shows the finished frame, subtitles and all, so a
                     // done job reads as done without pressing play. preload
