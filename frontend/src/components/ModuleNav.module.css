@@ -90,3 +90,72 @@
     display: flex;
   }
 }
+
+/* Signing out is not navigation, so it does not get link styling — muted
+ * until hovered, and separated from the module links. */
+.logout {
+  margin-left: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.logout:hover { color: var(--foreground); }
+
+.mobileLogout {
+  margin-top: 6px;
+  padding: 10px 14px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+
+.confirmRow { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; }
+
+/* The destructive half carries the warning color; the escape hatch stays
+ * quiet, so the eye lands on "cancel" being the safe default. */
+.logoutConfirm {
+  padding: 4px 10px;
+  border: 1px solid var(--status-failed, #c0392b);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--status-failed, #c0392b);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.logoutCancel {
+  padding: 4px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.logoutCancel:hover { color: var(--foreground); }
+
+.mobileLogoutConfirm {
+  margin-top: 6px;
+  padding: 10px 14px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--status-failed, #c0392b);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}

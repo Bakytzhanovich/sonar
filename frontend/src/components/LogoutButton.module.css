@@ -1,0 +1,94 @@
+/* 'inline' sits in a horizontal row (desktop nav, onboarding header);
+ * 'stacked' fills the width of the mobile dropdown column. */
+
+.trigger {
+  margin-left: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.trigger:hover { color: var(--foreground); }
+
+.triggerStacked {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 14px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.sheet {
+  width: 100%;
+  max-width: 340px;
+  padding: 22px 20px 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--background);
+  text-align: center;
+}
+
+.title { margin: 0 0 8px; font-size: 17px; }
+
+.body {
+  margin: 0 0 20px;
+  color: var(--foreground-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* Side by side, cancel first — the safe answer sits where the thumb rests. */
+.actions { display: flex; gap: 10px; }
+
+.cancel,
+.confirm {
+  flex: 1;
+  min-height: 44px; /* a real tap target on a phone */
+  border-radius: 10px;
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.cancel {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground);
+}
+
+.confirm {
+  border: 0;
+  background: var(--status-failed, #c0392b);
+  color: #fff;
+  font-weight: 600;
+}
+
+.cancel:focus-visible,
+.confirm:focus-visible,
+.trigger:focus-visible,
+.triggerStacked:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

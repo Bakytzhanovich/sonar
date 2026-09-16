@@ -201,6 +201,7 @@ export interface VideoEditJob {
   status: VideoJobStatus;
   progress_percent: number;
   output_url: string | null;
+  poster_url: string | null;
   failure_reason: string | null;
   created_at: string;
   completed_at: string | null;
@@ -443,11 +444,12 @@ export const api = {
   createVideoUpload: (config: ApiConfig, contentType: string) =>
     apiRequest(config, 'POST', '/api/video-uploads', { contentType }) as Promise<VideoUploadTicket>,
 
-  createSmartCutJob: (config: ApiConfig, sourceObjectKey: string, subtitles: boolean) =>
+  createSmartCutJob: (config: ApiConfig, sourceObjectKey: string, subtitles: boolean, denoise: boolean) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', {
       template: 'ai_smart_cut',
       sourceObjectKey,
       subtitles,
+      denoise,
     }) as Promise<{ job: VideoEditJob }>,
 
   // Uploads straight to storage with the presigned URL — deliberately NOT

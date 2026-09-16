@@ -6,7 +6,9 @@ import { useRouter } from 'next/navigation';
 import { api, ApiError, type DemoWorkspace, type RunFlowOutcome } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/apiConfig';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { ONBOARDING_PROGRESS_KEY } from '@/lib/useLogout';
 import { useSession } from '@/lib/useSession';
+import LogoutButton from './LogoutButton';
 import ModuleNav from './ModuleNav';
 import controls from './Controls.module.css';
 import styles from './OnboardingView.module.css';
@@ -14,7 +16,7 @@ import styles from './OnboardingView.module.css';
 const DEFAULT_KEYWORD = 'план';
 const DEFAULT_REPLY = 'Отправлю чек-лист. Подскажите, вы запускаете курс или консультацию?';
 const PREVIEW_USER_ID = 'sonar-onboarding-preview';
-const PROGRESS_STORAGE_KEY = 'sonar-onboarding-progress';
+const PROGRESS_STORAGE_KEY = ONBOARDING_PROGRESS_KEY;
 
 type BusyAction = 'recover' | 'create' | 'preview' | 'interaction' | null;
 
@@ -288,14 +290,7 @@ export default function OnboardingView() {
     }
   }
 
-  function logout() {
-    if (!session) return;
-    const token = session.sessionToken;
-    setSession(null);
-    setDevConfig((current) => (current.apiKey === token ? { ...current, apiKey: '', botId: '', externalAccountId: '' } : current));
-    writeStoredProgress(null);
-    router.replace('/login');
-  }
+
 
   if (!session || (!recoveryComplete && busy === 'recover')) {
     return (
@@ -319,9 +314,7 @@ export default function OnboardingView() {
           <ModuleNav current="/onboarding" />
           <div className={styles.account}>
             <span>{session.userEmail}</span>
-            <button type="button" className={styles.logout} onClick={logout}>
-              Выйти
-            </button>
+            <LogoutButton />
           </div>
         </div>
       </header>

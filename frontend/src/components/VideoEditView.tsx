@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { useSession } from '@/lib/useSession';
 import ModuleNav from './ModuleNav';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
@@ -33,6 +34,13 @@ const TEMPLATES: { value: VideoTemplate; level: string; title: string; descripti
 ];
 
 const STATUS_LABEL: Record<string, string> = { processing: 'Рендерится', completed: 'Готово', failed: 'Ошибка' };
+
+// Adds the flag that makes the API send Content-Disposition: attachment.
+// The signed URL already carries exp/token query params, so this appends
+// rather than assuming it is the first parameter.
+function downloadUrl(url: string): string {
+  return url.includes('?') ? `${url}&download=1` : `${url}?download=1`;
+}
 
 // The Level-3 pipeline reports which stage it is in. Showing "Расшифровка"
 // instead of a bare 38% matters because the stages take wildly different
@@ -72,14 +80,26 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export default function VideoEditView() {
-  const [devConfig] = useDevConfig();
-  const { baseUrl, apiKey } = devConfig;
+  const [devConfig, setDevConfig] = useDevConfig();
+  const [session] = useSession();
+  const { baseUrl } = devConfig;
+
+  // A signed-in user carries a session token that the API accepts on these
+  // routes just like a dev apiKey. Without this fallback, logging in and
+  // walking straight to this screen left apiKey empty — devConfig is only
+  // populated on the last step of onboarding — so every action 401'd and the
+  // submit button looked broken. Read-only on purpose: useSession and
+  // useDevConfig keep separate storage and must not clobber each other.
+  const apiKey = devConfig.apiKey || session?.sessionToken || '';
   const config = { baseUrl, apiKey };
 
   const [sourceVideoUrl, setSourceVideoUrl] = useState('https://example.com/my-video.mp4');
   const [template, setTemplate] = useState<VideoTemplate>('ai_smart_cut');
   const [file, setFile] = useState<File | null>(null);
   const [subtitles, setSubtitles] = useState(true);
+  // Off by default: removing ambience is right for a street recording and
+  // wrong for anything where the background is part of the shot.
+  const [denoise, setDenoise] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [jobs, setJobs] = useState<VideoEditJob[]>([]);
   const [status, setStatus] = useState('');
@@ -134,7 +154,7 @@ export default function VideoEditView() {
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);
 
-      await api.createSmartCutJob(config, ticket.objectKey, subtitles);
+      await api.createSmartCutJob(config, ticket.objectKey, subtitles, denoise);
       await load();
       setFile(null);
       setStatus(
@@ -149,6 +169,23 @@ export default function VideoEditView() {
     }
   }
 
+  // Same workspace bootstrap as the bot editor's "Быстрый старт". It lives
+  // here too because needing a key is what blocks this screen, and sending
+  // someone to another module to find a button folded inside a collapsed
+  // "Режим разработчика" panel is how a working screen reads as broken.
+  async function quickSetup() {
+    try {
+      setStatus('Создаю тестовый workspace…');
+      const tenant = await api.createTenant(config, 'Demo Blogger', `demo-${Date.now()}@example.com`);
+      const accountId = `ig-${Date.now()}`;
+      const bot = await api.createBot({ baseUrl, apiKey: tenant.apiKey }, 'Demo Bot', accountId);
+      setDevConfig((c) => ({ ...c, apiKey: tenant.apiKey, botId: bot.bot.id, externalAccountId: accountId }));
+      setStatus('Готово — теперь можно монтировать.');
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function tickNow() {
     try {
       const res = await api.processVideoTick(config);
@@ -160,6 +197,18 @@ export default function VideoEditView() {
   }
 
   const processingCount = jobs.filter((j) => j.status === 'processing').length;
+
+  // Why the submit button is unavailable, in the order the user hits them:
+  // no key means every request 401s, so say that before asking for a file.
+  const blockedReason = !apiKey
+    ? 'Нет доступа — войди в аккаунт или создай тестовый workspace:'
+    : template === 'ai_smart_cut'
+      ? file
+        ? null
+        : 'Выбери файл видео — ИИ-монтажу нужен сам файл, а не ссылка.'
+      : sourceVideoUrl.trim()
+        ? null
+        : 'Укажи ссылку на исходник.';
 
   return (
     <div className={styles.page}>
@@ -212,6 +261,11 @@ export default function VideoEditView() {
                   <input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} /> Вжечь динамические субтитры
                 </span>
               </label>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>
+                  <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} /> Убрать фоновый шум (ИИ)
+                </span>
+              </label>
             </>
           ) : (
             <label className={styles.field}>
@@ -248,10 +302,27 @@ export default function VideoEditView() {
           <button
             className={`${controls.buttonPrimary} ${styles.submitButton}`}
             onClick={submit}
-            disabled={uploading || (template === 'ai_smart_cut' ? !file : !sourceVideoUrl.trim())}
+            disabled={uploading || blockedReason !== null}
           >
             {uploading ? 'Загружаю…' : template === 'ai_smart_cut' ? 'Смонтировать' : 'Запустить рендер'}
           </button>
+          {/* A disabled button that does not say what it is waiting for reads
+            * as broken rather than as blocked. */}
+          {blockedReason && (
+            <p className={styles.blockedHint}>
+              {blockedReason}
+              {!apiKey && (
+                <button className={styles.inlineAction} onClick={quickSetup}>
+                  Создать сейчас
+                </button>
+              )}
+            </p>
+          )}
+
+          {/* Feedback belongs next to the control that caused it. This used to
+            * render at the bottom of the queue section, a screen below the
+            * button, so a failed submit looked like a dead button. */}
+          <StatusMessage>{status}</StatusMessage>
         </div>
 
         <section className={styles.queue}>
@@ -307,12 +378,27 @@ export default function VideoEditView() {
                       that is the whole point of the screen. The presets below
                       still hand back a mock link that resolves to nothing. */}
                   {j.output_url && j.pipeline === 'smart_cut' && (
-                    <video className={styles.jobPlayer} src={j.output_url} controls preload="metadata" />
+                    // poster shows the finished frame, subtitles and all, so a
+                    // done job reads as done without pressing play. preload
+                    // drops to "none" when there is one: the poster already
+                    // answers "did this work?", and the video itself is tens
+                    // of megabytes that nobody asked to download yet.
+                    <video
+                      className={styles.jobPlayer}
+                      src={j.output_url}
+                      poster={j.poster_url ?? undefined}
+                      controls
+                      preload={j.poster_url ? 'none' : 'metadata'}
+                    />
                   )}
 
                   {j.output_url && (
                     <div className={styles.jobOutputRow}>
-                      <a className={styles.jobOutputButton} href={j.output_url} download target="_blank" rel="noreferrer">
+                      {/* No target="_blank": with the server sending
+                          Content-Disposition the browser saves the file and
+                          stays put. Opening a tab instead stranded people on
+                          a bare video with no history to go back through. */}
+                      <a className={styles.jobOutputButton} href={downloadUrl(j.output_url)} rel="noreferrer">
                         Скачать видео
                       </a>
                       {/* output_url is a mock link (render.mock doesn't resolve to a
@@ -338,8 +424,6 @@ export default function VideoEditView() {
               </div>
             </div>
           )}
-
-          <StatusMessage>{status}</StatusMessage>
         </section>
       </main>
     </div>

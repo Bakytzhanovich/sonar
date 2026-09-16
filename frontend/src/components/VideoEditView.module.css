@@ -140,9 +140,21 @@
 .jobPlayer {
   display: block;
   width: 100%;
-  max-width: 260px;
-  max-height: 460px;
+  max-width: 200px;
+  /* A 9:16 render at full width made the card taller than the screen on a
+   * phone, pushing the download button out of reach. The poster only has to
+   * say "this is your video", not be the viewing experience. */
+  max-height: 320px;
   margin-top: 12px;
   border-radius: 10px;
+  /* Letterbox rather than crop: the poster is the first frame of the result,
+   * and cropping it would hide the burned-in captions at the bottom. */
+  object-fit: contain;
   background: #000;
+}
+
+.blockedHint { margin: 8px 0 0; color: var(--foreground-muted); font-size: 12px; }
+.inlineAction {
+  margin-left: 6px; padding: 0; border: 0; background: none;
+  color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer;
 }
