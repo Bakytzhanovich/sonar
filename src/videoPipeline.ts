@@ -3,10 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
-import { denoiseModelAvailable, extractAudio, extractPosterFrame, ffmpegAvailable, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
+import { denoiseModelAvailable, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
 import { DEFAULT_SMART_CUT_OPTIONS, planSmartCut, type SmartCutOptions } from './smartCut';
 import { buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, type ChunkOptions, type SubtitleStyle } from './subtitles';
 import { transcriberFromEnv } from './transcribeGoogle';
+import { needsTextCorrection } from './transcriptAlign';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
 import { downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
 import { localMediaConfigFromEnv, localStorageIo } from './localMedia';
@@ -98,6 +99,7 @@ export interface PipelineDeps {
     render: typeof renderSegments;
     poster: typeof extractPosterFrame;
     denoiseAvailable: typeof denoiseModelAvailable;
+    measureNoise: typeof measureNoise;
   };
 }
 
@@ -121,7 +123,7 @@ export function defaultPipelineDeps(): PipelineDeps {
     smartCutOptions: DEFAULT_SMART_CUT_OPTIONS,
     subtitleStyle: DEFAULT_SUBTITLE_STYLE,
     chunkOptions: DEFAULT_CHUNK_OPTIONS,
-    ffmpeg: { available: ffmpegAvailable, probe, extractAudio, render: renderSegments, poster: extractPosterFrame, denoiseAvailable: denoiseModelAvailable },
+    ffmpeg: { available: ffmpegAvailable, probe, extractAudio, render: renderSegments, poster: extractPosterFrame, denoiseAvailable: denoiseModelAvailable, measureNoise },
   };
 }
 
@@ -313,6 +315,19 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     } catch (err) {
       throw new PipelineError('source_unreadable', err instanceof Error ? err.message : String(err));
     }
+    // Measured here because the audio track already exists for transcription
+    // — no extra decode — and because the answer has to be known before the
+    // render stage decides whether to clean the sound.
+    if (!job.artifacts.noise) {
+      const measurement = await deps.ffmpeg.measureNoise(audioPath);
+      if (measurement) {
+        await saveArtifact(db, job, 'noise', {
+          headroomDb: measurement.headroomDb,
+          denoised: shouldDenoise(job.denoise_mode, measurement.headroomDb),
+        });
+      }
+    }
+
     await reportProgress(db, job.id, 'transcribe', 0.3);
     try {
       const result = await deps.transcribe(audioPath);
@@ -369,7 +384,7 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // are on the output timeline, so what the user edits is literally the
     // lines they will see — not a raw transcript they would have to imagine
     // against the finished video.
-    if (job.review_captions && !approved && chunks.length > 0) {
+    if (shouldReview(job.review_mode, transcript.language) && !approved && chunks.length > 0) {
       await saveArtifact(db, job, 'captions', {
         approved: false,
         lines: chunks.map((chunk) => ({
@@ -394,7 +409,10 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       subtitlePath,
       // A missing model file must not fail the render: the job still produces
       // a correct cut, just without the noise removal it asked for.
-      denoiseModelPath: job.denoise && (await deps.ffmpeg.denoiseAvailable()) ? RNNOISE_MODEL_PATH : undefined,
+      denoiseModelPath:
+        shouldDenoise(job.denoise_mode, job.artifacts.noise?.headroomDb) && (await deps.ffmpeg.denoiseAvailable())
+          ? RNNOISE_MODEL_PATH
+          : undefined,
       // Fire-and-forget: a progress write must never be able to fail the
       // render it is only describing.
       onProgress: (fraction) => void reportProgress(db, job.id, 'render', fraction).catch(() => {}),
@@ -440,6 +458,24 @@ export function posterKeyForOutput(outputKey: string): string {
 export function posterTimeFor(durationSec: number): number {
   if (!Number.isFinite(durationSec) || durationSec <= 0) return 0;
   return Math.min(durationSec / 10, 2);
+}
+
+// 'on'/'off' are the user overriding the decision; 'auto' defers to the
+// measurement. An unmeasurable clip falls back to leaving the audio alone —
+// cleaning audio that may not need it is the more destructive mistake.
+// Pausing costs the user a round trip, so 'auto' spends it only where the
+// transcript cannot be trusted. needsTextCorrection already encodes which
+// languages those are — the same list that triggers the multi-pass recovery.
+export function shouldReview(mode: string, language: string | null | undefined): boolean {
+  if (mode === 'always') return true;
+  if (mode === 'never') return false;
+  return needsTextCorrection(language ?? null);
+}
+
+export function shouldDenoise(mode: string, headroomDb: number | undefined): boolean {
+  if (mode === 'on') return true;
+  if (mode === 'off') return false;
+  return headroomDb !== undefined && headroomDb < NOISY_HEADROOM_DB;
 }
 
 function requireStorage(deps: PipelineDeps): StorageIo {

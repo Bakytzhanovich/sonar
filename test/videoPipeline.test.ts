@@ -5,7 +5,7 @@ import type { Express } from 'express';
 import { exec, queryOne, type Db } from '../src/db';
 import { createApp } from '../src/api';
 import { advanceRenderJobs } from '../src/videoRender';
-import { claimSmartCutJobs, posterKeyForOutput, posterTimeFor, processSmartCutJob, runSmartCutJobs, type PipelineDeps, type StorageIo } from '../src/videoPipeline';
+import { claimSmartCutJobs, posterKeyForOutput, posterTimeFor, processSmartCutJob, runSmartCutJobs, shouldDenoise, shouldReview, type PipelineDeps, type StorageIo } from '../src/videoPipeline';
 import { DEFAULT_SMART_CUT_OPTIONS } from '../src/smartCut';
 import type { VideoEditJob } from '../src/types';
 import { createTestDb, dropTestDb } from './dbTestHelper';
@@ -44,6 +44,7 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
       render: async ({ outputPath }) => { await fs.writeFile(outputPath, 'rendered'); },
       poster: async (_input, output) => { await fs.writeFile(output, 'poster-bytes'); },
       denoiseAvailable: async () => true,
+      measureNoise: async () => ({ rmsDb: -20, noiseFloorDb: -80, headroomDb: 60 }),
     },
     ...overrides,
   };
@@ -511,8 +512,8 @@ describe('caption review before rendering', () => {
     await exec(db, `INSERT INTO tenants (id, name, email) VALUES (?, 'T', ?) ON CONFLICT DO NOTHING`, TENANT, `${TENANT}@example.com`);
     await exec(
       db,
-      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, review_captions)
-       VALUES (?, ?, ?, 'ai_smart_cut', 'smart_cut', ?, true)`,
+      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, review_mode)
+       VALUES (?, ?, ?, 'ai_smart_cut', 'smart_cut', ?, 'always')`,
       id, TENANT, SOURCE_KEY, SOURCE_KEY
     );
   }
@@ -576,5 +577,36 @@ describe('caption review before rendering', () => {
     await seedJob(db, 'plain-1');
     await runSmartCutJobs(db, new Date(), deps());
     expect((await readJob(db, 'plain-1'))!.status).toBe('completed');
+  });
+});
+
+describe('deciding without asking the user', () => {
+  it('cleans a noisy recording and leaves a clean one alone', () => {
+    // Measured on real footage: outdoor-with-wind ~14dB of headroom, a clean
+    // recording ~60dB.
+    expect(shouldDenoise('auto', 14.3)).toBe(true);
+    expect(shouldDenoise('auto', 61)).toBe(false);
+  });
+
+  it('leaves the audio alone when it could not be measured', () => {
+    // Cleaning audio that may not need it is the more destructive mistake.
+    expect(shouldDenoise('auto', undefined)).toBe(false);
+  });
+
+  it('honours an explicit choice over the measurement', () => {
+    expect(shouldDenoise('on', 61)).toBe(true);
+    expect(shouldDenoise('off', 14.3)).toBe(false);
+  });
+
+  it('pauses for review only on languages the models get wrong', () => {
+    expect(shouldReview('auto', 'kazakh')).toBe(true);
+    // Russian and English go straight through — pausing costs a round trip.
+    expect(shouldReview('auto', 'russian')).toBe(false);
+    expect(shouldReview('auto', null)).toBe(false);
+  });
+
+  it('honours an explicit review choice too', () => {
+    expect(shouldReview('always', 'russian')).toBe(true);
+    expect(shouldReview('never', 'kazakh')).toBe(false);
   });
 });

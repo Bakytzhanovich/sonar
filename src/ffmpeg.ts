@@ -186,6 +186,44 @@ export async function extractAudio(inputPath: string, outputPath: string): Promi
   ]);
 }
 
+export interface NoiseMeasurement {
+  rmsDb: number;
+  noiseFloorDb: number;
+  // How far the speech sits above the background. This, not the absolute
+  // floor, is what decides whether a listener hears noise: a quietly recorded
+  // clip has a low floor AND low speech, and cleaning it would gain nothing.
+  headroomDb: number;
+}
+
+// Measured on real footage: an outdoor selfie with wind leaves ~14dB of
+// headroom, a clean recording ~60dB. 25 sits well clear of both, so the
+// decision does not hinge on a borderline case.
+export const NOISY_HEADROOM_DB = 25;
+
+// Reads levels with astats. Cheap — it decodes the already-extracted audio
+// track, not the video — so it can run on every job to decide whether
+// denoising is warranted instead of asking the user to guess.
+export async function measureNoise(audioPath: string): Promise<NoiseMeasurement | null> {
+  try {
+    const { stderr } = await run(FFMPEG, [
+      '-hide_banner', '-nostdin',
+      '-i', audioPath,
+      '-af', 'astats=metadata=1:reset=0',
+      '-f', 'null', '-',
+    ]).catch((err) => ({ stderr: err instanceof FfmpegError ? err.stderrTail : '' }));
+
+    const rmsDb = Number(/RMS level dB:\s*(-?[\d.]+)/.exec(stderr)?.[1]);
+    const noiseFloorDb = Number(/Noise floor dB:\s*(-?[\d.]+)/.exec(stderr)?.[1]);
+    if (!Number.isFinite(rmsDb) || !Number.isFinite(noiseFloorDb)) return null;
+
+    return { rmsDb, noiseFloorDb, headroomDb: rmsDb - noiseFloorDb };
+  } catch {
+    // A measurement failure must not fail the job — it only means the
+    // automatic decision falls back to leaving the audio alone.
+    return null;
+  }
+}
+
 // Cuts a slice of audio to FLAC for Google Speech, which caps synchronous
 // recognition at ~60s. FLAC because it is lossless: an MP3 re-encode of an
 // already-compressed source smears exactly the consonant detail a recogniser

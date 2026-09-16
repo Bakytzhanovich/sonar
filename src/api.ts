@@ -1357,24 +1357,27 @@ export function createApp(db: Db): Express {
       const subtitles = req.body?.subtitles === undefined ? true : req.body.subtitles === true;
       // Opt-in, unlike subtitles: stripping ambience is destructive and the
       // caller has to ask for it.
-      const denoise = req.body?.denoise === true;
+      // 'auto' unless the caller insists: the system measures the recording
+      // and decides, which is the whole point of not putting this on the user.
+      const denoiseMode = ['on', 'off'].includes(req.body?.denoiseMode) ? req.body.denoiseMode : 'auto';
       // Opt-in review: the pipeline stops after captions are generated and
       // waits. Worth it on languages the models only approximate, wasted
       // friction on the ones they get right.
-      const reviewCaptions = req.body?.reviewCaptions === true;
+      // Same shape as denoise: measured decision by default, override on request.
+      const reviewMode = ['always', 'never'].includes(req.body?.reviewMode) ? req.body.reviewMode : 'auto';
 
       const id = randomUUID();
       await exec(
         db,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise, review_captions) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
         template,
         sourceObjectKey,
         subtitles,
-        denoise,
-        reviewCaptions
+        denoiseMode,
+        reviewMode
       );
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
     }

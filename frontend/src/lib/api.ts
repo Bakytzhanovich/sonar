@@ -193,6 +193,7 @@ export interface VideoJobArtifacts {
   };
   subtitles?: { chunkCount: number; wordCount: number };
   captions?: { approved: boolean; lines: Array<{ start: number; end: number; text: string }> };
+  noise?: { headroomDb: number; denoised: boolean };
 }
 
 export interface VideoEditJob {
@@ -210,8 +211,8 @@ export interface VideoEditJob {
   stage?: VideoStage | null;
   artifacts?: VideoJobArtifacts;
   subtitles?: boolean;
-  denoise?: boolean;
-  review_captions?: boolean;
+  denoise_mode?: 'auto' | 'on' | 'off';
+  review_mode?: 'auto' | 'always' | 'never';
 }
 
 export interface VideoUploadTicket {
@@ -447,19 +448,12 @@ export const api = {
   createVideoUpload: (config: ApiConfig, contentType: string) =>
     apiRequest(config, 'POST', '/api/video-uploads', { contentType }) as Promise<VideoUploadTicket>,
 
-  createSmartCutJob: (
-    config: ApiConfig,
-    sourceObjectKey: string,
-    subtitles: boolean,
-    denoise: boolean,
-    reviewCaptions: boolean
-  ) =>
+  // No denoise/review flags: the pipeline measures the recording and decides.
+  createSmartCutJob: (config: ApiConfig, sourceObjectKey: string, subtitles: boolean) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', {
       template: 'ai_smart_cut',
       sourceObjectKey,
       subtitles,
-      denoise,
-      reviewCaptions,
     }) as Promise<{ job: VideoEditJob }>,
 
   // Uploads straight to storage with the presigned URL — deliberately NOT

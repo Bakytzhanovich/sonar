@@ -121,11 +121,6 @@ export default function VideoEditView() {
   const [subtitles, setSubtitles] = useState(true);
   // Off by default: removing ambience is right for a street recording and
   // wrong for anything where the background is part of the shot.
-  const [denoise, setDenoise] = useState(false);
-  // On by default: captions are burned in permanently, and the models
-  // mis-hear names, brands and — on Kazakh — most of the sentence. Checking
-  // first costs one click; a wrong word costs a re-render.
-  const [reviewCaptions, setReviewCaptions] = useState(true);
   // Line edits for the job currently under review, keyed by job id.
   const [draft, setDraft] = useState<Record<string, string[]>>({});
   const [uploading, setUploading] = useState(false);
@@ -182,7 +177,7 @@ export default function VideoEditView() {
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);
 
-      await api.createSmartCutJob(config, ticket.objectKey, subtitles, denoise, reviewCaptions);
+      await api.createSmartCutJob(config, ticket.objectKey, subtitles);
       await load();
       setFile(null);
       setStatus(
@@ -269,7 +264,8 @@ export default function VideoEditView() {
             <h1>Преврати исходник в ролик</h1>
             <p className={styles.lead}>
               Уровень 3 работает с настоящим файлом: расшифровка речи, вырезание пауз, вжигание субтитров.
-              Уровни 1–2 пока мок — там источник это просто ссылка.
+              Шум убирается сам, если запись шумная; субтитры выносятся на проверку, если язык распознан
+              ненадёжно. Уровни 1–2 пока мок — там источник это просто ссылка.
             </p>
           </div>
         </div>
@@ -299,16 +295,7 @@ export default function VideoEditView() {
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>
                   <input type="checkbox" checked={subtitles} onChange={(e) => setSubtitles(e.target.checked)} /> Вжечь динамические субтитры
-                </span>
-              </label>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>
-                  <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} /> Убрать фоновый шум (ИИ)
-                </span>
-              </label>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>
-                  <input type="checkbox" checked={reviewCaptions} onChange={(e) => setReviewCaptions(e.target.checked)} /> Проверить субтитры перед монтажом
+
                 </span>
               </label>
             </>
@@ -422,6 +409,17 @@ export default function VideoEditView() {
                   {/* A Level-3 result is a real file, so it plays right here —
                       that is the whole point of the screen. The presets below
                       still hand back a mock link that resolves to nothing. */}
+                  {j.artifacts?.noise && (
+                    // The decision was made for the user, so it has to be
+                    // visible — otherwise "why does this one sound different"
+                    // has no answer anywhere in the product.
+                    <p className={styles.autoNote}>
+                      {j.artifacts.noise.denoised
+                        ? `Запись шумная (запас ${j.artifacts.noise.headroomDb.toFixed(0)} dB) — фоновый шум убран автоматически.`
+                        : `Звук чистый (запас ${j.artifacts.noise.headroomDb.toFixed(0)} dB) — обработка не понадобилась.`}
+                    </p>
+                  )}
+
                   {j.status === 'awaiting_review' && j.artifacts?.captions && (
                     <div className={styles.review}>
                       <p className={styles.reviewLead}>

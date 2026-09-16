@@ -366,12 +366,19 @@ CREATE TABLE video_edit_jobs (
   -- Neural background-noise removal (ffmpeg arnndn / RNNoise). Off by
   -- default: it is the right call for a street recording and the wrong one
   -- for anything with deliberate ambience or music.
-  denoise           BOOLEAN NOT NULL DEFAULT false,
+  -- 'auto' measures the recording and decides; 'on'/'off' are the user
+  -- overriding that. Auto is the default because asking someone to judge
+  -- their own noise floor before they have seen the result is asking the
+  -- wrong person.
+  denoise_mode      TEXT NOT NULL DEFAULT 'auto',
   -- Stop after captions are generated and wait for the user to correct them.
   -- Captions are burned into the pixels, so a wrong word is permanent; on
   -- languages the speech models only approximate, reviewing first is the
   -- difference between a usable feature and a gamble.
-  review_captions   BOOLEAN NOT NULL DEFAULT false,
+  -- 'auto' pauses only when the transcript's language is one the speech
+  -- models get wrong often enough to matter. Russian and English go straight
+  -- through; Kazakh stops for a human.
+  review_mode       TEXT NOT NULL DEFAULT 'auto',
   -- Worker lease. Unlike the preset path, a smart_cut job legitimately sits
   -- in 'processing' for minutes, so a timestamped claim is the only way to
   -- tell "another worker is on it" from "a worker died holding it".

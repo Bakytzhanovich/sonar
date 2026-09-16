@@ -298,6 +298,9 @@ export interface VideoJobArtifacts {
     droppedFillerCount: number;
     degraded: boolean;
   };
+  // Why the audio was or was not cleaned, so the UI can say so instead of
+  // leaving the decision invisible.
+  noise?: { headroomDb: number; denoised: boolean };
   subtitles?: { chunkCount: number; wordCount: number };
   // The caption lines as the viewer will see them — already remapped onto the
   // output timeline, so what is edited here is exactly what gets burned in.
@@ -329,8 +332,8 @@ export interface VideoEditJob {
   attempt_count: number;
   claimed_at: string | null;
   subtitles: boolean;
-  denoise: boolean;
-  review_captions: boolean;
+  denoise_mode: 'auto' | 'on' | 'off';
+  review_mode: 'auto' | 'always' | 'never';
 }
 
 // ---- Push notifications (shared by Modules 5 and 8) ----------------------
