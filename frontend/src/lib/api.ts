@@ -287,7 +287,7 @@ async function apiRequest(config: ApiConfig, method: string, path: string, body?
   });
 
   const json = await res.json().catch(() => ({}));
-  if (res.status === 401 && !config.apiKey) onSessionRejected();
+  if (res.status === 401 && !config.apiKey && !isAuthAttempt(path)) onSessionRejected();
   if (!res.ok) throw new ApiError(res.status, json);
   return json;
 }
@@ -303,6 +303,15 @@ async function apiRequest(config: ApiConfig, method: string, path: string, body?
 // buttons that 401 on every press. Clearing it is what turns a silent
 // failure into a login screen. Only done when no apiKey was sent: with a key
 // the 401 is about the key, not the session.
+// A 401 from the sign-in routes is an answer, not an expired session: wrong
+// password, or "you are not signed in" — which is the whole point of asking.
+// Treating those as a dead session reloaded the page mid-login, wiping the
+// typed credentials and the error message with them, so a mistyped password
+// looked like the form doing nothing.
+function isAuthAttempt(path: string): boolean {
+  return path.startsWith('/api/auth/');
+}
+
 function onSessionRejected(): void {
   try {
     if (!localStorage.getItem(SESSION_STORAGE_KEY)) return;
