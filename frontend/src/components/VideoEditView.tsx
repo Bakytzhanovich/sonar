@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
-import { useSession } from '@/lib/useSession';
 import ModuleNav from './ModuleNav';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
@@ -118,7 +117,6 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function VideoEditView() {
   const [devConfig, setDevConfig] = useDevConfig();
-  const [session] = useSession();
   const { baseUrl } = devConfig;
 
   // A signed-in user carries a session token that the API accepts on these
@@ -127,7 +125,9 @@ export default function VideoEditView() {
   // populated on the last step of onboarding — so every action 401'd and the
   // submit button looked broken. Read-only on purpose: useSession and
   // useDevConfig keep separate storage and must not clobber each other.
-  const apiKey = devConfig.apiKey || session?.sessionToken || '';
+  // The session itself travels as a cookie; only the dev-panel key is a
+  // value this code holds.
+  const apiKey = devConfig.apiKey;
   const config = { baseUrl, apiKey };
 
   const [sourceVideoUrl, setSourceVideoUrl] = useState('https://example.com/my-video.mp4');

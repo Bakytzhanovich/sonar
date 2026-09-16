@@ -2,7 +2,8 @@
 
 import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { useDevConfig } from './useDevConfig';
+import { api } from './api';
+import { API_BASE_URL } from './apiConfig';
 import { useSession } from './useSession';
 
 // Onboarding writes this alongside the session; signing out has to clear it
@@ -10,30 +11,26 @@ import { useSession } from './useSession';
 // "you already ran the demo" state.
 export const ONBOARDING_PROGRESS_KEY = 'sonar-onboarding-progress';
 
-// Signing out lives here rather than in a component because it has to clear
-// THREE separate stores that were written by different screens — the session,
-// the dev config, and the onboarding progress. Leaving any one behind means
-// the next sign-in starts with someone else's leftovers: most seriously the
-// apiKey, which would let the next user act as the previous tenant.
+// Signing out is a server round trip now, not a local delete: the session
+// lives in an httpOnly cookie that page scripts cannot touch. What remains
+// local is display state (who was signed in, onboarding progress), and it is
+// cleared here so the next person on this browser does not inherit it.
 export function useLogout() {
   const router = useRouter();
-  const [session, setSession] = useSession();
-  const [, setDevConfig] = useDevConfig();
+  const [, setSession] = useSession();
 
-  return useCallback(() => {
-    const token = session?.sessionToken;
+  return useCallback(async () => {
+    // The session cookie is httpOnly, so only the server can remove it —
+    // clearing local state alone would leave the browser still authenticated.
+    // Failure is not fatal: the local state is cleared regardless, and the
+    // cookie expires on its own.
+    await api.logout({ baseUrl: API_BASE_URL }).catch(() => {});
+
     setSession(null);
 
-    setDevConfig((current) =>
-      // Only clear the key if it IS this session's token. The dev panel's
-      // "Быстрый старт" writes a real tenant apiKey here that has nothing to
-      // do with the login; wiping that on logout would silently break a
-      // staff-assisted demo set up minutes earlier.
-      token && current.apiKey === token
-        ? { ...current, apiKey: '', botId: '', externalAccountId: '' }
-        : current
-    );
-
+    // devConfig.apiKey is no longer ever the session token — it only holds a
+    // real tenant key from the dev panel's "Быстрый старт", which has nothing
+    // to do with this login and would break a staff-assisted demo if wiped.
     try {
       localStorage.removeItem(ONBOARDING_PROGRESS_KEY);
     } catch {
@@ -42,5 +39,5 @@ export function useLogout() {
     }
 
     router.replace('/login');
-  }, [router, session, setDevConfig, setSession]);
+  }, [router, setSession]);
 }

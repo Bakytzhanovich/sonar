@@ -5,7 +5,10 @@ import { useCallback, useRef, useState, type SetStateAction } from 'react';
 const STORAGE_KEY = 'sonar-session';
 
 export interface Session {
-  sessionToken: string;
+  // NOT the session token. The token is an httpOnly cookie the browser holds
+  // and this code cannot read — which is the whole point. What stays here is
+  // only what the UI needs to render: who is signed in, and to which
+  // workspace. None of it grants access to anything on its own.
   userId: string;
   userEmail: string;
   tenantId: string;

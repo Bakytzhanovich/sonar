@@ -140,7 +140,6 @@ export default function OnboardingView() {
       setDevConfig((current) => ({
         ...current,
         baseUrl: API_BASE_URL,
-        apiKey: session.sessionToken,
         botId: nextWorkspace.bot.id,
         externalAccountId: nextWorkspace.bot.external_account_id ?? '',
       }));
@@ -150,14 +149,10 @@ export default function OnboardingView() {
 
   const clearInvalidSession = useCallback(() => {
     if (!session) return;
-    const expiredToken = session.sessionToken;
     setSession(null);
-    setDevConfig((current) =>
-      current.apiKey === expiredToken ? { ...current, apiKey: '', botId: '', externalAccountId: '' } : current
-    );
     writeStoredProgress(null);
     router.replace('/login');
-  }, [router, session, setDevConfig, setSession]);
+  }, [router, session, setSession]);
 
   const recoverWorkspace = useCallback(async () => {
     if (!session) {
@@ -166,7 +161,7 @@ export default function OnboardingView() {
     }
 
     try {
-      const config = { baseUrl: API_BASE_URL, apiKey: session.sessionToken };
+      const config = { baseUrl: API_BASE_URL };
       await api.me(config);
       const { bots } = await api.listBots(config);
       const demoAccountId = `demo:${session.tenantId}`;
@@ -220,7 +215,7 @@ export default function OnboardingView() {
     setInteractionOutcome(null);
     try {
       const created = await api.createDemoWorkspace(
-        { baseUrl: API_BASE_URL, apiKey: session.sessionToken },
+        { baseUrl: API_BASE_URL },
         cleanKeyword,
         cleanReply
       );
@@ -240,7 +235,7 @@ export default function OnboardingView() {
     setInteractionOutcome(null);
     try {
       const result = await api.testRun(
-        { baseUrl: API_BASE_URL, apiKey: session.sessionToken },
+        { baseUrl: API_BASE_URL },
         workspace.bot.id,
         { externalUserId: PREVIEW_USER_ID, messageText: workspace.trigger.keyword }
       );
@@ -265,7 +260,7 @@ export default function OnboardingView() {
     setInteractionOutcome(null);
     try {
       const result = await api.createDemoInteraction(
-        { baseUrl: API_BASE_URL, apiKey: session.sessionToken },
+        { baseUrl: API_BASE_URL },
         workspace.bot.id,
         workspace.trigger.keyword
       );

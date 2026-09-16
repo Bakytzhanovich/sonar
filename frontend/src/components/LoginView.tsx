@@ -28,7 +28,7 @@ export default function LoginView() {
     let cancelled = false;
 
     api
-      .me({ baseUrl: API_BASE_URL, apiKey: session.sessionToken })
+      .me({ baseUrl: API_BASE_URL })
       .then(() => {
         if (!cancelled) router.replace('/onboarding');
       })
@@ -50,7 +50,6 @@ export default function LoginView() {
     try {
       const res = await api.login({ baseUrl: API_BASE_URL }, email, password);
       const nextSession = {
-        sessionToken: res.sessionToken,
         userId: res.user.id,
         userEmail: res.user.email,
         tenantId: res.tenant.id,

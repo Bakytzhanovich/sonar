@@ -1,6 +1,9 @@
-// The real (non-dev-panel) API base — Логика Б's signup/login/billing
-// screens are meant to be able to go to production (per the plan: "может
-// идти в прод без юрлица"), so unlike useDevConfig's hardcoded localhost
-// default, this reads a real env var with the same localhost fallback only
-// for local dev.
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:4001';
+// Same-origin by default: requests go to this page's own host and Next
+// forwards them to the backend (see next.config.ts rewrites). That is what
+// lets the session live in an httpOnly, SameSite=Lax cookie instead of in
+// localStorage, where any dependency on the page could read it.
+//
+// NEXT_PUBLIC_API_BASE_URL still overrides it, for a deployment that has not
+// been put behind the proxy yet — but such a deployment cannot use the
+// cookie, because the cookie is not sent across origins.
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';

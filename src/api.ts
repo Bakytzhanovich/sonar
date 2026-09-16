@@ -8,6 +8,7 @@ import { exec, isUniqueViolation, queryAll, queryOne, type Db } from './db';
 import { createApiKeyForTenant, resolveTenantIdFromApiKey } from './apiKeys';
 import { hashPassword, verifyPassword, signSession, verifySession, deriveKey, DUMMY_PASSWORD_HASH } from './auth';
 import { MOCK_WEBHOOK_SECRET_HEADER, isMockWebhookEnabled, verifyMockWebhookSecret } from './webhookAuth';
+import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessionCookie } from './sessionCookie';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { analyzeReelMock, generateScriptMock } from './reelAnalysis';
@@ -124,11 +125,26 @@ export function createApp(db: Db): Express {
   // or a session JWT for the first-party product), not a cookie, so
   // there's no CSRF surface being widened by the permissive default.
   const corsOrigin = process.env.CORS_ORIGIN || '*';
+  if (corsOrigin === '*' && process.env.NODE_ENV === 'production') {
+    // Not fatal — a deployment behind the frontend proxy never makes a
+    // cross-origin request, so this is survivable. But the Origin check below
+    // cannot work without a known origin, and a wildcard in production is
+    // usually someone forgetting to fill the field in, so it says so loudly
+    // rather than degrading in silence.
+    console.warn('[api] CORS_ORIGIN is unset in production — origin checks are disabled and any site may call this API');
+  }
   app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', corsOrigin);
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.header('Access-Control-Allow-Methods', 'GET, PUT, POST, PATCH, DELETE, OPTIONS');
+    // Only meaningful with a pinned origin: the browser refuses to send
+    // credentials to a wildcard, which is the correct behaviour and the
+    // reason CORS_ORIGIN must be set in production.
+    if (corsOrigin !== '*') res.header('Access-Control-Allow-Credentials', 'true');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
+
+    // Server-side CSRF guard behind SameSite=Lax — see sessionCookie.ts.
+    if (!isAllowedOrigin(req, corsOrigin)) return res.status(403).json({ error: 'origin_not_allowed' });
     next();
   });
 
@@ -250,6 +266,10 @@ export function createApp(db: Db): Express {
     }
 
     const sessionToken = signSession({ userId, tenantId });
+    // The cookie is the credential the browser will actually use. The token
+    // stays in the body for non-browser clients (the CLI demo, tests, any
+    // integration), which cannot receive a cookie jar.
+    setSessionCookie(res, sessionToken);
     res.status(201).json({ user: { id: userId, email }, tenant: { id: tenantId, name: email }, sessionToken });
   }));
 
@@ -277,7 +297,15 @@ export function createApp(db: Db): Express {
 
     const tenant = await queryOne<{ id: string; name: string }>(db, `SELECT id, name FROM tenants WHERE id = ?`, user.tenant_id);
     const sessionToken = signSession({ userId: user.id, tenantId: user.tenant_id });
+    setSessionCookie(res, sessionToken);
     res.json({ user: { id: user.id, email: user.email }, tenant, sessionToken });
+  }));
+
+  // Signing out has to happen server-side now: an httpOnly cookie is by
+  // design not something the page can delete itself.
+  app.post('/api/auth/logout', asyncHandler(async (_req, res) => {
+    clearSessionCookie(res);
+    res.json({ ok: true });
   }));
 
   app.get('/api/auth/me', requireSession(db), asyncHandler(async (req, res) => {
@@ -1702,11 +1730,10 @@ function asyncHandler(handler: (req: Request, res: Response) => Promise<unknown>
 // error codes because existing API clients may branch on those values.
 function requireProductCredential(db: Db) {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const header = req.header('authorization') ?? '';
-    if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'missing_api_key' });
+    const credential = sessionTokenFromRequest(req);
+    if (!credential) return res.status(401).json({ error: 'missing_api_key' });
 
     try {
-      const credential = header.slice('Bearer '.length);
 
       // API key first preserves the exact old path (including support for a
       // token whose textual shape happens to resemble a JWT).
@@ -1745,10 +1772,10 @@ function requireProductCredential(db: Db) {
 // above intentionally preserve the older API-key errors for compatibility.
 function requireSession(_db: Db) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const header = req.header('authorization') ?? '';
-    if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'missing_session' });
+    const token = sessionTokenFromRequest(req);
+    if (!token) return res.status(401).json({ error: 'missing_session' });
 
-    const result = verifySession(header.slice('Bearer '.length));
+    const result = verifySession(token);
     if (!result.ok) return res.status(401).json({ error: result.reason === 'expired' ? 'session_expired' : 'invalid_session' });
 
     res.locals.session = result.payload;

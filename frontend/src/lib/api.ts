@@ -266,12 +266,20 @@ export class ApiError extends Error {
 
 async function apiRequest(config: ApiConfig, method: string, path: string, body?: unknown) {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
+  // Only the dev-panel apiKey still travels in a header. The user's session
+  // is an httpOnly cookie the page cannot read — it rides along because of
+  // credentials below, and that is the point: script cannot steal what
+  // script cannot see.
   if (config.apiKey) headers.authorization = `Bearer ${config.apiKey}`;
 
   const res = await fetch(`${config.baseUrl}${path}`, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    // same-origin, not 'include': the proxy makes the API same-origin, and
+    // 'include' would also send the cookie to any other host this ever
+    // pointed at.
+    credentials: 'same-origin',
   });
 
   const json = await res.json().catch(() => ({}));
@@ -471,6 +479,8 @@ export const api = {
   listVideoJobs: (config: ApiConfig) => apiRequest(config, 'GET', '/api/video-edit-jobs') as Promise<{ jobs: VideoEditJob[] }>,
 
   getVideoJob: (config: ApiConfig, id: string) => apiRequest(config, 'GET', `/api/video-edit-jobs/${id}`) as Promise<{ job: VideoEditJob }>,
+
+  logout: (config: ApiConfig) => apiRequest(config, 'POST', '/api/auth/logout'),
 
   approveCaptions: (config: ApiConfig, jobId: string, lines: Array<{ text: string }>) =>
     apiRequest(config, 'PUT', `/api/video-edit-jobs/${jobId}/captions`, { lines }),
