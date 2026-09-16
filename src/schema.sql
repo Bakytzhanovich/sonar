@@ -367,6 +367,11 @@ CREATE TABLE video_edit_jobs (
   -- default: it is the right call for a street recording and the wrong one
   -- for anything with deliberate ambience or music.
   denoise           BOOLEAN NOT NULL DEFAULT false,
+  -- Stop after captions are generated and wait for the user to correct them.
+  -- Captions are burned into the pixels, so a wrong word is permanent; on
+  -- languages the speech models only approximate, reviewing first is the
+  -- difference between a usable feature and a gamble.
+  review_captions   BOOLEAN NOT NULL DEFAULT false,
   -- Worker lease. Unlike the preset path, a smart_cut job legitimately sits
   -- in 'processing' for minutes, so a timestamped claim is the only way to
   -- tell "another worker is on it" from "a worker died holding it".

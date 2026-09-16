@@ -169,3 +169,13 @@
   font-size: 12px;
   line-height: 1.45;
 }
+
+/* Caption review. Lines are edited in place, one input each, with the
+ * timestamp as the anchor — a single textarea would hide where each line
+ * lands in the video. */
+.review { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.reviewLead { margin: 0 0 10px; color: var(--foreground-muted); font-size: 12px; line-height: 1.45; }
+.reviewLine { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.reviewTime { flex: 0 0 auto; min-width: 34px; color: var(--foreground-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.reviewInput { flex: 1; padding: 6px 8px; font-size: 13px; }
+.reviewSubmit { margin-top: 8px; padding: 8px 16px; font-size: 13px; }

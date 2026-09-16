@@ -262,7 +262,9 @@ export interface ScheduledPost {
 // are the Level-1/2 presets that go to Shotstack/Creatomate. They share one
 // table and one status contract so the frontend has a single list to render.
 export type VideoTemplate = 'auto_crop_916' | 'template_with_transitions' | 'ai_smart_cut';
-export type VideoJobStatus = 'processing' | 'completed' | 'failed';
+// 'awaiting_review' is a real resting state, not a transient one: the job
+// stays there until a person approves the captions.
+export type VideoJobStatus = 'processing' | 'awaiting_review' | 'completed' | 'failed';
 export type VideoPipeline = 'preset' | 'smart_cut';
 export type VideoStage = 'probe' | 'transcribe' | 'plan_cuts' | 'subtitles' | 'render' | 'upload';
 
@@ -297,6 +299,14 @@ export interface VideoJobArtifacts {
     degraded: boolean;
   };
   subtitles?: { chunkCount: number; wordCount: number };
+  // The caption lines as the viewer will see them — already remapped onto the
+  // output timeline, so what is edited here is exactly what gets burned in.
+  // Present only for jobs that asked for a review; `approved` flips when the
+  // user confirms, which is what lets the worker move past the pause.
+  captions?: {
+    approved: boolean;
+    lines: Array<{ start: number; end: number; text: string }>;
+  };
 }
 
 export interface VideoEditJob {
@@ -320,6 +330,7 @@ export interface VideoEditJob {
   claimed_at: string | null;
   subtitles: boolean;
   denoise: boolean;
+  review_captions: boolean;
 }
 
 // ---- Push notifications (shared by Modules 5 and 8) ----------------------

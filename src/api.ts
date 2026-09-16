@@ -1358,18 +1358,23 @@ export function createApp(db: Db): Express {
       // Opt-in, unlike subtitles: stripping ambience is destructive and the
       // caller has to ask for it.
       const denoise = req.body?.denoise === true;
+      // Opt-in review: the pipeline stops after captions are generated and
+      // waits. Worth it on languages the models only approximate, wasted
+      // friction on the ones they get right.
+      const reviewCaptions = req.body?.reviewCaptions === true;
 
       const id = randomUUID();
       await exec(
         db,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise, review_captions) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
         template,
         sourceObjectKey,
         subtitles,
-        denoise
+        denoise,
+        reviewCaptions
       );
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
     }
@@ -1401,6 +1406,55 @@ export function createApp(db: Db): Express {
   // an event, so this lets a demo see progress advance without waiting
   // for the timer in server.ts.
   // Tenant-scoped for the same reason as process-due above.
+  // Returns the caption lines a paused job is waiting on, and accepts the
+  // corrected ones. PUT rather than PATCH: the client sends the whole list
+  // back, because lines can be merged or emptied, not just retyped.
+  app.put('/api/video-edit-jobs/:id/captions', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const job = await queryOne<VideoEditJob>(
+      db,
+      `SELECT * FROM video_edit_jobs WHERE id = ? AND tenant_id = ?`,
+      req.params.id,
+      tenantId
+    );
+    if (!job) return res.status(404).json({ error: 'not_found' });
+    if (job.status !== 'awaiting_review') return res.status(409).json({ error: 'job_not_awaiting_review' });
+
+    const existing = job.artifacts?.captions?.lines ?? [];
+    const incoming = Array.isArray(req.body?.lines) ? req.body.lines : null;
+    if (!incoming) return res.status(400).json({ error: 'lines_required' });
+    // Timings are the pipeline's, never the client's: they came from the cut
+    // plan, and letting a caller set them would desynchronise the captions
+    // from the video it is about to render.
+    if (incoming.length !== existing.length) return res.status(400).json({ error: 'lines_length_mismatch' });
+
+    const lines = existing.map((line, i) => ({
+      start: line.start,
+      end: line.end,
+      text: typeof incoming[i]?.text === 'string' ? incoming[i].text.trim().slice(0, 300) : line.text,
+    }));
+
+    // Writing the approval and releasing the job in one statement: a crash
+    // between them would leave a job that looks reviewed but never resumes.
+    await exec(
+      db,
+      `UPDATE video_edit_jobs
+       SET artifacts = jsonb_set(artifacts, '{captions}', ?::jsonb, true),
+           status = 'processing',
+           claimed_at = NULL,
+           -- Waiting for a person is not a failed attempt. Without this reset
+           -- the pause would spend one of the job's three retries, and a
+           -- reviewed job would have fewer left for real failures.
+           attempt_count = 0
+       WHERE id = ? AND tenant_id = ? AND status = 'awaiting_review'`,
+      JSON.stringify({ approved: true, lines }),
+      req.params.id,
+      tenantId
+    );
+
+    res.json({ job: await getVideoJobForTenant(db, req.params.id, tenantId) });
+  }));
+
   app.post('/api/video-edit-jobs/process-tick', asyncHandler(async (_req, res) => {
     res.json(await advanceRenderJobs(db, new Date(), res.locals.tenantId as string));
   }));

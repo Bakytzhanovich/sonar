@@ -94,6 +94,7 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitles BOOLEAN NOT NULL DEFAULT true`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS poster_url TEXT`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS denoise BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS review_captions BOOLEAN NOT NULL DEFAULT false`,
   `CREATE INDEX IF NOT EXISTS idx_video_edit_jobs_pipeline ON video_edit_jobs(pipeline, status, claimed_at)`,
 ];
 
@@ -162,6 +163,26 @@ function toPositional(sql: string): string {
         }
         end += 1;
       }
+      out += sql.slice(pos, end);
+      pos = end;
+      continue;
+    }
+    // Comments are copied through verbatim. Without this an apostrophe in an
+    // ordinary English comment ("the job's retries") reads as the start of a
+    // string literal, the scanner runs to the next quote somewhere further
+    // down the query, and every '?' it swallows on the way silently fails to
+    // become a placeholder — the statement then reaches Postgres with the
+    // wrong parameter count and fails as an opaque internal error.
+    if (ch === '-' && sql[pos + 1] === '-') {
+      const newline = sql.indexOf('\n', pos);
+      const end = newline === -1 ? sql.length : newline;
+      out += sql.slice(pos, end);
+      pos = end;
+      continue;
+    }
+    if (ch === '/' && sql[pos + 1] === '*') {
+      const close = sql.indexOf('*/', pos + 2);
+      const end = close === -1 ? sql.length : close + 2;
       out += sql.slice(pos, end);
       pos = end;
       continue;

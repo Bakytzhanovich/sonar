@@ -501,3 +501,80 @@ describe('poster helpers', () => {
     expect(posterTimeFor(Number.NaN)).toBe(0);
   });
 });
+
+describe('caption review before rendering', () => {
+  let db: Db;
+  beforeEach(async () => { db = await createTestDb(); });
+  afterEach(async () => { await dropTestDb(db); });
+
+  async function seedReviewJob(id = 'review-1') {
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES (?, 'T', ?) ON CONFLICT DO NOTHING`, TENANT, `${TENANT}@example.com`);
+    await exec(
+      db,
+      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, review_captions)
+       VALUES (?, ?, ?, 'ai_smart_cut', 'smart_cut', ?, true)`,
+      id, TENANT, SOURCE_KEY, SOURCE_KEY
+    );
+  }
+
+  it('stops after captions instead of rendering, and offers the lines to edit', async () => {
+    await seedReviewJob();
+    const render = vi.fn(async ({ outputPath }: { outputPath: string }) => { await fs.writeFile(outputPath, 'rendered'); });
+    await runSmartCutJobs(db, new Date(), deps({ ffmpeg: { ...deps().ffmpeg, render: render as never } }));
+
+    const job = await readJob(db, 'review-1');
+    expect(job!.status).toBe('awaiting_review');
+    // The expensive stage must not have run: the whole point is to correct
+    // the words BEFORE they are burned into pixels.
+    expect(render).not.toHaveBeenCalled();
+    expect(job!.artifacts.captions?.approved).toBe(false);
+    expect(job!.artifacts.captions?.lines.length).toBeGreaterThan(0);
+    // Releasing the lease matters — a job left claimed would never be swept.
+    expect(job!.claimed_at).toBeNull();
+  });
+
+  it('does not let the worker pick a paused job back up', async () => {
+    await seedReviewJob();
+    await runSmartCutJobs(db, new Date(), deps());
+
+    const claimed = await claimSmartCutJobs(db, new Date(), 10);
+    expect(claimed.map((j) => j.id)).not.toContain('review-1');
+  });
+
+  it('renders the corrected words once the job is approved', async () => {
+    await seedReviewJob();
+    await runSmartCutJobs(db, new Date(), deps());
+
+    const paused = await readJob(db, 'review-1');
+    const corrected = paused!.artifacts.captions!.lines.map((line) => ({ ...line, text: 'исправлено' }));
+    await exec(
+      db,
+      `UPDATE video_edit_jobs SET artifacts = jsonb_set(artifacts, '{captions}', ?::jsonb, true), status = 'processing', claimed_at = NULL, attempt_count = 0 WHERE id = ?`,
+      JSON.stringify({ approved: true, lines: corrected }),
+      'review-1'
+    );
+
+    let burned = '';
+    await runSmartCutJobs(db, new Date(), deps({
+      ffmpeg: {
+        ...deps().ffmpeg,
+        render: (async ({ outputPath, subtitlePath }: { outputPath: string; subtitlePath?: string }) => {
+          if (subtitlePath) burned = await fs.readFile(subtitlePath, 'utf-8');
+          await fs.writeFile(outputPath, 'rendered');
+        }) as never,
+      },
+    }));
+
+    const done = await readJob(db, 'review-1');
+    expect(done!.status).toBe('completed');
+    // The user's word, not the transcript's, is what ended up in the video.
+    expect(burned).toContain('исправлено');
+    expect(burned).not.toContain('привет');
+  });
+
+  it('leaves a job without the flag untouched', async () => {
+    await seedJob(db, 'plain-1');
+    await runSmartCutJobs(db, new Date(), deps());
+    expect((await readJob(db, 'plain-1'))!.status).toBe('completed');
+  });
+});

@@ -5,7 +5,7 @@ import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
 import { denoiseModelAvailable, extractAudio, extractPosterFrame, ffmpegAvailable, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
 import { DEFAULT_SMART_CUT_OPTIONS, planSmartCut, type SmartCutOptions } from './smartCut';
-import { buildSubtitlesForPlan, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, type ChunkOptions, type SubtitleStyle } from './subtitles';
+import { buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, type ChunkOptions, type SubtitleStyle } from './subtitles';
 import { transcriberFromEnv } from './transcribeGoogle';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
 import { downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
@@ -55,6 +55,16 @@ const STAGE_RANGE: Record<VideoStage, [number, number]> = {
   render: [40, 90],
   upload: [90, 100],
 };
+
+// Not an error: the job did exactly what was asked and is now waiting for a
+// person. Thrown rather than returned so it unwinds the stage sequence the
+// same way a failure does, without every caller having to check a flag.
+export class AwaitingReview extends Error {
+  constructor() {
+    super('awaiting_review');
+    this.name = 'AwaitingReview';
+  }
+}
 
 export class PipelineError extends Error {
   constructor(readonly reason: VideoFailureReason, readonly detail?: string) {
@@ -232,7 +242,19 @@ export async function processSmartCutJob(
     );
     await notify(db, job.tenant_id, 'video_completed', `Монтаж готов: ${storage.publicUrl(outputKey)}`, job.id);
   } catch (err) {
-    await handleFailure(db, job, err, now);
+    if (err instanceof AwaitingReview) {
+      // Releasing the lease as well as setting the status: the job is no
+      // longer being worked on, and leaving it claimed would block the retry
+      // sweeper from ever touching it again.
+      await exec(
+        db,
+        `UPDATE video_edit_jobs SET status = 'awaiting_review', stage = NULL, claimed_at = NULL WHERE id = ? AND status = 'processing'`,
+        job.id
+      );
+      await notify(db, job.tenant_id, 'video_completed', 'Проверьте субтитры перед монтажом', job.id);
+    } else {
+      await handleFailure(db, job, err, now);
+    }
   } finally {
     // Sources and renders are tens of megabytes each; a worker that leaks one
     // temp directory per job fills its disk within a day, and a full disk
@@ -324,7 +346,13 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // The words are remapped onto the OUTPUT timeline inside here. Passing
     // Whisper's original timestamps straight through would drift the captions
     // by exactly the amount of silence cut before them — seconds, by the end.
-    const { ass, chunks } = buildSubtitlesForPlan(transcript.words, plan.segments, deps.subtitleStyle, deps.chunkOptions);
+    const approved = job.artifacts.captions?.approved ? job.artifacts.captions.lines : null;
+    // Rebuild from the user's corrected lines when there are any. Their
+    // timings came from this same plan, so the captions stay in step with the
+    // cut — only the words changed.
+    const { ass, chunks } = approved
+      ? buildSubtitlesFromLines(approved, deps.subtitleStyle)
+      : buildSubtitlesForPlan(transcript.words, plan.segments, deps.subtitleStyle, deps.chunkOptions);
     // A transcript that survives the cut as zero chunks (all filler, or a
     // plan that kept only silence) is not a failure — render without them
     // rather than burning an empty subtitle track.
@@ -336,6 +364,22 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       chunkCount: chunks.length,
       wordCount: chunks.reduce((sum, chunk) => sum + chunk.words.length, 0),
     });
+
+    // Pause here, not earlier: by this point the pauses are cut and the words
+    // are on the output timeline, so what the user edits is literally the
+    // lines they will see — not a raw transcript they would have to imagine
+    // against the finished video.
+    if (job.review_captions && !approved && chunks.length > 0) {
+      await saveArtifact(db, job, 'captions', {
+        approved: false,
+        lines: chunks.map((chunk) => ({
+          start: chunk.start,
+          end: chunk.end,
+          text: chunk.words.map((w) => w.word).join(' '),
+        })),
+      });
+      throw new AwaitingReview();
+    }
   }
 
   // ---- Stage 5: render ---------------------------------------------------

@@ -178,7 +178,7 @@ export interface ScheduledPost {
 // real transcription, burned-in captions. The other two are the mocked
 // Shotstack/Creatomate presets.
 export type VideoTemplate = 'auto_crop_916' | 'template_with_transitions' | 'ai_smart_cut';
-export type VideoJobStatus = 'processing' | 'completed' | 'failed';
+export type VideoJobStatus = 'processing' | 'awaiting_review' | 'completed' | 'failed';
 export type VideoStage = 'probe' | 'transcribe' | 'plan_cuts' | 'subtitles' | 'render' | 'upload';
 
 export interface VideoJobArtifacts {
@@ -192,6 +192,7 @@ export interface VideoJobArtifacts {
     degraded: boolean;
   };
   subtitles?: { chunkCount: number; wordCount: number };
+  captions?: { approved: boolean; lines: Array<{ start: number; end: number; text: string }> };
 }
 
 export interface VideoEditJob {
@@ -209,6 +210,8 @@ export interface VideoEditJob {
   stage?: VideoStage | null;
   artifacts?: VideoJobArtifacts;
   subtitles?: boolean;
+  denoise?: boolean;
+  review_captions?: boolean;
 }
 
 export interface VideoUploadTicket {
@@ -444,12 +447,19 @@ export const api = {
   createVideoUpload: (config: ApiConfig, contentType: string) =>
     apiRequest(config, 'POST', '/api/video-uploads', { contentType }) as Promise<VideoUploadTicket>,
 
-  createSmartCutJob: (config: ApiConfig, sourceObjectKey: string, subtitles: boolean, denoise: boolean) =>
+  createSmartCutJob: (
+    config: ApiConfig,
+    sourceObjectKey: string,
+    subtitles: boolean,
+    denoise: boolean,
+    reviewCaptions: boolean
+  ) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', {
       template: 'ai_smart_cut',
       sourceObjectKey,
       subtitles,
       denoise,
+      reviewCaptions,
     }) as Promise<{ job: VideoEditJob }>,
 
   // Uploads straight to storage with the presigned URL — deliberately NOT
@@ -467,6 +477,9 @@ export const api = {
   listVideoJobs: (config: ApiConfig) => apiRequest(config, 'GET', '/api/video-edit-jobs') as Promise<{ jobs: VideoEditJob[] }>,
 
   getVideoJob: (config: ApiConfig, id: string) => apiRequest(config, 'GET', `/api/video-edit-jobs/${id}`) as Promise<{ job: VideoEditJob }>,
+
+  approveCaptions: (config: ApiConfig, jobId: string, lines: Array<{ text: string }>) =>
+    apiRequest(config, 'PUT', `/api/video-edit-jobs/${jobId}/captions`, { lines }),
 
   processVideoTick: (config: ApiConfig) => apiRequest(config, 'POST', '/api/video-edit-jobs/process-tick') as Promise<{ advanced: number }>,
 

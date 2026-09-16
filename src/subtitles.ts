@@ -297,6 +297,42 @@ function buildChunkEvents(chunk: SubtitleChunk, style: SubtitleStyle): string[] 
 }
 
 // Convenience wrapper: the three steps in the order the pipeline needs them.
+// Builds captions from lines a person edited, rather than from the transcript.
+// The timings are the ones chunking already produced, so the corrected text
+// stays in step with the cut — only the words changed.
+//
+// Word-level highlight timings are re-derived by spreading each line's span
+// across its words in proportion to their length: the original per-word times
+// belonged to words that may no longer exist. Longer words hold the highlight
+// longer, which tracks speech closely enough that the karaoke effect still
+// reads as following the voice.
+export function buildSubtitlesFromLines(
+  lines: Array<{ start: number; end: number; text: string }>,
+  style: SubtitleStyle = DEFAULT_SUBTITLE_STYLE
+): { ass: string; chunks: SubtitleChunk[] } {
+  const chunks: SubtitleChunk[] = [];
+
+  for (const line of lines) {
+    const words = line.text.split(/\s+/).filter(Boolean);
+    if (words.length === 0) continue;
+
+    const span = Math.max(0, line.end - line.start);
+    const totalChars = words.reduce((sum, w) => sum + w.length, 0) || words.length;
+
+    let cursor = line.start;
+    const timed: TranscriptWord[] = words.map((word) => {
+      const share = span * (word.length / totalChars);
+      const start = cursor;
+      cursor += share;
+      return { word, start, end: cursor };
+    });
+
+    chunks.push({ words: timed, start: line.start, end: line.end });
+  }
+
+  return { ass: buildAssFile(chunks, style), chunks };
+}
+
 export function buildSubtitlesForPlan(
   words: TranscriptWord[],
   segments: KeepSegment[],

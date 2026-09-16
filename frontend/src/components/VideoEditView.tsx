@@ -33,7 +33,7 @@ const TEMPLATES: { value: VideoTemplate; level: string; title: string; descripti
   },
 ];
 
-const STATUS_LABEL: Record<string, string> = { processing: 'Рендерится', completed: 'Готово', failed: 'Ошибка' };
+const STATUS_LABEL: Record<string, string> = { processing: 'Рендерится', awaiting_review: 'Проверьте субтитры', completed: 'Готово', failed: 'Ошибка' };
 
 // Languages the speech models transcribe only approximately. Measured on real
 // footage: Kazakh comes back as plausible-looking phonetics, and mixed
@@ -96,6 +96,7 @@ const FAILURE_LABEL: Record<string, string> = {
 // meanings, across screens instead of a fresh ad hoc palette per screen.
 const STATUS_COLOR: Record<string, string> = {
   processing: 'var(--accent)',
+  awaiting_review: 'var(--accent)',
   completed: 'var(--status-published)',
   failed: 'var(--status-failed)',
 };
@@ -121,6 +122,12 @@ export default function VideoEditView() {
   // Off by default: removing ambience is right for a street recording and
   // wrong for anything where the background is part of the shot.
   const [denoise, setDenoise] = useState(false);
+  // On by default: captions are burned in permanently, and the models
+  // mis-hear names, brands and — on Kazakh — most of the sentence. Checking
+  // first costs one click; a wrong word costs a re-render.
+  const [reviewCaptions, setReviewCaptions] = useState(true);
+  // Line edits for the job currently under review, keyed by job id.
+  const [draft, setDraft] = useState<Record<string, string[]>>({});
   const [uploading, setUploading] = useState(false);
   const [jobs, setJobs] = useState<VideoEditJob[]>([]);
   const [status, setStatus] = useState('');
@@ -175,7 +182,7 @@ export default function VideoEditView() {
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);
 
-      await api.createSmartCutJob(config, ticket.objectKey, subtitles, denoise);
+      await api.createSmartCutJob(config, ticket.objectKey, subtitles, denoise, reviewCaptions);
       await load();
       setFile(null);
       setStatus(
@@ -202,6 +209,18 @@ export default function VideoEditView() {
       const bot = await api.createBot({ baseUrl, apiKey: tenant.apiKey }, 'Demo Bot', accountId);
       setDevConfig((c) => ({ ...c, apiKey: tenant.apiKey, botId: bot.bot.id, externalAccountId: accountId }));
       setStatus('Готово — теперь можно монтировать.');
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function approveCaptions(jobId: string, lines: string[]) {
+    try {
+      setStatus('Отправляю исправления…');
+      await api.approveCaptions(config, jobId, lines.map((text) => ({ text })));
+      setDraft((d) => { const next = { ...d }; delete next[jobId]; return next; });
+      await load();
+      setStatus('Субтитры приняты, монтаж продолжается.');
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
     }
@@ -285,6 +304,11 @@ export default function VideoEditView() {
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>
                   <input type="checkbox" checked={denoise} onChange={(e) => setDenoise(e.target.checked)} /> Убрать фоновый шум (ИИ)
+                </span>
+              </label>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>
+                  <input type="checkbox" checked={reviewCaptions} onChange={(e) => setReviewCaptions(e.target.checked)} /> Проверить субтитры перед монтажом
                 </span>
               </label>
             </>
@@ -398,6 +422,41 @@ export default function VideoEditView() {
                   {/* A Level-3 result is a real file, so it plays right here —
                       that is the whole point of the screen. The presets below
                       still hand back a mock link that resolves to nothing. */}
+                  {j.status === 'awaiting_review' && j.artifacts?.captions && (
+                    <div className={styles.review}>
+                      <p className={styles.reviewLead}>
+                        Проверьте текст — он будет вжжён в видео и после монтажа не редактируется.
+                      </p>
+                      {j.artifacts.captions.lines.map((line, i) => {
+                        const value = draft[j.id]?.[i] ?? line.text;
+                        return (
+                          <label key={i} className={styles.reviewLine}>
+                            <span className={styles.reviewTime}>
+                              {Math.floor(line.start / 60)}:{String(Math.floor(line.start % 60)).padStart(2, '0')}
+                            </span>
+                            <input
+                              className={`${controls.input} ${styles.reviewInput}`}
+                              value={value}
+                              onChange={(e) =>
+                                setDraft((d) => {
+                                  const lines = [...(d[j.id] ?? j.artifacts!.captions!.lines.map((l) => l.text))];
+                                  lines[i] = e.target.value;
+                                  return { ...d, [j.id]: lines };
+                                })
+                              }
+                            />
+                          </label>
+                        );
+                      })}
+                      <button
+                        className={`${controls.buttonPrimary} ${styles.reviewSubmit}`}
+                        onClick={() => approveCaptions(j.id, draft[j.id] ?? j.artifacts!.captions!.lines.map((l) => l.text))}
+                      >
+                        Всё верно — монтировать
+                      </button>
+                    </div>
+                  )}
+
                   {(() => {
                     // Only worth saying when captions were actually burned in:
                     // a job with subtitles off has nothing to mistrust.
