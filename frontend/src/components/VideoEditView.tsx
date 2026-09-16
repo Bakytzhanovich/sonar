@@ -260,7 +260,7 @@ export default function VideoEditView() {
   // Why the submit button is unavailable, in the order the user hits them:
   // no key means every request 401s, so say that before asking for a file.
   const blockedReason = !hasAccess
-    ? 'Нет доступа — войди в аккаунт или создай тестовый workspace:'
+    ? 'Нет доступа:'
     : template === 'ai_smart_cut'
       ? file
         ? null
@@ -395,9 +395,18 @@ export default function VideoEditView() {
             <p className={styles.blockedHint}>
               {blockedReason}
               {!hasAccess && (
-                <button className={styles.inlineAction} onClick={quickSetup}>
-                  Создать сейчас
-                </button>
+                <>
+                  {/* Two ways out of this state, so both are offered: the
+                      real one for a person with an account, and the demo one
+                      for a staff-assisted session. Naming both in the text
+                      while only linking one left the other unreachable. */}
+                  <a className={styles.inlineAction} href="/login">
+                    Войти
+                  </a>
+                  <button className={styles.inlineAction} onClick={quickSetup}>
+                    Создать тестовый
+                  </button>
+                </>
               )}
             </p>
           )}
