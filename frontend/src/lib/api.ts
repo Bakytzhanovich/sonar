@@ -253,6 +253,10 @@ export interface ApiConfig {
   apiKey?: string;
 }
 
+// Shared with useSession — kept as a literal here to avoid importing a React
+// hook module into this transport layer.
+const SESSION_STORAGE_KEY = 'sonar-session';
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
@@ -283,8 +287,32 @@ async function apiRequest(config: ApiConfig, method: string, path: string, body?
   });
 
   const json = await res.json().catch(() => ({}));
+  if (res.status === 401 && !config.apiKey) onSessionRejected();
   if (!res.ok) throw new ApiError(res.status, json);
   return json;
+}
+
+// A 401 on a cookie-authenticated request means the stored session is a
+// ghost: the browser has no valid cookie, but the page still holds the
+// metadata written beside it. That happens when the cookie expires, when it
+// is cleared, and — for everyone who signed in before the switch — when the
+// session predates cookies entirely, because back then the token lived in
+// localStorage and no cookie was ever set.
+//
+// Left alone, the UI reads that metadata as "signed in" and offers working
+// buttons that 401 on every press. Clearing it is what turns a silent
+// failure into a login screen. Only done when no apiKey was sent: with a key
+// the 401 is about the key, not the session.
+function onSessionRejected(): void {
+  try {
+    if (!localStorage.getItem(SESSION_STORAGE_KEY)) return;
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    return;
+  }
+  // Reload rather than route: every screen holds this state in a hook, and
+  // a reload is the one thing guaranteed to re-read it everywhere at once.
+  if (typeof window !== 'undefined') window.location.reload();
 }
 
 export const api = {
