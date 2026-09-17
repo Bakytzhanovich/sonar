@@ -24,6 +24,26 @@
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 720px) { .sidebar { max-height: none !important; }.signalGrid { grid-template-columns: 1fr; }.analysisHeader { flex-direction: column; } }
 
+/* ---- Phone layout -------------------------------------------------------
+ * The desktop shell is a sidebar plus a canvas. On a phone they stack, and
+ * the canvas is empty until something is analysed — so the empty state,
+ * sized to fill a desktop canvas, filled a whole phone screen with nothing. */
+@media (max-width: 760px) {
+  .sidebar { padding: 14px !important; gap: 10px; }
+  .main { padding: 14px !important; }
+
+  .emptyState { min-height: 200px; padding: 20px 16px; border-radius: 12px; }
+  .emptyState h2 { font-size: 18px; }
+  .emptyState p { font-size: 13px; }
+  .emptyIcon { width: 44px; height: 44px; margin-bottom: 8px; font-size: 20px; }
+
+  .analysisHeader h1 { font-size: 22px; }
+  .sectionTitle { margin: 18px 0 8px; font-size: 15px; }
+  .scriptPanel { margin-top: 18px; padding: 14px; }
+  .signalGrid { margin: 16px 0; }
+  .signalCard { min-height: 0; padding: 12px; }
+}
+
 .timeline {
   position: relative;
   height: 6px;

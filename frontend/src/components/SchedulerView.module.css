@@ -39,3 +39,16 @@
 }
 
 @media (max-width: 720px) { .sidebar { max-height: none !important; } .main { min-height: 560px; } }
+
+/* ---- Phone layout ------------------------------------------------------- */
+@media (max-width: 760px) {
+  .sidebar { padding: 14px !important; gap: 10px; }
+  .main { padding: 14px !important; }
+  .emptyState { min-height: 200px; padding: 20px 16px; }
+  .emptyState h2 { font-size: 18px; }
+  .emptyState p { font-size: 13px; }
+  .emptyIcon { width: 44px; height: 44px; font-size: 20px; }
+  .postCard { padding: 14px; }
+  /* A checkbox row is a tap target, not a line of text. */
+  .checkboxRow { min-height: 44px; align-items: center; }
+}

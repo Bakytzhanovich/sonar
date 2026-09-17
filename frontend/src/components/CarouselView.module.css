@@ -87,3 +87,15 @@
 .dotActive {
   background: var(--accent);
 }
+
+/* ---- Phone layout ------------------------------------------------------- */
+@media (max-width: 760px) {
+  .sidebar { padding: 14px !important; gap: 10px; }
+  .main { padding: 14px !important; }
+  /* The canvas is the point of this screen, so it keeps its size; everything
+   * around it gives up space instead. */
+  .emptyState { min-height: 200px; padding: 20px 16px; }
+  .emptyState h2 { font-size: 18px; }
+  .emptyState p { font-size: 13px; }
+  .libraryItem { padding: 10px !important; }
+}
