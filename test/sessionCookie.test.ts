@@ -62,3 +62,22 @@ describe('origin guard', () => {
     expect(isAllowedOrigin(req('POST', {}), allowed)).toBe(true);
   });
 });
+
+describe('origin guard with no configured origin', () => {
+  // What production now defaults to when CORS_ORIGIN is left blank.
+  const none = '';
+
+  it('refuses a state-changing request from any site', () => {
+    expect(isAllowedOrigin(req('POST', { origin: 'https://evil.example' }), none)).toBe(false);
+  });
+
+  it('still allows the proxy, which sends no Origin at all', () => {
+    // The frontend forwards /api/* server-side; those requests carry no
+    // Origin header, which is what makes the strict default survivable.
+    expect(isAllowedOrigin(req('POST', {}), none)).toBe(true);
+  });
+
+  it('still allows API clients with a key', () => {
+    expect(isAllowedOrigin(req('POST', { origin: 'https://partner.example', authorization: 'Bearer k' }), none)).toBe(true);
+  });
+});

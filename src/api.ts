@@ -125,27 +125,36 @@ export function createApp(db: Db): Express {
   // Protected routes use a Bearer credential (an API key for integrations
   // or a session JWT for the first-party product), not a cookie, so
   // there's no CSRF surface being widened by the permissive default.
-  const corsOrigin = process.env.CORS_ORIGIN || '*';
-  if (corsOrigin === '*' && process.env.NODE_ENV === 'production') {
-    // Not fatal — a deployment behind the frontend proxy never makes a
-    // cross-origin request, so this is survivable. But the Origin check below
-    // cannot work without a known origin, and a wildcard in production is
-    // usually someone forgetting to fill the field in, so it says so loudly
-    // rather than degrading in silence.
-    console.warn('[api] CORS_ORIGIN is unset in production — origin checks are disabled and any site may call this API');
+  // Wildcard is a development convenience, and only that. In production an
+  // unset CORS_ORIGIN now means "no cross-origin access" rather than "any
+  // site" — the safe reading of someone leaving the field blank.
+  //
+  // This costs the deployment nothing: the frontend proxies /api/* through
+  // its own origin, so its requests are same-origin and never consult CORS
+  // at all. What it does cost is the ability of an arbitrary page to call
+  // this API from a browser, which is the entire point.
+  const configuredOrigin = process.env.CORS_ORIGIN;
+  const isProduction = process.env.NODE_ENV === 'production';
+  const corsOrigin = configuredOrigin || (isProduction ? null : '*');
+
+  if (!configuredOrigin && isProduction) {
+    console.warn('[api] CORS_ORIGIN is unset — cross-origin browser requests are refused; set it if a frontend calls this API directly');
   }
+
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', corsOrigin);
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.header('Access-Control-Allow-Methods', 'GET, PUT, POST, PATCH, DELETE, OPTIONS');
-    // Only meaningful with a pinned origin: the browser refuses to send
-    // credentials to a wildcard, which is the correct behaviour and the
-    // reason CORS_ORIGIN must be set in production.
-    if (corsOrigin !== '*') res.header('Access-Control-Allow-Credentials', 'true');
+    if (corsOrigin) {
+      res.header('Access-Control-Allow-Origin', corsOrigin);
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.header('Access-Control-Allow-Methods', 'GET, PUT, POST, PATCH, DELETE, OPTIONS');
+      // Only meaningful with a pinned origin: the browser refuses to send
+      // credentials to a wildcard, which is the correct behaviour and the
+      // reason CORS_ORIGIN must be set for a directly-addressed API.
+      if (corsOrigin !== '*') res.header('Access-Control-Allow-Credentials', 'true');
+    }
     if (req.method === 'OPTIONS') return res.sendStatus(204);
 
     // Server-side CSRF guard behind SameSite=Lax — see sessionCookie.ts.
-    if (!isAllowedOrigin(req, corsOrigin)) return res.status(403).json({ error: 'origin_not_allowed' });
+    if (!isAllowedOrigin(req, corsOrigin ?? '')) return res.status(403).json({ error: 'origin_not_allowed' });
     next();
   });
 
