@@ -6,7 +6,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
 import { createApp } from '../src/api';
-import { evaluateGate, gateStartupWarnings, ADMIN_SECRET_HEADER } from '../src/credentialGates';
+import {
+  evaluateGate,
+  gateStartupWarnings,
+  signupAvailability,
+  signupDecision,
+  ADMIN_SECRET_HEADER,
+} from '../src/credentialGates';
 import { queryOne, type Db } from '../src/db';
 import { createTestDb, dropTestDb } from './dbTestHelper';
 
@@ -53,6 +59,41 @@ describe('evaluateGate', () => {
   });
 });
 
+describe('signupDecision', () => {
+  const base = { isProduction: true, configuredSecret: null, providedSecret: undefined };
+
+  it('lets anyone in when the mode is explicitly open', () => {
+    expect(signupDecision({ ...base, signupMode: 'open' })).toEqual({ allowed: true });
+  });
+
+  it('open beats a configured code', () => {
+    // Both set is contradictory, and 'open' is the one someone typed on
+    // purpose — the code may simply be left over from a previous round.
+    expect(signupDecision({ ...base, configuredSecret: 'code', signupMode: 'open' }))
+      .toEqual({ allowed: true });
+  });
+
+  it('only the exact word opens it', () => {
+    // 'true', 'yes' and 'OPEN' are guesses at an interface, and a guess that
+    // silently opened registration is the failure this mode exists to avoid.
+    for (const mode of ['true', 'yes', 'OPEN', 'open ', '1', undefined]) {
+      expect(signupDecision({ ...base, signupMode: mode }))
+        .toEqual({ allowed: false, reason: 'not_configured' });
+    }
+  });
+});
+
+describe('signupAvailability', () => {
+  it('reports what a visitor can actually do', () => {
+    const prod = { isProduction: true };
+    expect(signupAvailability({ ...prod, configuredSecret: null, signupMode: 'open' })).toBe('open');
+    expect(signupAvailability({ ...prod, configuredSecret: 'code', signupMode: undefined })).toBe('invite');
+    expect(signupAvailability({ ...prod, configuredSecret: null, signupMode: undefined })).toBe('closed');
+    // Development with nothing configured is open, matching evaluateGate.
+    expect(signupAvailability({ isProduction: false, configuredSecret: null, signupMode: undefined })).toBe('open');
+  });
+});
+
 describe('gateStartupWarnings', () => {
   it('says nothing outside production', () => {
     expect(gateStartupWarnings({ NODE_ENV: 'development' } as NodeJS.ProcessEnv)).toEqual([]);
@@ -63,6 +104,16 @@ describe('gateStartupWarnings', () => {
     expect(warnings).toHaveLength(2);
     expect(warnings.join(' ')).toContain('ADMIN_BOOTSTRAP_SECRET');
     expect(warnings.join(' ')).toContain('SIGNUP_INVITE_CODE');
+  });
+
+  it('announces open signup rather than staying silent about it', () => {
+    const warnings = gateStartupWarnings({
+      NODE_ENV: 'production',
+      ADMIN_BOOTSTRAP_SECRET: 's',
+      SIGNUP_MODE: 'open',
+    } as NodeJS.ProcessEnv);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('anyone may register');
   });
 
   it('stays quiet about the gates that are configured', () => {
@@ -88,6 +139,7 @@ describe('the credential-minting routes in production', () => {
     process.env.CORS_ORIGIN = 'https://example.test';
     delete process.env.ADMIN_BOOTSTRAP_SECRET;
     delete process.env.SIGNUP_INVITE_CODE;
+    delete process.env.SIGNUP_MODE;
   });
 
   afterEach(async () => {
@@ -166,6 +218,28 @@ describe('the credential-minting routes in production', () => {
       const res = await request(app).post('/api/auth/signup').send({ ...credentials, inviteCode: 'sonar-2026' });
       expect(res.status).toBe(201);
       expect(res.body.user.email).toBe(credentials.email);
+    });
+
+    it('registers anyone when SIGNUP_MODE=open', async () => {
+      process.env.SIGNUP_MODE = 'open';
+      const app: Express = createApp(db);
+
+      const res = await request(app).post('/api/auth/signup').send(credentials);
+      expect(res.status).toBe(201);
+      expect(res.body.user.email).toBe(credentials.email);
+    });
+
+    it('tells the signup form which of the three states it is in', async () => {
+      const closed: Express = createApp(db);
+      expect((await request(closed).get('/api/auth/signup-config')).body).toEqual({ signup: 'closed' });
+
+      process.env.SIGNUP_INVITE_CODE = 'sonar-2026';
+      const invite: Express = createApp(db);
+      expect((await request(invite).get('/api/auth/signup-config')).body).toEqual({ signup: 'invite' });
+
+      process.env.SIGNUP_MODE = 'open';
+      const open: Express = createApp(db);
+      expect((await request(open).get('/api/auth/signup-config')).body).toEqual({ signup: 'open' });
     });
 
     it('does not reveal a registered email to someone without the code', async () => {

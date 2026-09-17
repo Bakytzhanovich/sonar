@@ -8,7 +8,7 @@ import { exec, isUniqueViolation, queryAll, queryOne, type Db } from './db';
 import { createApiKeyForTenant, resolveTenantIdFromApiKey } from './apiKeys';
 import { hashPassword, verifyPassword, signSession, verifySession, deriveKey, DUMMY_PASSWORD_HASH } from './auth';
 import { MOCK_WEBHOOK_SECRET_HEADER, isMockWebhookEnabled, verifyMockWebhookSecret } from './webhookAuth';
-import { ADMIN_SECRET_HEADER, evaluateGate, gateStartupWarnings } from './credentialGates';
+import { ADMIN_SECRET_HEADER, evaluateGate, gateStartupWarnings, signupAvailability, signupDecision } from './credentialGates';
 import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessionCookie } from './sessionCookie';
 import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
 import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
@@ -148,6 +148,7 @@ export function createApp(db: Db): Express {
   // opening them.
   const adminBootstrapSecret = process.env.ADMIN_BOOTSTRAP_SECRET ?? null;
   const signupInviteCode = process.env.SIGNUP_INVITE_CODE ?? null;
+  const signupMode = process.env.SIGNUP_MODE;
   for (const warning of gateStartupWarnings(process.env)) console.warn(warning);
 
   app.use((req, res, next) => {
@@ -260,6 +261,12 @@ export function createApp(db: Db): Express {
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const MIN_PASSWORD_LENGTH = 8;
 
+  // Public on purpose: it reveals only whether this deployment asks for an
+  // invite, which anyone learns by loading the signup page anyway.
+  app.get('/api/auth/signup-config', (_req, res) => {
+    res.json({ signup: signupAvailability({ isProduction, signupMode, configuredSecret: signupInviteCode }) });
+  });
+
   app.post('/api/auth/signup', authRateLimit, asyncHandler(async (req, res) => {
     const rawEmail = req.body?.email;
     const { password } = req.body ?? {};
@@ -272,8 +279,9 @@ export function createApp(db: Db): Express {
 
     // Checked before the email lookup below, so a caller without an invite
     // cannot use signup to find out which addresses are registered.
-    const gate = evaluateGate({
+    const gate = signupDecision({
       isProduction,
+      signupMode,
       configuredSecret: signupInviteCode,
       providedSecret: req.body?.inviteCode,
     });

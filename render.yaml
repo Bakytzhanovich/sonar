@@ -59,6 +59,16 @@ services:
       # the code only guards creating new ones.
       - key: SIGNUP_INVITE_CODE
         sync: false
+      # Set to exactly `open` to let anyone register with no code at all.
+      # Nothing else opens it — not 'true', not 'yes', not 'OPEN' — because a
+      # guess at this interface that happened to work would be the accident
+      # the rest of this is built to prevent.
+      #
+      # While it is open, the ceiling on abuse is the OpenAI balance and
+      # nothing else: a stranger can spend what is on the account and not a
+      # cent more. Keep the balance small and auto-recharge OFF.
+      - key: SIGNUP_MODE
+        sync: false
       # Presented as the x-sonar-admin-secret header to POST /api/tenants,
       # which answers with a tenant API key in plaintext. Not needed unless
       # someone is issuing keys for the API directly — the product's own

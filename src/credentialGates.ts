@@ -58,6 +58,40 @@ export function evaluateGate({ isProduction, configuredSecret, providedSecret }:
 export const ADMIN_SECRET_HEADER = 'x-sonar-admin-secret';
 
 /**
+ * Whether anyone may create an account, or only someone holding the code.
+ *
+ * Open signup is a deliberate word, never an omission. That asymmetry is the
+ * point: SIGNUP_INVITE_CODE going missing during a deploy closes the door,
+ * while opening it takes someone typing `open` on purpose. Both states are
+ * legitimate; only one of them can happen by accident, and it is the safe one.
+ *
+ * What bounds the damage while it is open is the OpenAI balance, not this
+ * code: a stranger who registers can spend up to whatever is on the account
+ * and not a cent more. Keep the balance small and auto-recharge off, and the
+ * ceiling stays real.
+ */
+export function signupDecision(input: GateInput & { signupMode: string | undefined }): GateDecision {
+  if (input.signupMode === 'open') return { allowed: true };
+  return evaluateGate(input);
+}
+
+/**
+ * The same decision as a state the signup form can render.
+ *
+ * Three values rather than "is a code needed?", because closed and
+ * invite-only are different things to a visitor: one can be solved by asking
+ * someone for a code, the other cannot be solved at all. A form that asks for
+ * a code that does not exist wastes the visitor's time and looks broken.
+ */
+export function signupAvailability(
+  input: Omit<GateInput, 'providedSecret'> & { signupMode: string | undefined }
+): 'open' | 'invite' | 'closed' {
+  if (input.signupMode === 'open') return 'open';
+  if (input.configuredSecret) return 'invite';
+  return input.isProduction ? 'closed' : 'open';
+}
+
+/**
  * Warnings for the boot log.
  *
  * Emitted at startup rather than on the first refused request: a closed
@@ -73,9 +107,15 @@ export function gateStartupWarnings(env: NodeJS.ProcessEnv): string[] {
       '[api] ADMIN_BOOTSTRAP_SECRET is unset — POST /api/tenants is closed. Set it to issue tenant API keys in production.'
     );
   }
-  if (!env.SIGNUP_INVITE_CODE) {
+  if (env.SIGNUP_MODE === 'open') {
+    // Not a warning about a mistake — a statement of a consequential state,
+    // in the log where someone reading a deploy will see it.
     warnings.push(
-      '[api] SIGNUP_INVITE_CODE is unset — self-serve signup is closed. Set it to the code invited users should present.'
+      '[api] SIGNUP_MODE=open — anyone may register. Spending is capped only by the OpenAI balance; keep auto-recharge off.'
+    );
+  } else if (!env.SIGNUP_INVITE_CODE) {
+    warnings.push(
+      '[api] SIGNUP_INVITE_CODE is unset — self-serve signup is closed. Set it, or set SIGNUP_MODE=open to let anyone register.'
     );
   }
   return warnings;

@@ -26,6 +26,28 @@ export default function SignupView() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Asked of the server rather than read from this app's own environment:
+  // two copies of the same setting drift the moment someone changes one.
+  // null while unknown — the field is hidden until the answer arrives, so a
+  // required field never appears after the visitor has started typing.
+  const [signupMode, setSignupMode] = useState<'open' | 'invite' | 'closed' | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .signupConfig({ baseUrl: API_BASE_URL })
+      .then((res) => {
+        if (!cancelled) setSignupMode(res.signup);
+      })
+      // An unreachable API is not a reason to block the form: submitting will
+      // fail with a real message, which is more useful than a blank page.
+      .catch(() => {
+        if (!cancelled) setSignupMode('open');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // A stored session might be stale (expired, or the backend restarted with
   // a different SESSION_SECRET) — verify it against /api/auth/me rather
@@ -101,21 +123,32 @@ export default function SignupView() {
       <div className={styles.brand}>Sonar</div>
       <div className={styles.card}>
         <h1 className={styles.title}>Создать аккаунт</h1>
+        {/* Said before the form rather than after a submission: there is no
+            code that would work, so letting someone fill three fields first
+            only wastes their time. */}
+        {signupMode === 'closed' && (
+          <p className={styles.error}>
+            Регистрация сейчас закрыта — она доступна по приглашению.
+          </p>
+        )}
         <form className={styles.form} onSubmit={handleSubmit}>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="signup-invite">
-              Код приглашения
-            </label>
-            <input
-              id="signup-invite"
-              className={`${controls.input} ${styles.input}`}
-              type="text"
-              autoComplete="off"
-              spellCheck={false}
-              value={inviteCode}
-              onChange={(e) => setInviteCode(e.target.value)}
-            />
-          </div>
+          {signupMode === 'invite' && (
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="signup-invite">
+                Код приглашения
+              </label>
+              <input
+                id="signup-invite"
+                className={`${controls.input} ${styles.input}`}
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                required
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+              />
+            </div>
+          )}
           <div className={styles.field}>
             <label className={styles.label} htmlFor="signup-email">
               Email
