@@ -78,6 +78,13 @@ services:
     plan: starter
     region: frankfurt
     envVars:
+      # NOT the API's connection string. This service runs ffmpeg over files
+      # uploaded by users, and ffmpeg parses untrusted containers for a
+      # living — so it connects as the least-privilege role from
+      # src/worker-role.sql, which reaches video_edit_jobs, notifications and
+      # push_subscriptions and nothing else. Pointing it at the API's role
+      # would mean a crafted video that compromises ffmpeg also reaches the
+      # password hashes.
       - key: DATABASE_URL
         sync: false
       # Required even though the worker serves no HTTP: auth.ts derives the

@@ -32,6 +32,12 @@ export type Db = Pool;
 
 export interface DbOptions {
   connectionString?: string;
+  // Skip the schema check and the migrations. For a process connecting with
+  // a least-privilege role that has no DDL rights — and should not have
+  // them: the render worker parses untrusted files, and the point of
+  // narrowing its role is that a compromise there cannot reshape the
+  // database. Schema changes belong to the API's boot, which runs first.
+  skipSchemaSetup?: boolean;
 }
 
 // Arbitrary fixed key for the advisory lock below — any consistent bigint
@@ -54,6 +60,8 @@ export async function createDb(options: DbOptions = {}): Promise<Db> {
   // serializes instead of both seeing "no tenants table yet" and both
   // running schema.sql — the second CREATE TABLE would then fail outright,
   // since schema.sql has no IF NOT EXISTS guard (on purpose — see below).
+  if (options.skipSchemaSetup) return pool;
+
   const client = await pool.connect();
   try {
     await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_INIT_LOCK_ID]);

@@ -36,7 +36,12 @@ async function main(): Promise<void> {
     throw new Error('ffmpeg/ffprobe not found on PATH — the worker image must install them (see Dockerfile)');
   }
 
-  const db = await createDb();
+  const db = await createDb({
+    // The worker does not own the schema. It connects with a role that has
+    // no DDL rights (see src/worker-role.sql), and migrations are the API's
+    // job at boot — running them from two processes would race anyway.
+    skipSchemaSetup: true,
+  });
   console.log(`[worker] smart-cut worker started, polling every ${POLL_INTERVAL_MS}ms, concurrency ${CONCURRENCY}`);
 
   let stopping = false;

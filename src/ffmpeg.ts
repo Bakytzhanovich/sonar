@@ -106,11 +106,37 @@ interface RunResult {
 // expensive. The last few KB always contain the actual error.
 const STDERR_TAIL_BYTES = 4000;
 
-function run(bin: string, args: string[], onStdout?: (chunk: string) => void): Promise<RunResult> {
+// Deadlines, per operation. These processes parse files uploaded by users,
+// and ffmpeg has a long history of inputs that make it spin: a malformed
+// container it never stops probing, a stream that decodes to far more than
+// its size suggests. Without a deadline such a file does not fail a job — it
+// stops the worker, which takes one job at a time. The lease then expires,
+// the next worker claims the same job, and hangs on the same file.
+//
+// Generous, because the honest cases are slow too: a 20-minute source
+// re-encodes in a few minutes on a small machine. The point is a ceiling
+// that exists, not a tight one.
+export const PROBE_TIMEOUT_MS = 2 * 60 * 1000;
+export const RENDER_TIMEOUT_MS = 45 * 60 * 1000;
+
+function run(
+  bin: string,
+  args: string[],
+  onStdout?: (chunk: string) => void,
+  timeoutMs: number = PROBE_TIMEOUT_MS
+): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      // SIGKILL rather than SIGTERM: a process wedged in a decode loop may
+      // never reach a point where it handles a signal it could ignore.
+      child.kill('SIGKILL');
+    }, timeoutMs);
 
     child.stdout.on('data', (buf: Buffer) => {
       const text = buf.toString();
@@ -121,8 +147,15 @@ function run(bin: string, args: string[], onStdout?: (chunk: string) => void): P
       stderr = (stderr + buf.toString()).slice(-STDERR_TAIL_BYTES);
     });
 
-    child.on('error', (err) => reject(new FfmpegError(`${bin} could not be started: ${err.message}`, stderr)));
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(new FfmpegError(`${bin} could not be started: ${err.message}`, stderr));
+    });
     child.on('close', (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        return reject(new FfmpegError(`${bin} killed after ${Math.round(timeoutMs / 1000)}s`, stderr));
+      }
       if (code === 0) resolve({ stdout, stderr });
       else reject(new FfmpegError(`${bin} exited with code ${code}`, stderr));
     });
@@ -383,6 +416,8 @@ export async function renderSegments(options: RenderOptions): Promise<void> {
         const seconds = Number(value) / 1_000_000;
         if (Number.isFinite(seconds)) onProgress(Math.min(1, Math.max(0, seconds / expectedDurationSec)));
       }
-    }
+    },
+    // The encode is the one operation that legitimately runs for minutes.
+    RENDER_TIMEOUT_MS
   );
 }
