@@ -11,11 +11,17 @@ services:
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: sonar-db
+          property: connectionString
       - key: SESSION_SECRET
         generateValue: true
       - key: OPENAI_API_KEY
         sync: false
+      # The frontend's URL, and only it. The browser never addresses this
+      # service directly — it talks to sonar-frontend, which proxies /api
+      # through a Next rewrite so the session cookie can stay SameSite=Lax.
+      # Paste the frontend URL here after its first deploy.
       - key: CORS_ORIGIN
         sync: false
       - key: NODE_ENV
@@ -115,9 +121,12 @@ services:
         sync: false
       - key: STORAGE_SECRET_ACCESS_KEY
         sync: false
-      # Speech-to-Text for languages Whisper cannot transcribe (Kazakh).
-      # Absent: the worker falls back to Whisper, which is why this is listed
-      # here rather than left to be discovered missing in production.
+      # Deliberately left UNSET. Kazakh and Kazakh/Russian code-switching are
+      # handled by the ensemble in transcriptEnsemble.ts — several passes of
+      # the audio model reconciled by gpt-4.1 — not by Google. googleSpeech.ts
+      # still reads this key, so setting it would silently change which engine
+      # transcribes; it is listed here to make that switch visible rather than
+      # discoverable by accident.
       - key: GOOGLE_SPEECH_API_KEY
         sync: false
       # Optional public domain for finished renders. Without it the API hands
@@ -131,3 +140,44 @@ services:
         value: 1
       - key: NODE_ENV
         value: production
+
+  # The public entry point. Everything the browser touches is this origin:
+  # next.config.ts rewrites /api and /webhooks through to sonar-api, which is
+  # what lets the session cookie be SameSite=Lax instead of SameSite=None.
+  # Deploying the API without this service would leave no way in.
+  - type: web
+    name: sonar-frontend
+    runtime: node
+    plan: free
+    region: frankfurt
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    envVars:
+      # Server-side only, and deliberately not NEXT_PUBLIC_*: this is the
+      # address Next forwards to, never one the browser sees. Set it to the
+      # sonar-api URL after that service's first deploy.
+      #
+      # Not wired with fromService on purpose — that yields a bare hostname,
+      # and this needs a full origin with the scheme.
+      - key: API_ORIGIN
+        sync: false
+      # Only used for absolute URLs in page metadata. Set to this service's
+      # own public URL once it has one.
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+      - key: NODE_ENV
+        value: production
+
+databases:
+  # The worker does NOT use this connection string. It connects as the
+  # least-privilege role from src/worker-role.sql, which has to be created by
+  # hand after the first deploy — see the comment on the worker's DATABASE_URL.
+  #
+  # Render's free database tier is time-limited: it is removed after a fixed
+  # period, taking every row with it. Check the current terms before putting a
+  # paying client's data on it.
+  - name: sonar-db
+    plan: free
+    region: frankfurt
+    postgresMajorVersion: "16"
