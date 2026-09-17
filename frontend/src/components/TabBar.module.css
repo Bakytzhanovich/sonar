@@ -41,7 +41,7 @@
    * accent per screen, so no pill, no underline, no second hue. */
   .tabActive { color: var(--accent); }
 
-  .label { font-size: 10px; font-weight: 600; letter-spacing: .01em; }
+  .label { font-size: var(--text-xs); font-weight: 600; letter-spacing: .01em; }
 
   .scrim {
     position: fixed;
@@ -77,9 +77,9 @@
     gap: 12px;
     min-height: 48px;
     padding: 0 8px;
-    border-radius: 10px;
+    border-radius: var(--radius-md);
     color: var(--foreground);
-    font-size: 15px;
+    font-size: var(--text-base);
     text-decoration: none;
   }
 

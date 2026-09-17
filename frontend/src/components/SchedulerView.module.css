@@ -2,37 +2,37 @@
 .sidebar { width: 320px !important; padding: 24px !important; background: var(--background); gap: 12px; }
 .main { padding: clamp(20px, 4vw, 44px) !important; background: var(--surface); }
 .panelHeading { display: flex; flex-direction: column; gap: 4px; }
-.panelHeading h2 { margin: 0; font-size: 17px; letter-spacing: -0.02em; }
-.eyebrow { color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.panelHeading h2 { margin: 0; font-size: var(--text-lg); letter-spacing: -0.02em; }
+.eyebrow { color: var(--accent); font-size: var(--text-xs); font-weight: 800; letter-spacing: .12em; }
 .divider { height: 1px; margin: 12px 0; background: var(--border); }
 .postCard { padding: 16px; margin-bottom: 12px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 4px 14px 14px 14px; background: var(--background); transition: transform 180ms ease, border-color 180ms ease; }
 .postCard:hover { transform: translateY(-2px); border-color: var(--accent); }
 .queueHeader { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
-.queueHeader h2 { margin: 0; font-size: 24px; letter-spacing: -.03em; }
-.queueCount { color: var(--foreground-muted); font-size: 12px; }
-.emptyState { min-height: 330px; display: grid; place-items: center; padding: 30px; border: 1px dashed var(--border); border-radius: 14px; background: var(--background); text-align: center; }
-.emptyState h2 { margin: 10px 0 0; font-size: 22px; }
+.queueHeader h2 { margin: 0; font-size: var(--text-2xl); letter-spacing: -.03em; }
+.queueCount { color: var(--foreground-muted); font-size: var(--text-sm); }
+.emptyState { min-height: 330px; display: grid; place-items: center; padding: 30px; border: 1px dashed var(--border); border-radius: var(--radius-lg); background: var(--background); text-align: center; }
+.emptyState h2 { margin: 10px 0 0; font-size: var(--text-2xl); }
 .emptyState p { max-width: 350px; margin: 8px 0 0; color: var(--foreground-muted); line-height: 1.5; }
-.emptyIcon { display: grid; place-items: center; width: 58px; height: 58px; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); background: var(--accent-soft); font-size: 24px; }
-.postMeta { color: var(--foreground-muted); font-size: 11px; line-height: 1.5; }
+.emptyIcon { display: grid; place-items: center; width: 58px; height: 58px; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); background: var(--accent-soft); font-size: var(--text-2xl); }
+.postMeta { color: var(--foreground-muted); font-size: var(--text-xs); line-height: 1.5; }
 
 .field { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
 .field:first-of-type { margin-top: 0; }
-.fieldLabel { color: var(--foreground-muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.fieldLabel { color: var(--foreground-muted); font-size: var(--text-xs); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .field select, .field textarea, .field input { width: 100%; }
 
-.checkboxRow { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 13px; }
+.checkboxRow { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: var(--text-sm); }
 
 .fullButton { width: 100%; margin-top: 14px; }
-.hint { margin-top: 8px; color: var(--foreground-muted); font-size: 11px; }
+.hint { margin-top: 8px; color: var(--foreground-muted); font-size: var(--text-xs); }
 
 .postHeader { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.platformLabel { font-weight: 700; font-size: 13px; text-transform: capitalize; }
+.platformLabel { font-weight: 700; font-size: var(--text-sm); text-transform: capitalize; }
 
 .statusBadge {
   padding: 2px 9px;
-  border-radius: 999px;
-  font-size: 11px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
   font-weight: 700;
   color: var(--status-color);
   background: color-mix(in srgb, var(--status-color) 14%, transparent);
@@ -45,9 +45,9 @@
   .sidebar { padding: 14px !important; gap: 10px; }
   .main { padding: 14px !important; }
   .emptyState { min-height: 200px; padding: 20px 16px; }
-  .emptyState h2 { font-size: 18px; }
-  .emptyState p { font-size: 13px; }
-  .emptyIcon { width: 44px; height: 44px; font-size: 20px; }
+  .emptyState h2 { font-size: var(--text-xl); }
+  .emptyState p { font-size: var(--text-sm); }
+  .emptyIcon { width: 44px; height: 44px; font-size: var(--text-xl); }
   .postCard { padding: 14px; }
   /* A checkbox row is a tap target, not a line of text. */
   .checkboxRow { min-height: 44px; align-items: center; }
@@ -58,7 +58,7 @@
 .sectionLabel {
   margin: 4px 0 8px;
   color: var(--foreground-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: .06em;
   text-transform: uppercase;

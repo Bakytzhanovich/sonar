@@ -27,7 +27,7 @@
   background: var(--background);
   transition: transform 180ms ease, border-color 180ms ease;
 }
-.page { min-height: 100dvh; display: flex; flex-direction: column; background: var(--surface); color: var(--foreground); }.main { width: 100%; max-width: 1120px; margin: 0 auto; padding: clamp(20px, 4vw, 44px); overflow-y: auto; }.eyebrow { display: block; color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .12em; }.intro { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; }.intro h1 { margin: 6px 0; font-size: clamp(25px, 4vw, 38px); letter-spacing: -.04em; }.intro p { max-width: 620px; margin: 0; color: var(--foreground-muted); font-size: 13px; line-height: 1.55; }.introMark { padding: 12px 16px; border-left: 2px solid var(--accent); color: var(--accent); font-size: 11px; font-weight: 800; line-height: 1.5; letter-spacing: .1em; }.summary { display: flex; align-items: center; gap: 12px; margin: 22px 0 14px; color: var(--foreground-muted); font-size: 13px; }.summary strong { color: var(--foreground); font-size: 30px; letter-spacing: -.04em; }.summary small { font-size: 11px; }.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }.card:hover { transform: translateY(-2px); border-color: var(--accent); }.emptyHint { background: var(--background); border-radius: 14px; padding: 22px; }
+.page { min-height: 100dvh; display: flex; flex-direction: column; background: var(--surface); color: var(--foreground); }.main { width: 100%; max-width: 1120px; margin: 0 auto; padding: clamp(20px, 4vw, 44px); overflow-y: auto; }.eyebrow { display: block; color: var(--accent); font-size: var(--text-xs); font-weight: 800; letter-spacing: .12em; }.intro { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 24px; }.intro h1 { margin: 6px 0; font-size: clamp(25px, 4vw, 38px); letter-spacing: -.04em; }.intro p { max-width: 620px; margin: 0; color: var(--foreground-muted); font-size: var(--text-sm); line-height: 1.55; }.introMark { padding: 12px 16px; border-left: 2px solid var(--accent); color: var(--accent); font-size: var(--text-xs); font-weight: 800; line-height: 1.5; letter-spacing: .1em; }.summary { display: flex; align-items: center; gap: 12px; margin: 22px 0 14px; color: var(--foreground-muted); font-size: var(--text-sm); }.summary strong { color: var(--foreground); font-size: 30px; letter-spacing: -.04em; }.summary small { font-size: var(--text-xs); }.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }.card:hover { transform: translateY(-2px); border-color: var(--accent); }.emptyHint { background: var(--background); border-radius: var(--radius-lg); padding: 22px; }
 @media (max-width: 680px) { .intro { align-items: start; flex-direction: column; }.cards { grid-template-columns: 1fr; }.introMark { display: none; } }
 
 .cardHeader {
@@ -55,13 +55,13 @@
   border-radius: 50%;
   background: var(--surface);
   color: var(--foreground-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   flex-shrink: 0;
 }
 
 .segment {
-  font-size: 15px;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--foreground);
   white-space: nowrap;
@@ -70,7 +70,7 @@
 }
 
 .conversionPct {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 700;
   color: var(--accent);
   flex-shrink: 0;
@@ -80,7 +80,7 @@
  * from this tenant's own CRM data, the thing no competitor's dashboard has. */
 .barTrack {
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   overflow: hidden;
 }
@@ -88,11 +88,11 @@
 .barFill {
   height: 100%;
   background: var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 
 .explanation {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--foreground);
   line-height: 1.4;
   margin: 0;
@@ -102,7 +102,7 @@
   display: flex;
   gap: 8px;
   align-items: center;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--foreground-muted);
 }
 
@@ -110,8 +110,8 @@
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
@@ -142,7 +142,7 @@
 
 .emptyHint p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--foreground-muted);
   line-height: 1.4;
 }
@@ -213,7 +213,7 @@
   .card { padding: 14px; }
   .cardHeader { flex-wrap: wrap; gap: 6px; }
   .onboardingState { min-height: 200px; padding: 20px 16px; }
-  .explanation { font-size: 13px; }
+  .explanation { font-size: var(--text-sm); }
 }
 
 .headerTitle { display: flex; align-items: baseline; gap: 8px; }
@@ -221,7 +221,7 @@
 .sectionLabel {
   margin: 4px 0 8px;
   color: var(--foreground-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: .06em;
   text-transform: uppercase;

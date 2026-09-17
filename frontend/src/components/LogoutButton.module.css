@@ -5,11 +5,11 @@
   margin-left: 12px;
   padding: 4px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--foreground-muted);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 
@@ -44,17 +44,17 @@
   max-width: 340px;
   padding: 22px 20px 16px;
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   background: var(--background);
   text-align: center;
 }
 
-.title { margin: 0 0 8px; font-size: 17px; }
+.title { margin: 0 0 8px; font-size: var(--text-lg); }
 
 .body {
   margin: 0 0 20px;
   color: var(--foreground-muted);
-  font-size: 13px;
+  font-size: var(--text-sm);
   line-height: 1.5;
   word-break: break-word;
 }
@@ -66,9 +66,9 @@
 .confirm {
   flex: 1;
   min-height: 44px; /* a real tap target on a phone */
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   font: inherit;
-  font-size: 15px;
+  font-size: var(--text-base);
   cursor: pointer;
 }
 

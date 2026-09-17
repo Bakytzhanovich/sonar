@@ -201,6 +201,7 @@ export default function SchedulerView() {
           <StatusMessage>{status}</StatusMessage>
         </div>
       </div>
+      <TabBar current="/scheduler" />
     </div>
   );
 }
@@ -225,7 +226,6 @@ function PostRow({ post }: { post: ScheduledPost }) {
           {post.external_post_url}
         </a>
       )}
-      <TabBar current="/scheduler" />
     </div>
   );
 }

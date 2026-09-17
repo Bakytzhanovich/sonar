@@ -21,11 +21,25 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  /* Type scale — three sizes, not "whatever <h4> defaults to". */
-  --text-sm: 12px;
-  --text-base: 14px;
-  --text-lg: 16px;
-  --text-xl: 20px;
+  /* Type scale. Six steps, derived from what the screens actually used
+   * rather than imposed on them: the codebase had twelve sizes between 10
+   * and 24px, and adjacent elements differing by a single pixel is what
+   * makes a layout read as assembled by eye. Each step is far enough from
+   * the next to look deliberate. */
+  --text-xs: 11px;   /* eyebrows, badges, meta */
+  --text-sm: 13px;   /* secondary text, dense lists */
+  --text-base: 15px; /* body, form controls */
+  --text-lg: 17px;   /* section headings */
+  --text-xl: 20px;   /* screen headings */
+  --text-2xl: 24px;  /* empty-state and hero headings */
+
+  /* Corner radii. Ten different values were in use, several of them one
+   * pixel apart — the same assembled-by-eye problem in a different axis.
+   * The rule is by role: controls, panels, and pills. */
+  --radius-sm: 6px;   /* inline controls, badges */
+  --radius-md: 10px;  /* inputs, buttons, list items */
+  --radius-lg: 14px;  /* cards, panels, sheets */
+  --radius-full: 999px;
 
   --background: #ffffff;
   --surface: #f5f7f8;
