@@ -25,6 +25,7 @@ import Link from 'next/link';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
+import TabBar from './TabBar';
 import styles from './FlowEditor.module.css';
 import controls from './Controls.module.css';
 
@@ -575,6 +576,7 @@ export default function FlowEditor() {
           )}
         </aside>
       </div>
+      <TabBar current="/bot" />
     </div>
   );
 }

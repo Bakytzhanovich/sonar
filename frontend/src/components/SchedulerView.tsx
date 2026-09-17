@@ -5,6 +5,7 @@ import { api, type PostingPlatform, type ScheduledPost } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
+import TabBar from './TabBar';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
 import StatusMessage from './StatusMessage';
@@ -224,6 +225,7 @@ function PostRow({ post }: { post: ScheduledPost }) {
           {post.external_post_url}
         </a>
       )}
+      <TabBar current="/scheduler" />
     </div>
   );
 }

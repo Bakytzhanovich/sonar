@@ -182,3 +182,12 @@ html[data-theme='dark'] {
 html[data-theme='light'] {
   color-scheme: light;
 }
+
+/* Room for the bottom tab bar, so the last element of any screen is not
+ * sitting underneath it. Applied globally rather than per screen: every
+ * module mounts the bar, so every module needs the space. */
+@media (max-width: 760px) {
+  body {
+    padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px));
+  }
+}

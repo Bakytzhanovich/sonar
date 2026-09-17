@@ -1,0 +1,87 @@
+/* Phone only. Above 760px the horizontal nav in the header is reachable
+ * with a cursor and this would just take space away from content. */
+.bar {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    display: flex;
+    /* env() keeps the tabs above the home indicator on a modern iPhone,
+     * where the bottom of the viewport is not the bottom of the screen. */
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border);
+    background: var(--background);
+  }
+
+  .tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    /* The whole column is the target, not the icon. */
+    min-height: 50px;
+    padding: 4px 2px;
+    border: 0;
+    background: none;
+    color: var(--foreground-muted);
+    font: inherit;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  /* Colour alone marks the current tab — the design language allows one
+   * accent per screen, so no pill, no underline, no second hue. */
+  .tabActive { color: var(--accent); }
+
+  .label { font-size: 10px; font-weight: 600; letter-spacing: .01em; }
+
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    display: flex;
+    align-items: flex-end;
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .sheet {
+    width: 100%;
+    padding: 8px 12px calc(76px + env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    background: var(--background);
+  }
+
+  /* The grab handle is what tells people this panel came from the bottom
+   * and goes back there. */
+  .sheetHandle {
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 0 auto 10px;
+    border-radius: 2px;
+    background: var(--border);
+  }
+
+  .sheetItem {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 48px;
+    padding: 0 8px;
+    border-radius: 10px;
+    color: var(--foreground);
+    font-size: 15px;
+    text-decoration: none;
+  }
+
+  .sheetItemActive { color: var(--accent); background: var(--accent-soft); }
+}

@@ -5,6 +5,7 @@ import { api, type GeneratedScript, type ReelAnalysis } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
+import TabBar from './TabBar';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import StatusMessage from './StatusMessage';
 import controls from './Controls.module.css';
@@ -199,6 +200,7 @@ export default function ReelsView() {
           <StatusMessage>{status}</StatusMessage>
         </div>
       </div>
+      <TabBar current="/reels" />
     </div>
   );
 }

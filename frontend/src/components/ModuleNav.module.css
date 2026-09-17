@@ -159,3 +159,11 @@
   cursor: pointer;
   width: 100%;
 }
+
+/* The hamburger is replaced by the bottom tab bar on a phone: seven modules
+ * in the top-right corner is the least reachable spot on the screen, and
+ * every move cost two taps. The bell stays — it is a notification, not
+ * navigation. */
+@media (max-width: 760px) {
+  .navMobile { display: none; }
+}

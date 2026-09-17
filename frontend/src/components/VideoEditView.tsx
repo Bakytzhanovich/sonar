@@ -5,6 +5,7 @@ import { api, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
 import ModuleNav from './ModuleNav';
+import TabBar from './TabBar';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
 import StatusMessage from './StatusMessage';
@@ -583,6 +584,7 @@ export default function VideoEditView() {
           )}
         </section>
       </main>
+      <TabBar current="/video" />
     </div>
   );
 }
