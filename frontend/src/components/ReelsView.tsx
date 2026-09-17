@@ -93,20 +93,32 @@ export default function ReelsView() {
   return (
     <div className={styles.page}>
       <header className={layout.header}>
-        <div><span className={styles.eyebrow}>ИССЛЕДОВАНИЯ</span><span className={layout.title}>Анализ рилсов</span></div>
+        <div className={styles.headerTitle}>
+          <span className={styles.eyebrow}>ИССЛЕДОВАНИЯ</span>
+          <span className={layout.title}>Анализ рилсов</span>
+        </div>
         <ModuleNav current="/reels" />
       </header>
 
       <div className={layout.twoPane}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>
           {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
-          <div className={styles.panelHeading}><span className={styles.eyebrow}>НОВЫЙ РАЗБОР</span><h2>Источник видео</h2></div>
-          <input className={controls.input} value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} style={{ width: '100%' }} />
+          {/* No section heading: a URL field with "Разобрать" under it does
+              not need "НОВЫЙ РАЗБОР / Источник видео" explaining it. */}
+          <input
+            className={controls.input}
+            value={sourceUrl}
+            onChange={(e) => setSourceUrl(e.target.value)}
+            placeholder="Ссылка на рилс"
+            style={{ width: '100%' }}
+          />
           <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={analyze}>
             Разобрать
           </button>
 
-          <div className={styles.divider} /><div className={styles.panelHeading}><span className={styles.eyebrow}>БИБЛИОТЕКА</span><h2>Последние разборы</h2></div>
+          {analyses.length > 0 && (
+            <div className={styles.sectionLabel}>Последние разборы</div>
+          )}
           {analyses.map((a) => (
             <div
               key={a.id}
@@ -121,7 +133,7 @@ export default function ReelsView() {
             </div>
           ))}
 
-          <div className={styles.divider} /><div className={styles.panelHeading}><span className={styles.eyebrow}>БИБЛИОТЕКА СЦЕНАРИЕВ</span><h2>Поиск по нише</h2></div>
+          <div className={styles.sectionLabel}>Сценарии по нише</div>
           <div className={styles.searchRow}>
             <input className={controls.input} value={nicheSearch} onChange={(e) => setNicheSearch(e.target.value)} placeholder="напр. фитнес" />
             <button className={controls.buttonSecondary} onClick={searchByNiche}>Найти</button>
