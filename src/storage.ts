@@ -144,12 +144,22 @@ export function presign(config: StorageConfig, options: PresignOptions): string 
   return `${url.origin}/${config.bucket}/${encodeKeyPath(key)}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }
 
+// How long a link to a finished render stays valid.
+//
+// A day, not the week this used to be. The link is the whole authorisation:
+// anyone holding it watches a client's video, and these get forwarded — into
+// chats, into email, into places neither we nor the client control. A week of
+// validity means a link pasted somewhere careless stays live for a week.
+//
+// A day is long enough to download a render you were told about, and the job
+// can be re-signed on demand for anything older.
+const RENDER_URL_TTL_SEC = 24 * 3600;
+
 export function publicUrlFor(config: StorageConfig, key: string): string {
+  // Set only if the bucket is deliberately public — then the object is
+  // readable by anyone who guesses the key, with no signature and no expiry.
   if (config.publicBaseUrl) return `${config.publicBaseUrl}/${encodeKeyPath(key)}`;
-  // No public domain configured — hand out a long-lived presigned GET so the
-  // client can still fetch the result. A week matches how long a finished
-  // render stays interesting; after that the job can be re-signed on demand.
-  return presign(config, { method: 'GET', key, expiresInSec: 7 * 24 * 3600 });
+  return presign(config, { method: 'GET', key, expiresInSec: RENDER_URL_TTL_SEC });
 }
 
 export async function downloadToFile(config: StorageConfig, key: string, destPath: string): Promise<void> {

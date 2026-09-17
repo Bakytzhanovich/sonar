@@ -118,8 +118,10 @@ export function localStorageIo(config: LocalMediaConfig): StorageIo {
       await fs.copyFile(sourcePath, target);
     },
     publicUrl(key) {
-      // A week, matching storage.ts's presigned fallback.
-      return signLocalUrl(config, 'GET', key, 7 * 24 * 3600);
+      // A day, matching RENDER_URL_TTL_SEC in storage.ts — the two have to
+      // agree, or the same link behaves differently depending on which
+      // backend a deployment happens to use.
+      return signLocalUrl(config, 'GET', key, 24 * 3600);
     },
   };
 }
