@@ -192,7 +192,7 @@ export default function CarouselView() {
   return (
     <div className={styles.page}>
       <header className={layout.header}>
-        <div>
+        <div className={styles.headerTitle}>
           <span className={styles.panelEyebrow}>СТУДИЯ КОНТЕНТА</span>
           <span className={layout.title}>Карусели</span>
         </div>
@@ -202,11 +202,14 @@ export default function CarouselView() {
       <div className={`${layout.twoPane} ${styles.workspace}`}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>
           {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
-          <div className={styles.panelHeading}><span className={styles.panelEyebrow}>БЫСТРЫЙ СТАРТ</span><h2>Создать карусель</h2></div>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Тема</span>
-            <input className={controls.input} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
-          </label>
+          {/* The placeholder says what the field is; three stacked headings
+              above it said it three more times. */}
+          <input
+            className={controls.input}
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="О чём карусель?"
+          />
           <div className={styles.presetRow}>
             <select className={controls.input} value={presetId} onChange={(e) => setPresetId(e.target.value)}>
               <option value="">без пресета</option>
@@ -220,20 +223,17 @@ export default function CarouselView() {
           </div>
           <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={generate}>Сгенерировать</button>
 
-          <div className={styles.divider} />
-          <div className={styles.panelHeading}><span className={styles.panelEyebrow}>БРЕНД</span><h2>Визуальный пресет</h2></div>
-          <label className={styles.field}>
-            <span className={styles.fieldLabel}>Название</span>
-            <input className={controls.input} value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="напр. Мой бренд" />
-          </label>
-          <div className={styles.colorRow}>
+          <div className={styles.sectionLabel}>Бренд</div>
+          <input className={controls.input} value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="Название пресета" />
+          {/* The whole row is the target: a bare colour input is a ~20px
+              square, which is not something a finger hits on purpose. */}
+          <label className={styles.colorRow}>
             <input type="color" value={presetColor} onChange={(e) => setPresetColor(e.target.value)} />
-            <span className={styles.fieldLabel}>Основной цвет</span>
-          </div>
+            <span>Основной цвет</span>
+          </label>
           <button className={`${controls.buttonSecondary} ${styles.fullButton}`} onClick={createPreset}>Сохранить пресет</button>
 
-          <div className={styles.divider} />
-          <div className={styles.panelHeading}><span className={styles.panelEyebrow}>БИБЛИОТЕКА</span><h2>Последние карусели</h2></div>
+          {carousels.length > 0 && <div className={styles.sectionLabel}>Последние карусели</div>}
           {carousels.map((c) => (
             <div
               key={c.id}

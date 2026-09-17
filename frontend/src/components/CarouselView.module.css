@@ -99,3 +99,49 @@
   .emptyState p { font-size: 13px; }
   .libraryItem { padding: 10px !important; }
 }
+
+.headerTitle { display: flex; align-items: baseline; gap: 8px; }
+
+.sectionLabel {
+  margin: 18px 0 8px;
+  color: var(--foreground-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+/* The row, not the swatch, is what gets tapped. */
+.colorRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  color: var(--foreground-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.colorRow input[type='color'] {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+}
+
+/* The fields lost their width when the heading wrappers around them went:
+ * they were stretched by a flex column that no longer wraps them. */
+.sidebar > input,
+.sidebar > select {
+  width: 100%;
+}
+
+@media (max-width: 760px) {
+  /* Same as the reels screen: the canvas claims the leftover height instead
+   * of ending the page in a dead half-screen. */
+  .main { display: flex; flex-direction: column; flex: 1; }
+  .emptyState { flex: 1; }
+}
