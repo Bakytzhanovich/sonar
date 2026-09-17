@@ -332,18 +332,64 @@ CREATE TABLE video_edit_jobs (
   seq               BIGSERIAL,
   tenant_id         TEXT NOT NULL REFERENCES tenants(id),
   source_video_url  TEXT NOT NULL,
-  template          TEXT NOT NULL, -- auto_crop_916 | template_with_transitions
+  template          TEXT NOT NULL, -- auto_crop_916 | template_with_transitions | ai_smart_cut
   status            TEXT NOT NULL DEFAULT 'processing', -- processing | completed | failed
   progress_percent  INTEGER NOT NULL DEFAULT 0,
   output_url        TEXT,
+  -- Cover frame for the finished render, so a completed job is recognisable
+  -- in the queue without pressing play. Nullable: posters are best-effort.
+  poster_url        TEXT,
   failure_reason    TEXT,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-  completed_at      TIMESTAMPTZ
+  completed_at      TIMESTAMPTZ,
+  -- ---- Level 3 (own FFmpeg engine) fields ---------------------------------
+  -- 'preset' jobs are the mocked Shotstack/Creatomate path above and ignore
+  -- everything below. 'smart_cut' jobs are processed by videoPipeline.ts in a
+  -- separate worker process, because ffmpeg is CPU-bound for minutes at a
+  -- time and would starve the API's event loop.
+  pipeline          TEXT NOT NULL DEFAULT 'preset', -- preset | smart_cut
+  -- Object-storage keys, not URLs: the bucket is ours, and a stored presigned
+  -- URL would expire while the row outlives it. Rendered into a URL on read.
+  source_object_key TEXT,
+  output_object_key TEXT,
+  -- Which stage the job is in, and the accumulated per-stage results
+  -- (probe output, transcript, cut plan). Checkpointing these is what makes a
+  -- retry resume at the failed stage instead of paying for transcription
+  -- again.
+  stage             TEXT, -- probe | transcribe | plan_cuts | render | upload
+  artifacts         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  attempt_count     INTEGER NOT NULL DEFAULT 0,
+  -- Burn dynamic captions into the render. On by default: it is what the
+  -- Level-3 output is for. Stored per job because burning is irreversible —
+  -- a client who wants a clean master must be able to ask for one.
+  subtitles         BOOLEAN NOT NULL DEFAULT true,
+  -- Neural background-noise removal (ffmpeg arnndn / RNNoise). Off by
+  -- default: it is the right call for a street recording and the wrong one
+  -- for anything with deliberate ambience or music.
+  -- 'auto' measures the recording and decides; 'on'/'off' are the user
+  -- overriding that. Auto is the default because asking someone to judge
+  -- their own noise floor before they have seen the result is asking the
+  -- wrong person.
+  denoise_mode      TEXT NOT NULL DEFAULT 'auto',
+  -- Stop after captions are generated and wait for the user to correct them.
+  -- Captions are burned into the pixels, so a wrong word is permanent; on
+  -- languages the speech models only approximate, reviewing first is the
+  -- difference between a usable feature and a gamble.
+  -- 'auto' pauses only when the transcript's language is one the speech
+  -- models get wrong often enough to matter. Russian and English go straight
+  -- through; Kazakh stops for a human.
+  review_mode       TEXT NOT NULL DEFAULT 'auto',
+  -- Worker lease. Unlike the preset path, a smart_cut job legitimately sits
+  -- in 'processing' for minutes, so a timestamped claim is the only way to
+  -- tell "another worker is on it" from "a worker died holding it".
+  claimed_at        TIMESTAMPTZ
 );
 
 CREATE INDEX idx_video_edit_jobs_tenant ON video_edit_jobs(tenant_id);
 -- What the polling renderer scans on every tick.
 CREATE INDEX idx_video_edit_jobs_processing ON video_edit_jobs(status);
+-- What the Level-3 worker claims from: unfinished jobs of its own pipeline.
+CREATE INDEX idx_video_edit_jobs_pipeline ON video_edit_jobs(pipeline, status, claimed_at);
 
 -- ---- Push notifications (shared by Modules 5 and 8, per both ТЗ) --------
 -- Deliberately one shared implementation, not duplicated per module — the

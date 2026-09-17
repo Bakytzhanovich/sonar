@@ -2,10 +2,13 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import { randomUUID } from 'node:crypto';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { exec, isUniqueViolation, queryAll, queryOne, type Db } from './db';
 import { createApiKeyForTenant, resolveTenantIdFromApiKey } from './apiKeys';
-import { hashPassword, verifyPassword, signSession, verifySession, DUMMY_PASSWORD_HASH } from './auth';
+import { hashPassword, verifyPassword, signSession, verifySession, deriveKey, DUMMY_PASSWORD_HASH } from './auth';
 import { MOCK_WEBHOOK_SECRET_HEADER, isMockWebhookEnabled, verifyMockWebhookSecret } from './webhookAuth';
+import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessionCookie } from './sessionCookie';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { analyzeReelMock, generateScriptMock } from './reelAnalysis';
@@ -13,6 +16,8 @@ import { generateCarouselSlides } from './carouselGeneration';
 import { publishDuePosts } from './publisher';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
+import { presign, storageConfigFromEnv } from './storage';
+import { localMediaConfigFromEnv, resolveKeyPath, signLocalUrl, verifyLocalUrl } from './localMedia';
 import { notify, listNotifications } from './notifications';
 import { getOrCreateVapidKeys } from './vapidKeys';
 import type {
@@ -29,6 +34,20 @@ import type {
   VideoEditJob,
   VideoTemplate,
 } from './types';
+
+// Allow-list rather than a prefix check on 'video/': the value is signed
+// into the upload URL and then echoed by the storage on download, so an
+// unconstrained one lets a presigned "video" URL host anything, including
+// text/html served from our own bucket domain.
+const UPLOAD_CONTENT_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
+const UPLOAD_EXTENSIONS: Record<string, string> = { 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm' };
+// Long enough to upload a large clip on a phone connection, short enough that
+// a leaked URL is not a lasting write grant on our bucket.
+const UPLOAD_URL_TTL_SEC = 30 * 60;
+// Ceiling for a single upload through the local dev store. A reel is a few
+// hundred megabytes at most; without a cap one request can exhaust the
+// process's memory, since express.raw buffers the whole body.
+const MAX_UPLOAD_BYTES = 600 * 1024 * 1024;
 
 const DEMO_BOT_NAME = 'Sonar Demo';
 const DEMO_EXTERNAL_USER_ID = 'sonar-demo-contact';
@@ -106,15 +125,84 @@ export function createApp(db: Db): Express {
   // or a session JWT for the first-party product), not a cookie, so
   // there's no CSRF surface being widened by the permissive default.
   const corsOrigin = process.env.CORS_ORIGIN || '*';
+  if (corsOrigin === '*' && process.env.NODE_ENV === 'production') {
+    // Not fatal — a deployment behind the frontend proxy never makes a
+    // cross-origin request, so this is survivable. But the Origin check below
+    // cannot work without a known origin, and a wildcard in production is
+    // usually someone forgetting to fill the field in, so it says so loudly
+    // rather than degrading in silence.
+    console.warn('[api] CORS_ORIGIN is unset in production — origin checks are disabled and any site may call this API');
+  }
   app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', corsOrigin);
     res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Methods', 'GET, PUT, POST, PATCH, DELETE, OPTIONS');
+    // Only meaningful with a pinned origin: the browser refuses to send
+    // credentials to a wildcard, which is the correct behaviour and the
+    // reason CORS_ORIGIN must be set in production.
+    if (corsOrigin !== '*') res.header('Access-Control-Allow-Credentials', 'true');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
+
+    // Server-side CSRF guard behind SameSite=Lax — see sessionCookie.ts.
+    if (!isAllowedOrigin(req, corsOrigin)) return res.status(403).json({ error: 'origin_not_allowed' });
     next();
   });
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
+  // ---- Local media store (development stand-in for R2) --------------------
+  // Mounted BEFORE requireProductCredential on purpose: like a presigned S3
+  // URL, the signature in the query string IS the credential. A <video> tag
+  // cannot send an Authorization header, so a token-in-URL scheme is what
+  // makes a finished render playable in the browser at all.
+  const localMedia = localMediaConfigFromEnv(deriveKey('local-media'));
+
+  if (localMedia) {
+    app.put('/api/media/*', express.raw({ type: '*/*', limit: MAX_UPLOAD_BYTES }), asyncHandler(async (req, res) => {
+      const key = decodeURIComponent((req.params as unknown as string[])[0] ?? '');
+      if (!verifyLocalUrl(localMedia, 'PUT', key, req.query.exp, req.query.token)) {
+        return res.status(403).json({ error: 'invalid_or_expired_upload_url' });
+      }
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) return res.status(400).json({ error: 'empty_body' });
+
+      const target = resolveKeyPath(localMedia, key);
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.writeFile(target, req.body);
+      res.status(200).json({ objectKey: key, bytes: req.body.length });
+    }));
+
+    app.get('/api/media/*', asyncHandler(async (req, res) => {
+      const key = decodeURIComponent((req.params as unknown as string[])[0] ?? '');
+      if (!verifyLocalUrl(localMedia, 'GET', key, req.query.exp, req.query.token)) {
+        return res.status(403).json({ error: 'invalid_or_expired_url' });
+      }
+      try {
+        const target = resolveKeyPath(localMedia, key);
+        await fsp.access(target);
+        // The <a download> attribute is ignored cross-origin, and the API is
+        // a different origin from the frontend (:4001 vs :3001), so a
+        // "download" link opened the raw file in a new tab with no history
+        // to go back through. Saying it server-side is what actually saves
+        // the file; the player omits the flag and still streams normally.
+        if (req.query.download !== undefined) {
+          res.setHeader('Content-Disposition', `attachment; filename="${path.basename(key)}"`);
+        }
+        // helmet defaults Cross-Origin-Resource-Policy to same-origin, and the
+        // frontend is a different origin from this API (:3001 vs :4001). The
+        // browser then refuses to paint a <video poster> from here — the
+        // request never even leaves it (ERR_BLOCKED_BY_RESPONSE.NotSameOrigin),
+        // so the card showed a black rectangle and the job looked like it had
+        // produced nothing. These URLs are already unguessable and expiring;
+        // the policy adds nothing here but the blockage.
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        // sendFile rather than reading into memory: a render is tens of
+        // megabytes and the browser seeks around it while playing.
+        res.sendFile(target);
+      } catch {
+        res.status(404).json({ error: 'not_found' });
+      }
+    }));
+  }
 
   // ---- Tenant bootstrap (not API-key protected — this is how a tenant
   // gets its first key; equivalent to a signup step). --------------------
@@ -178,6 +266,10 @@ export function createApp(db: Db): Express {
     }
 
     const sessionToken = signSession({ userId, tenantId });
+    // The cookie is the credential the browser will actually use. The token
+    // stays in the body for non-browser clients (the CLI demo, tests, any
+    // integration), which cannot receive a cookie jar.
+    setSessionCookie(res, sessionToken);
     res.status(201).json({ user: { id: userId, email }, tenant: { id: tenantId, name: email }, sessionToken });
   }));
 
@@ -205,7 +297,15 @@ export function createApp(db: Db): Express {
 
     const tenant = await queryOne<{ id: string; name: string }>(db, `SELECT id, name FROM tenants WHERE id = ?`, user.tenant_id);
     const sessionToken = signSession({ userId: user.id, tenantId: user.tenant_id });
+    setSessionCookie(res, sessionToken);
     res.json({ user: { id: user.id, email: user.email }, tenant, sessionToken });
+  }));
+
+  // Signing out has to happen server-side now: an httpOnly cookie is by
+  // design not something the page can delete itself.
+  app.post('/api/auth/logout', asyncHandler(async (_req, res) => {
+    clearSessionCookie(res);
+    res.json({ ok: true });
   }));
 
   app.get('/api/auth/me', requireSession(db), asyncHandler(async (req, res) => {
@@ -1225,22 +1325,114 @@ export function createApp(db: Db): Express {
 
   // ---- Module 8: Video editing, Levels 1-2 (mocked Shotstack/Creatomate) --
 
-  const VIDEO_TEMPLATES: VideoTemplate[] = ['auto_crop_916', 'template_with_transitions'];
+  const VIDEO_TEMPLATES: VideoTemplate[] = ['auto_crop_916', 'template_with_transitions', 'ai_smart_cut'];
+
+  // Level 3 needs the actual file, which the Level 1-2 presets never did
+  // (they take a URL string). The browser uploads straight to object storage
+  // with this presigned URL — the API never sees the bytes, because proxying
+  // a few hundred megabytes of video through an Express process on a small
+  // instance is what takes the whole API down.
+  app.post('/api/video-uploads', asyncHandler(async (req, res) => {
+    const storage = storageConfigFromEnv();
+    if (!storage && !localMedia) return res.status(503).json({ error: 'storage_not_configured' });
+
+    const contentType = typeof req.body?.contentType === 'string' ? req.body.contentType : '';
+    if (!UPLOAD_CONTENT_TYPES.includes(contentType)) {
+      return res.status(400).json({ error: `contentType must be one of: ${UPLOAD_CONTENT_TYPES.join(', ')}` });
+    }
+
+    // The key is derived server-side and namespaced by tenant; a
+    // client-supplied key would let one tenant write into another's prefix,
+    // and a moment later read it back as a "source" of their own job.
+    const objectKey = `tenants/${res.locals.tenantId}/sources/${randomUUID()}.${UPLOAD_EXTENSIONS[contentType]}`;
+    // R2 wins whenever it is configured — the local store is the fallback that
+    // makes the feature runnable before a bucket exists, not a preference.
+    const uploadUrl = storage
+      ? presign(storage, { method: 'PUT', key: objectKey, contentType, expiresInSec: UPLOAD_URL_TTL_SEC })
+      : signLocalUrl(localMedia!, 'PUT', objectKey, UPLOAD_URL_TTL_SEC);
+
+    res.status(201).json({
+      objectKey,
+      uploadUrl,
+      // With R2 the browser must send exactly this header on the PUT — it is
+      // part of what was signed, so anything else is rejected by the storage.
+      contentType,
+      expiresInSec: UPLOAD_URL_TTL_SEC,
+      storage: storage ? 'r2' : 'local',
+    });
+  }));
 
   app.post('/api/video-edit-jobs', asyncHandler(async (req, res) => {
-    const sourceVideoUrl = typeof req.body?.sourceVideoUrl === 'string' ? req.body.sourceVideoUrl.trim() : '';
     const template = req.body?.template;
-    if (!sourceVideoUrl) return res.status(400).json({ error: 'sourceVideoUrl is required' });
     if (!VIDEO_TEMPLATES.includes(template)) return res.status(400).json({ error: `template must be one of: ${VIDEO_TEMPLATES.join(', ')}` });
 
-    const id = randomUUID();
-    await exec(db, `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template) VALUES (?, ?, ?, ?)`, id, res.locals.tenantId, sourceVideoUrl, template);
+    const tenantId = res.locals.tenantId as string;
 
-    res.status(201).json({ job: await getVideoJobForTenant(db, id, res.locals.tenantId as string) });
+    if (template === 'ai_smart_cut') {
+      const sourceObjectKey = typeof req.body?.sourceObjectKey === 'string' ? req.body.sourceObjectKey.trim() : '';
+      if (!sourceObjectKey) return res.status(400).json({ error: 'sourceObjectKey is required for ai_smart_cut' });
+      // Multi-tenancy isolation (CLAUDE.md): the key came back from this
+      // tenant's own upload request, so it must still carry their prefix.
+      // Without this check a tenant could name any key in the bucket and have
+      // the worker render — and hand back — another tenant's private footage.
+      if (!sourceObjectKey.startsWith(`tenants/${tenantId}/sources/`)) {
+        return res.status(403).json({ error: 'source_object_key_not_owned' });
+      }
+
+      // Captions are burned into the pixels and cannot be removed afterwards,
+      // so this defaults to on (it is the point of the Level-3 output) but
+      // stays explicitly switchable per job.
+      const subtitles = req.body?.subtitles === undefined ? true : req.body.subtitles === true;
+      // Opt-in, unlike subtitles: stripping ambience is destructive and the
+      // caller has to ask for it.
+      // 'auto' unless the caller insists: the system measures the recording
+      // and decides, which is the whole point of not putting this on the user.
+      const denoiseMode = ['on', 'off'].includes(req.body?.denoiseMode) ? req.body.denoiseMode : 'auto';
+      // Opt-in review: the pipeline stops after captions are generated and
+      // waits. Worth it on languages the models only approximate, wasted
+      // friction on the ones they get right.
+      // Same shape as denoise: measured decision by default, override on request.
+      const reviewMode = ['always', 'never'].includes(req.body?.reviewMode) ? req.body.reviewMode : 'auto';
+
+      const id = randomUUID();
+      await exec(
+        db,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?)`,
+        id,
+        tenantId,
+        sourceObjectKey,
+        template,
+        sourceObjectKey,
+        subtitles,
+        denoiseMode,
+        reviewMode
+      );
+      return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
+    }
+
+    const sourceVideoUrl = typeof req.body?.sourceVideoUrl === 'string' ? req.body.sourceVideoUrl.trim() : '';
+    if (!sourceVideoUrl) return res.status(400).json({ error: 'sourceVideoUrl is required' });
+
+    const id = randomUUID();
+    await exec(db, `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template) VALUES (?, ?, ?, ?)`, id, tenantId, sourceVideoUrl, template);
+
+    res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
   }));
 
   app.get('/api/video-edit-jobs', asyncHandler(async (req, res) => {
-    const jobs = await queryAll(db, `SELECT * FROM video_edit_jobs WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`, res.locals.tenantId);
+    // artifacts minus the transcript: the frontend polls this every 2s while
+    // anything renders, and a 20-minute clip's word list is tens of kilobytes
+    // that no screen displays. The single-job GET below still returns it in
+    // full for anything that needs the detail.
+    const jobs = await queryAll(
+      db,
+      `SELECT id, seq, tenant_id, source_video_url, template, status, progress_percent,
+              output_url, poster_url, failure_reason, created_at, completed_at,
+              pipeline, stage, subtitles, denoise_mode, review_mode,
+              artifacts - 'transcript' AS artifacts
+       FROM video_edit_jobs WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`,
+      res.locals.tenantId
+    );
     res.json({ jobs });
   }));
 
@@ -1257,6 +1449,55 @@ export function createApp(db: Db): Express {
   // an event, so this lets a demo see progress advance without waiting
   // for the timer in server.ts.
   // Tenant-scoped for the same reason as process-due above.
+  // Returns the caption lines a paused job is waiting on, and accepts the
+  // corrected ones. PUT rather than PATCH: the client sends the whole list
+  // back, because lines can be merged or emptied, not just retyped.
+  app.put('/api/video-edit-jobs/:id/captions', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const job = await queryOne<VideoEditJob>(
+      db,
+      `SELECT * FROM video_edit_jobs WHERE id = ? AND tenant_id = ?`,
+      req.params.id,
+      tenantId
+    );
+    if (!job) return res.status(404).json({ error: 'not_found' });
+    if (job.status !== 'awaiting_review') return res.status(409).json({ error: 'job_not_awaiting_review' });
+
+    const existing = job.artifacts?.captions?.lines ?? [];
+    const incoming = Array.isArray(req.body?.lines) ? req.body.lines : null;
+    if (!incoming) return res.status(400).json({ error: 'lines_required' });
+    // Timings are the pipeline's, never the client's: they came from the cut
+    // plan, and letting a caller set them would desynchronise the captions
+    // from the video it is about to render.
+    if (incoming.length !== existing.length) return res.status(400).json({ error: 'lines_length_mismatch' });
+
+    const lines = existing.map((line, i) => ({
+      start: line.start,
+      end: line.end,
+      text: typeof incoming[i]?.text === 'string' ? incoming[i].text.trim().slice(0, 300) : line.text,
+    }));
+
+    // Writing the approval and releasing the job in one statement: a crash
+    // between them would leave a job that looks reviewed but never resumes.
+    await exec(
+      db,
+      `UPDATE video_edit_jobs
+       SET artifacts = jsonb_set(artifacts, '{captions}', ?::jsonb, true),
+           status = 'processing',
+           claimed_at = NULL,
+           -- Waiting for a person is not a failed attempt. Without this reset
+           -- the pause would spend one of the job's three retries, and a
+           -- reviewed job would have fewer left for real failures.
+           attempt_count = 0
+       WHERE id = ? AND tenant_id = ? AND status = 'awaiting_review'`,
+      JSON.stringify({ approved: true, lines }),
+      req.params.id,
+      tenantId
+    );
+
+    res.json({ job: await getVideoJobForTenant(db, req.params.id, tenantId) });
+  }));
+
   app.post('/api/video-edit-jobs/process-tick', asyncHandler(async (_req, res) => {
     res.json(await advanceRenderJobs(db, new Date(), res.locals.tenantId as string));
   }));
@@ -1489,11 +1730,10 @@ function asyncHandler(handler: (req: Request, res: Response) => Promise<unknown>
 // error codes because existing API clients may branch on those values.
 function requireProductCredential(db: Db) {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const header = req.header('authorization') ?? '';
-    if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'missing_api_key' });
+    const credential = sessionTokenFromRequest(req);
+    if (!credential) return res.status(401).json({ error: 'missing_api_key' });
 
     try {
-      const credential = header.slice('Bearer '.length);
 
       // API key first preserves the exact old path (including support for a
       // token whose textual shape happens to resemble a JWT).
@@ -1532,10 +1772,10 @@ function requireProductCredential(db: Db) {
 // above intentionally preserve the older API-key errors for compatibility.
 function requireSession(_db: Db) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const header = req.header('authorization') ?? '';
-    if (!header.startsWith('Bearer ')) return res.status(401).json({ error: 'missing_session' });
+    const token = sessionTokenFromRequest(req);
+    if (!token) return res.status(401).json({ error: 'missing_session' });
 
-    const result = verifySession(header.slice('Bearer '.length));
+    const result = verifySession(token);
     if (!result.ok) return res.status(401).json({ error: result.reason === 'expired' ? 'session_expired' : 'invalid_session' });
 
     res.locals.session = result.payload;

@@ -2,13 +2,15 @@
   "name": "sonar-module1",
   "version": "0.1.0",
   "private": true,
-  "description": "Sonar Module 1 \u2014 chat-bot constructor backend (trigger -> flow -> action)",
+  "description": "Sonar Module 1 — chat-bot constructor backend (trigger -> flow -> action)",
   "main": "dist/api.js",
   "scripts": {
     "build": "tsc && cp src/schema.sql dist/schema.sql",
     "test": "vitest run",
     "demo": "tsx src/demo.ts",
-    "dev": "tsx watch --env-file-if-exists=.env src/server.ts"
+    "dev": "tsx watch --env-file-if-exists=.env src/server.ts",
+    "worker": "tsx watch --env-file-if-exists=.env src/worker.ts",
+    "smartcut": "tsx --env-file-if-exists=.env src/smartcutCli.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type AppNotification } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { useApiAccess } from '@/lib/useApiAccess';
 import controls from './Controls.module.css';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -21,6 +22,9 @@ export default function NotificationBell() {
   const [devConfig] = useDevConfig();
   const { baseUrl, apiKey } = devConfig;
   const config = { baseUrl, apiKey };
+  // Not the same as holding a key — see useApiAccess: the session is a cookie
+  // this code cannot read.
+  const { hasAccess } = useApiAccess();
 
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [open, setOpen] = useState(false);
@@ -28,7 +32,7 @@ export default function NotificationBell() {
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
-    if (!apiKey) return;
+    if (!hasAccess) return;
     try {
       const res = await api.listNotifications(config);
       setNotifications(res.notifications);
@@ -47,10 +51,10 @@ export default function NotificationBell() {
   // permitted — it runs regardless of push permission state, not just
   // when push is unavailable.
   useEffect(() => {
-    if (!apiKey) return;
+    if (!hasAccess) return;
     const id = setInterval(load, 10_000);
     return () => clearInterval(id);
-  }, [apiKey, load]);
+  }, [hasAccess, load]);
 
   async function enablePush() {
     setError('');

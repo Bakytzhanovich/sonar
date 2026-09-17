@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type GeneratedScript, type ReelAnalysis } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
+import TabBar from './TabBar';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import StatusMessage from './StatusMessage';
 import controls from './Controls.module.css';
@@ -14,6 +16,9 @@ export default function ReelsView() {
   const [devConfig] = useDevConfig();
   const { baseUrl, apiKey } = devConfig;
   const config = { baseUrl, apiKey };
+  // Not the same as holding a key — see useApiAccess: the session is a cookie
+  // this code cannot read.
+  const { hasAccess } = useApiAccess();
 
   const [sourceUrl, setSourceUrl] = useState('https://instagram.com/reel/example');
   const [analyses, setAnalyses] = useState<ReelAnalysis[]>([]);
@@ -27,7 +32,7 @@ export default function ReelsView() {
   const selected = analyses.find((a) => a.id === selectedId) ?? null;
 
   const loadAnalyses = useCallback(async () => {
-    if (!apiKey) return;
+    if (!hasAccess) return;
     try {
       const res = await api.listAnalyses(config);
       setAnalyses(res.analyses);
@@ -89,20 +94,32 @@ export default function ReelsView() {
   return (
     <div className={styles.page}>
       <header className={layout.header}>
-        <div><span className={styles.eyebrow}>ИССЛЕДОВАНИЯ</span><span className={layout.title}>Анализ рилсов</span></div>
+        <div className={styles.headerTitle}>
+          <span className={styles.eyebrow}>ИССЛЕДОВАНИЯ</span>
+          <span className={layout.title}>Анализ рилсов</span>
+        </div>
         <ModuleNav current="/reels" />
       </header>
 
       <div className={layout.twoPane}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>
-          {!apiKey && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
-          <div className={styles.panelHeading}><span className={styles.eyebrow}>НОВЫЙ РАЗБОР</span><h2>Источник видео</h2></div>
-          <input className={controls.input} value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} style={{ width: '100%' }} />
+          {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
+          {/* No section heading: a URL field with "Разобрать" under it does
+              not need "НОВЫЙ РАЗБОР / Источник видео" explaining it. */}
+          <input
+            className={controls.input}
+            value={sourceUrl}
+            onChange={(e) => setSourceUrl(e.target.value)}
+            placeholder="Ссылка на рилс"
+            style={{ width: '100%' }}
+          />
           <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={analyze}>
             Разобрать
           </button>
 
-          <div className={styles.divider} /><div className={styles.panelHeading}><span className={styles.eyebrow}>БИБЛИОТЕКА</span><h2>Последние разборы</h2></div>
+          {analyses.length > 0 && (
+            <div className={styles.sectionLabel}>Последние разборы</div>
+          )}
           {analyses.map((a) => (
             <div
               key={a.id}
@@ -117,7 +134,7 @@ export default function ReelsView() {
             </div>
           ))}
 
-          <div className={styles.divider} /><div className={styles.panelHeading}><span className={styles.eyebrow}>БИБЛИОТЕКА СЦЕНАРИЕВ</span><h2>Поиск по нише</h2></div>
+          <div className={styles.sectionLabel}>Сценарии по нише</div>
           <div className={styles.searchRow}>
             <input className={controls.input} value={nicheSearch} onChange={(e) => setNicheSearch(e.target.value)} placeholder="напр. фитнес" />
             <button className={controls.buttonSecondary} onClick={searchByNiche}>Найти</button>
@@ -183,6 +200,7 @@ export default function ReelsView() {
           <StatusMessage>{status}</StatusMessage>
         </div>
       </div>
+      <TabBar current="/reels" />
     </div>
   );
 }

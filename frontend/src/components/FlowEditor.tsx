@@ -23,7 +23,9 @@ import '@xyflow/react/dist/style.css';
 import { api, ApiError, type ApiConfig, type FlowDefinition, type MatchType, type FallbackChannel } from '@/lib/api';
 import Link from 'next/link';
 import { useDevConfig } from '@/lib/useDevConfig';
+import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
+import TabBar from './TabBar';
 import styles from './FlowEditor.module.css';
 import controls from './Controls.module.css';
 
@@ -152,12 +154,13 @@ const nodeTypes: NodeTypes = { trigger: TriggerNode, send_message: ActionNode };
 
 export default function FlowEditor() {
   const [devConfig, setDevConfig] = useDevConfig();
+  // A signed-in user's credential is a cookie this code cannot see.
+  const { hasAccess } = useApiAccess();
   // externalAccountId is no longer read here: the "входящее сообщение" panel
   // used to need it to address the public mock webhook, and now posts to the
   // tenant-scoped /api/bots/:botId/simulate-incoming instead. It stays in
   // useDevConfig because creating a bot still sets it.
   const { baseUrl, apiKey, botId, devMode } = devConfig;
-  const setBaseUrl = (v: string) => setDevConfig((c) => ({ ...c, baseUrl: v }));
   const setApiKey = (v: string) => setDevConfig((c) => ({ ...c, apiKey: v }));
   const setBotId = (v: string) => setDevConfig((c) => ({ ...c, botId: v }));
   const setDevMode = (v: boolean) => setDevConfig((c) => ({ ...c, devMode: v }));
@@ -216,7 +219,7 @@ export default function FlowEditor() {
   const onConnect = useCallback((connection: Connection) => setEdges((eds) => addEdge(connection, eds)), []);
 
   useEffect(() => {
-    if (!apiKey || !botId || flowId || autoLoadAttemptRef.current === botId) return;
+    if (!hasAccess || !botId || flowId || autoLoadAttemptRef.current === botId) return;
     autoLoadAttemptRef.current = botId;
 
     api
@@ -415,7 +418,7 @@ export default function FlowEditor() {
         </div>
 
         <aside className={styles.sidebar}>
-          {(!apiKey || !botId) && (
+          {(!hasAccess || !botId) && (
             <div className={styles.setupNotice}>
               <strong>Начните с демо-пространства</strong>
               <p>Sonar подготовит первый связанный сценарий без API-ключей и технических идентификаторов.</p>
@@ -530,7 +533,11 @@ export default function FlowEditor() {
             <div className={controls.devPanel}>
               <div className={styles.card}>
                 <h4 className={styles.cardTitle}>Подключение</h4>
-                <input className={controls.input} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="API base URL" style={{ width: '100%' }} />
+                {/* The API base is no longer editable here. Requests go to
+                    this origin and Next forwards them, which is what keeps
+                    the session cookie same-site; pointing the browser
+                    somewhere else would silently stop the cookie being sent
+                    and 401 the whole app. */}
                 <input className={controls.input} value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="apiKey" style={{ width: '100%' }} />
                 <input className={controls.input} value={botId} onChange={(e) => setBotId(e.target.value)} placeholder="botId" style={{ width: '100%' }} />
                 <button className={controls.buttonSecondary} onClick={quickSetup}>
@@ -569,6 +576,7 @@ export default function FlowEditor() {
           )}
         </aside>
       </div>
+      <TabBar current="/bot" />
     </div>
   );
 }

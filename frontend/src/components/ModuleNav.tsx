@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import LogoutButton from './LogoutButton';
 import NotificationBellLoader from './NotificationBellLoader';
 import styles from './ModuleNav.module.css';
 
@@ -29,6 +30,15 @@ const ITEMS: { href: ModuleRoute; label: string }[] = [
 // styling, just collapsed.
 export default function ModuleNav({ current }: { current: ModuleRoute }) {
   const [open, setOpen] = useState(false);
+  // Signing out used to exist only on the onboarding screen, which meant that
+  // from any of the seven module screens there was no way out of the account
+  // at all. It belongs here because this nav is the one thing all of them
+  // share.
+  // LogoutButton resets its own confirm step whenever `open` changes, so
+  // closing the menu cannot leave it armed for a later, unrelated click.
+  function closeMenu() {
+    setOpen(false);
+  }
 
   return (
     // The bell used to live in its own position:fixed overlay in the root
@@ -54,10 +64,11 @@ export default function ModuleNav({ current }: { current: ModuleRoute }) {
             </Link>
           )
         )}
+        <LogoutButton />
       </nav>
 
       <div className={styles.navMobile}>
-        <button className={styles.hamburger} onClick={() => setOpen((v) => !v)} aria-label="Меню разделов" aria-expanded={open}>
+        <button className={styles.hamburger} onClick={() => (open ? closeMenu() : setOpen(true))} aria-label="Меню разделов" aria-expanded={open}>
           ☰
         </button>
         {open && (
@@ -68,11 +79,12 @@ export default function ModuleNav({ current }: { current: ModuleRoute }) {
                 href={item.href}
                 className={`${styles.mobileLink} ${item.href === current ? styles.mobileActive : ''}`}
                 aria-current={item.href === current ? 'page' : undefined}
-                onClick={() => setOpen(false)}
+                onClick={closeMenu}
               >
                 {item.label}
               </Link>
             ))}
+            <LogoutButton variant="stacked" />
           </div>
         )}
       </div>

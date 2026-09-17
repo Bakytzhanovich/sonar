@@ -174,8 +174,27 @@ export interface ScheduledPost {
   created_at: string;
 }
 
-export type VideoTemplate = 'auto_crop_916' | 'template_with_transitions';
-export type VideoJobStatus = 'processing' | 'completed' | 'failed';
+// 'ai_smart_cut' is the Level-3 pipeline (own ffmpeg engine): real cutting,
+// real transcription, burned-in captions. The other two are the mocked
+// Shotstack/Creatomate presets.
+export type VideoTemplate = 'auto_crop_916' | 'template_with_transitions' | 'ai_smart_cut';
+export type VideoJobStatus = 'processing' | 'awaiting_review' | 'completed' | 'failed';
+export type VideoStage = 'probe' | 'transcribe' | 'plan_cuts' | 'subtitles' | 'render' | 'upload';
+
+export interface VideoJobArtifacts {
+  probe?: { durationSec: number; hasAudio: boolean; width: number | null; height: number | null };
+  transcript?: { words: Array<{ word: string; start: number; end: number }>; language: string | null };
+  plan?: {
+    segments: Array<{ start: number; end: number }>;
+    keptDurationSec: number;
+    removedDurationSec: number;
+    droppedFillerCount: number;
+    degraded: boolean;
+  };
+  subtitles?: { chunkCount: number; wordCount: number };
+  captions?: { approved: boolean; lines: Array<{ start: number; end: number; text: string }> };
+  noise?: { headroomDb: number; denoised: boolean };
+}
 
 export interface VideoEditJob {
   id: string;
@@ -184,9 +203,24 @@ export interface VideoEditJob {
   status: VideoJobStatus;
   progress_percent: number;
   output_url: string | null;
+  poster_url: string | null;
   failure_reason: string | null;
   created_at: string;
   completed_at: string | null;
+  pipeline?: 'preset' | 'smart_cut';
+  stage?: VideoStage | null;
+  artifacts?: VideoJobArtifacts;
+  subtitles?: boolean;
+  denoise_mode?: 'auto' | 'on' | 'off';
+  review_mode?: 'auto' | 'always' | 'never';
+}
+
+export interface VideoUploadTicket {
+  objectKey: string;
+  uploadUrl: string;
+  contentType: string;
+  expiresInSec: number;
+  storage: 'r2' | 'local';
 }
 
 export interface PushSubscriptionPayload {
@@ -219,6 +253,10 @@ export interface ApiConfig {
   apiKey?: string;
 }
 
+// Shared with useSession — kept as a literal here to avoid importing a React
+// hook module into this transport layer.
+const SESSION_STORAGE_KEY = 'sonar-session';
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
@@ -232,17 +270,58 @@ export class ApiError extends Error {
 
 async function apiRequest(config: ApiConfig, method: string, path: string, body?: unknown) {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
+  // Only the dev-panel apiKey still travels in a header. The user's session
+  // is an httpOnly cookie the page cannot read — it rides along because of
+  // credentials below, and that is the point: script cannot steal what
+  // script cannot see.
   if (config.apiKey) headers.authorization = `Bearer ${config.apiKey}`;
 
   const res = await fetch(`${config.baseUrl}${path}`, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    // same-origin, not 'include': the proxy makes the API same-origin, and
+    // 'include' would also send the cookie to any other host this ever
+    // pointed at.
+    credentials: 'same-origin',
   });
 
   const json = await res.json().catch(() => ({}));
+  if (res.status === 401 && !config.apiKey && !isAuthAttempt(path)) onSessionRejected();
   if (!res.ok) throw new ApiError(res.status, json);
   return json;
+}
+
+// A 401 on a cookie-authenticated request means the stored session is a
+// ghost: the browser has no valid cookie, but the page still holds the
+// metadata written beside it. That happens when the cookie expires, when it
+// is cleared, and — for everyone who signed in before the switch — when the
+// session predates cookies entirely, because back then the token lived in
+// localStorage and no cookie was ever set.
+//
+// Left alone, the UI reads that metadata as "signed in" and offers working
+// buttons that 401 on every press. Clearing it is what turns a silent
+// failure into a login screen. Only done when no apiKey was sent: with a key
+// the 401 is about the key, not the session.
+// A 401 from the sign-in routes is an answer, not an expired session: wrong
+// password, or "you are not signed in" — which is the whole point of asking.
+// Treating those as a dead session reloaded the page mid-login, wiping the
+// typed credentials and the error message with them, so a mistyped password
+// looked like the form doing nothing.
+function isAuthAttempt(path: string): boolean {
+  return path.startsWith('/api/auth/');
+}
+
+function onSessionRejected(): void {
+  try {
+    if (!localStorage.getItem(SESSION_STORAGE_KEY)) return;
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    return;
+  }
+  // Reload rather than route: every screen holds this state in a hook, and
+  // a reload is the one thing guaranteed to re-read it everywhere at once.
+  if (typeof window !== 'undefined') window.location.reload();
 }
 
 export const api = {
@@ -409,9 +488,39 @@ export const api = {
   createVideoJob: (config: ApiConfig, sourceVideoUrl: string, template: VideoTemplate) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', { sourceVideoUrl, template }) as Promise<{ job: VideoEditJob }>,
 
+  // ---- Module 8, Level 3: own ffmpeg engine ------------------------------
+
+  createVideoUpload: (config: ApiConfig, contentType: string) =>
+    apiRequest(config, 'POST', '/api/video-uploads', { contentType }) as Promise<VideoUploadTicket>,
+
+  // No denoise/review flags: the pipeline measures the recording and decides.
+  createSmartCutJob: (config: ApiConfig, sourceObjectKey: string, subtitles: boolean) =>
+    apiRequest(config, 'POST', '/api/video-edit-jobs', {
+      template: 'ai_smart_cut',
+      sourceObjectKey,
+      subtitles,
+    }) as Promise<{ job: VideoEditJob }>,
+
+  // Uploads straight to storage with the presigned URL — deliberately NOT
+  // through apiRequest, which would add an Authorization header the signature
+  // does not cover and JSON-encode a binary body.
+  uploadVideoFile: async (ticket: VideoUploadTicket, file: File) => {
+    const res = await fetch(ticket.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': ticket.contentType },
+      body: file,
+    });
+    if (!res.ok) throw new Error(`Загрузка не удалась: ${res.status}`);
+  },
+
   listVideoJobs: (config: ApiConfig) => apiRequest(config, 'GET', '/api/video-edit-jobs') as Promise<{ jobs: VideoEditJob[] }>,
 
   getVideoJob: (config: ApiConfig, id: string) => apiRequest(config, 'GET', `/api/video-edit-jobs/${id}`) as Promise<{ job: VideoEditJob }>,
+
+  logout: (config: ApiConfig) => apiRequest(config, 'POST', '/api/auth/logout'),
+
+  approveCaptions: (config: ApiConfig, jobId: string, lines: Array<{ text: string }>) =>
+    apiRequest(config, 'PUT', `/api/video-edit-jobs/${jobId}/captions`, { lines }),
 
   processVideoTick: (config: ApiConfig) => apiRequest(config, 'POST', '/api/video-edit-jobs/process-tick') as Promise<{ advanced: number }>,
 

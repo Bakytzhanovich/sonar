@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { api, type ConversationMessage, type LeadStatus, type Note, type Subscriber, type Tag } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import ModuleNav from './ModuleNav';
+import TabBar from './TabBar';
 import PulseIndicator, { LiveDot } from './PulseIndicator';
 import styles from './CrmView.module.css';
 import controls from './Controls.module.css';
@@ -1228,6 +1229,7 @@ export default function CrmView() {
           <button type="button" onClick={() => setStatus('')} aria-label="Закрыть сообщение">×</button>
         </div>
       )}
+      <TabBar current="/crm" />
     </div>
   );
 }

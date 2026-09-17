@@ -8,9 +8,9 @@
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--foreground);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 6px 10px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .input::placeholder {
@@ -18,9 +18,9 @@
 }
 
 .buttonBase {
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 6px 12px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 /* Ghost/outline — transparent by default, fills with --surface-hover only
@@ -108,7 +108,7 @@
   background: none;
   border: none;
   color: var(--foreground-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   cursor: pointer;
   text-align: left;
   padding: 4px 0;
@@ -124,4 +124,29 @@
   gap: 14px;
   padding-top: 10px;
   border-top: 1px dashed var(--border);
+}
+
+/* ---- Touch sizing -------------------------------------------------------
+ * Applies to every screen at once, which is the point of this file: the
+ * desktop sizes above are cursor-sized, and a finger is not a cursor. */
+@media (max-width: 760px) {
+  /* 16px is not a style choice: iOS Safari zooms the whole page when a field
+   * smaller than that takes focus, and the user is then left scrolled and
+   * pinched into a form they were only trying to type in. */
+  .input {
+    min-height: 44px;
+    padding: 10px 12px;
+    font-size: var(--text-lg);
+    border-radius: var(--radius-md);
+  }
+
+  /* 44px is the smallest target most people hit reliably on the first try. */
+  .buttonBase,
+  .buttonPrimary,
+  .buttonSecondary {
+    min-height: 44px;
+    padding: 10px 16px;
+    font-size: var(--text-base);
+    border-radius: var(--radius-md);
+  }
 }

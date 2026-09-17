@@ -10,7 +10,7 @@
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .link {
@@ -35,11 +35,11 @@
 .hamburger {
   background: none;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--foreground);
   width: 36px;
   height: 32px;
-  font-size: 16px;
+  font-size: var(--text-lg);
   cursor: pointer;
 }
 
@@ -49,7 +49,7 @@
   top: calc(100% + 6px);
   background: var(--background);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 6px;
   display: flex;
   flex-direction: column;
@@ -59,10 +59,10 @@
 
 .mobileLink {
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--foreground-muted);
   text-decoration: none;
-  font-size: 14px;
+  font-size: var(--text-base);
 }
 
 .mobileLink:hover {
@@ -89,4 +89,81 @@
   .navMobile {
     display: flex;
   }
+}
+
+/* Signing out is not navigation, so it does not get link styling — muted
+ * until hovered, and separated from the module links. */
+.logout {
+  margin-left: 12px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.logout:hover { color: var(--foreground); }
+
+.mobileLogout {
+  margin-top: 6px;
+  padding: 10px 14px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+
+.confirmRow { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; }
+
+/* The destructive half carries the warning color; the escape hatch stays
+ * quiet, so the eye lands on "cancel" being the safe default. */
+.logoutConfirm {
+  padding: 4px 10px;
+  border: 1px solid var(--status-failed, #c0392b);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--status-failed, #c0392b);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.logoutCancel {
+  padding: 4px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.logoutCancel:hover { color: var(--foreground); }
+
+.mobileLogoutConfirm {
+  margin-top: 6px;
+  padding: 10px 14px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--status-failed, #c0392b);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+
+/* The hamburger is replaced by the bottom tab bar on a phone: seven modules
+ * in the top-right corner is the least reachable spot on the screen, and
+ * every move cost two taps. The bell stays — it is a notification, not
+ * navigation. */
+@media (max-width: 760px) {
+  .navMobile { display: none; }
 }

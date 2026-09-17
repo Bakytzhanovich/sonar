@@ -41,3 +41,86 @@ services:
       # start with the flag on and no secret).
       - key: MOCK_WEBHOOK_ENABLED
         value: false
+      # Object storage — the API only ever presigns upload URLs with these; it
+      # never reads or writes the bytes itself. Without them
+      # POST /api/video-uploads answers 503 and the Level-3 pipeline is simply
+      # unavailable, which is the intended behaviour before a bucket exists.
+      - key: STORAGE_ENDPOINT
+        sync: false
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_REGION
+        value: auto
+      - key: STORAGE_ACCESS_KEY_ID
+        sync: false
+      - key: STORAGE_SECRET_ACCESS_KEY
+        sync: false
+      - key: STORAGE_PUBLIC_BASE_URL
+        sync: false
+
+  # Module 8, Level 3 — the smart-cut render worker. Deliberately a separate
+  # service from sonar-api, not a second process inside it: an ffmpeg render
+  # holds a CPU core for minutes, and sharing the API's process would stall
+  # every request behind it, /health included — at which point Render
+  # restarts a server that is merely busy.
+  #
+  # Docker rather than the node runtime because the job needs the ffmpeg
+  # binary, which no Node runtime provides (see Dockerfile).
+  #
+  # NOTE: background workers are not available on Render's free plan, and
+  # video encoding is CPU-bound — 'starter' is the floor, and a longer source
+  # will want more. This is the first service in this blueprint that costs
+  # money; it is also the only one that does real computation.
+  - type: worker
+    name: sonar-video-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: frankfurt
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      # Required even though the worker serves no HTTP: auth.ts derives the
+      # local-media signing key from it at module load, and worker.ts imports
+      # that. Without it the process throws before its first poll and Render
+      # restarts it forever, so every job sits in the queue untouched.
+      # Must be the SAME value as the API service: the API signs media URLs
+      # the worker has to verify, and two different secrets would reject each
+      # other's links.
+      - key: SESSION_SECRET
+        sync: false
+      # Transcription (Whisper API). The worker refuses to start without
+      # storage, but an absent key here fails individual jobs with
+      # 'transcription_not_configured' rather than at boot — the rest of the
+      # pipeline is still worth running in a staging environment.
+      - key: OPENAI_API_KEY
+        sync: false
+      # S3-compatible object storage (Cloudflare R2). All four are required:
+      # worker.ts refuses to boot without them rather than failing every job
+      # it claims one at a time.
+      - key: STORAGE_ENDPOINT
+        sync: false
+      - key: STORAGE_BUCKET
+        sync: false
+      - key: STORAGE_REGION
+        value: auto
+      - key: STORAGE_ACCESS_KEY_ID
+        sync: false
+      - key: STORAGE_SECRET_ACCESS_KEY
+        sync: false
+      # Speech-to-Text for languages Whisper cannot transcribe (Kazakh).
+      # Absent: the worker falls back to Whisper, which is why this is listed
+      # here rather than left to be discovered missing in production.
+      - key: GOOGLE_SPEECH_API_KEY
+        sync: false
+      # Optional public domain for finished renders. Without it the API hands
+      # out a presigned GET that expires after a week.
+      - key: STORAGE_PUBLIC_BASE_URL
+        sync: false
+      # One render per worker: extra concurrency on a small instance makes
+      # both jobs slower without finishing either sooner. Scale by instance
+      # count instead.
+      - key: WORKER_CONCURRENCY
+        value: 1
+      - key: NODE_ENV
+        value: production
