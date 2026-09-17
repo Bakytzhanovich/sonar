@@ -42,7 +42,14 @@ export interface TranscriptionResult {
 export type Transcriber = (audioPath: string) => Promise<TranscriptionResult>;
 
 export class TranscriptionError extends Error {
-  constructor(readonly code: 'transcription_not_configured' | 'audio_too_large' | 'transcription_failed', detail?: string) {
+  constructor(
+    readonly code:
+      | 'transcription_not_configured'
+      | 'transcription_quota_exhausted'
+      | 'audio_too_large'
+      | 'transcription_failed',
+    detail?: string
+  ) {
     super(detail ? `${code}: ${detail}` : code);
     this.name = 'TranscriptionError';
   }
@@ -76,7 +83,15 @@ export async function transcribeWithWhisper(audioPath: string): Promise<Transcri
   });
 
   if (!response.ok) {
-    throw new TranscriptionError('transcription_failed', `${response.status} ${(await response.text()).slice(0, 300)}`);
+    const body = (await response.text()).slice(0, 300);
+    // Out of credit is not a transient failure: retrying spends nothing but
+    // time, and every job in the queue hits it in turn. Separated so the
+    // pipeline stops rather than grinding, and so the user is told the real
+    // reason instead of "transcription failed".
+    if (response.status === 429 && /insufficient_quota|credit_balance|billing/i.test(body)) {
+      throw new TranscriptionError('transcription_quota_exhausted', body);
+    }
+    throw new TranscriptionError('transcription_failed', `${response.status} ${body}`);
   }
 
   const payload = (await response.json()) as {

@@ -102,6 +102,8 @@ const FAILURE_LABEL: Record<string, string> = {
   source_unreadable: 'Не удалось прочитать файл',
   transcription_not_configured: 'Не задан OPENAI_API_KEY — расшифровка недоступна',
   transcription_failed: 'Whisper не ответил',
+  // The one failure the user can actually fix, so it says what to do.
+  transcription_quota_exhausted: 'Закончились кредиты OpenAI — пополните счёт, распознавание речи недоступно',
   ffmpeg_not_available: 'На сервере нет ffmpeg',
   storage_not_configured: 'Не настроено хранилище',
   render_failed: 'Ошибка рендера',

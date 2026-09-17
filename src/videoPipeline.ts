@@ -38,6 +38,10 @@ const MAX_ATTEMPTS = 3;
 // input: a storage blip, a transcription 5xx, an OOM-killed ffmpeg. A clip
 // with no audio track will have no audio track on the third attempt either,
 // so retrying it just burns the queue and delays the user's error message.
+// Deliberately excludes transcription_quota_exhausted: an empty account
+// does not refill between attempts, so retrying only delays the failure —
+// and with several jobs queued, each burns its three attempts in turn before
+// anyone sees why.
 const RETRYABLE: ReadonlySet<VideoFailureReason> = new Set<VideoFailureReason>([
   'source_unreadable',
   'transcription_failed',

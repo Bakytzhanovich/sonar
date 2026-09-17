@@ -281,6 +281,7 @@ export type VideoFailureReason =
   | 'transcription_not_configured'
   | 'audio_too_large'
   | 'transcription_failed'
+  | 'transcription_quota_exhausted'
   | 'nothing_to_cut'
   | 'render_failed'
   | 'upload_failed';
