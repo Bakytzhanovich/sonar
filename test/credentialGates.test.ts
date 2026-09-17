@@ -9,6 +9,7 @@ import { createApp } from '../src/api';
 import {
   evaluateGate,
   gateStartupWarnings,
+  normalizeOrigin,
   signupAvailability,
   signupDecision,
   ADMIN_SECRET_HEADER,
@@ -56,6 +57,30 @@ describe('evaluateGate', () => {
     // `KEY=` in an env file is a blank, not a secret that happens to be ''.
     expect(evaluateGate({ isProduction: true, configuredSecret: '', providedSecret: '' }))
       .toEqual({ allowed: false, reason: 'not_configured' });
+  });
+});
+
+describe('normalizeOrigin', () => {
+  it('survives a value pasted with a trailing newline', () => {
+    // This is not hypothetical: a newline here makes Node throw
+    // ERR_INVALID_CHAR on every response, /health included, so the platform
+    // never sees a healthy instance and the deploy hangs instead of failing.
+    expect(normalizeOrigin('https://app.example.com\n')).toBe('https://app.example.com');
+    expect(normalizeOrigin('  https://app.example.com  ')).toBe('https://app.example.com');
+    expect(normalizeOrigin('https://app.example.com\r\n')).toBe('https://app.example.com');
+  });
+
+  it('drops a trailing slash, which an Origin header never has', () => {
+    expect(normalizeOrigin('https://app.example.com/')).toBe('https://app.example.com');
+    expect(normalizeOrigin('https://app.example.com///')).toBe('https://app.example.com');
+  });
+
+  it('leaves a good value alone and reports an empty one as unset', () => {
+    expect(normalizeOrigin('https://app.example.com')).toBe('https://app.example.com');
+    expect(normalizeOrigin('*')).toBe('*');
+    expect(normalizeOrigin('')).toBeUndefined();
+    expect(normalizeOrigin('   ')).toBeUndefined();
+    expect(normalizeOrigin(undefined)).toBeUndefined();
   });
 });
 

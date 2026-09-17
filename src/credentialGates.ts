@@ -120,3 +120,16 @@ export function gateStartupWarnings(env: NodeJS.ProcessEnv): string[] {
   }
   return warnings;
 }
+
+/**
+ * An origin as it will be compared and sent back in a header.
+ *
+ * Trims surrounding whitespace (a newline from a copy-paste into a hosting
+ * panel is the common case) and drops trailing slashes, which an Origin
+ * header never has. Returns undefined for anything left empty, so callers
+ * keep treating "not set" as one case.
+ */
+export function normalizeOrigin(value: string | undefined): string | undefined {
+  const trimmed = value?.trim().replace(/\/+$/, '');
+  return trimmed ? trimmed : undefined;
+}

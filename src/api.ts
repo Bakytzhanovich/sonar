@@ -8,7 +8,14 @@ import { exec, isUniqueViolation, queryAll, queryOne, type Db } from './db';
 import { createApiKeyForTenant, resolveTenantIdFromApiKey } from './apiKeys';
 import { hashPassword, verifyPassword, signSession, verifySession, deriveKey, DUMMY_PASSWORD_HASH } from './auth';
 import { MOCK_WEBHOOK_SECRET_HEADER, isMockWebhookEnabled, verifyMockWebhookSecret } from './webhookAuth';
-import { ADMIN_SECRET_HEADER, evaluateGate, gateStartupWarnings, signupAvailability, signupDecision } from './credentialGates';
+import {
+  ADMIN_SECRET_HEADER,
+  evaluateGate,
+  gateStartupWarnings,
+  normalizeOrigin,
+  signupAvailability,
+  signupDecision,
+} from './credentialGates';
 import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessionCookie } from './sessionCookie';
 import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
 import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
@@ -135,7 +142,16 @@ export function createApp(db: Db): Express {
   // its own origin, so its requests are same-origin and never consult CORS
   // at all. What it does cost is the ability of an arbitrary page to call
   // this API from a browser, which is the entire point.
-  const configuredOrigin = process.env.CORS_ORIGIN;
+  // Normalised, not taken as typed. A value pasted into a hosting panel
+  // arrives with a trailing newline often enough that it is worth handling:
+  // Node refuses to put a newline in a header and throws ERR_INVALID_CHAR on
+  // every response, /health included, so the platform never sees a healthy
+  // instance and the deploy hangs rather than failing with the reason.
+  //
+  // The trailing slash goes too. An Origin header never carries one, so
+  // "https://app.example.com/" would match nothing and silently reject every
+  // state-changing request — a subtler failure than the crash.
+  const configuredOrigin = normalizeOrigin(process.env.CORS_ORIGIN);
   const isProduction = process.env.NODE_ENV === 'production';
   const corsOrigin = configuredOrigin || (isProduction ? null : '*');
 
