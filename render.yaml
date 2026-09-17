@@ -10,10 +10,15 @@ services:
     startCommand: node dist/server.js
     healthCheckPath: /health
     envVars:
+      # Paste the Neon connection string. NOT wired to a Render database on
+      # purpose: Render's free tier is removed after a fixed period, taking
+      # every row with it, which is not something to discover with a client's
+      # data in there.
+      #
+      # Neon requires TLS. Keep the `sslmode=require` the connection string
+      # comes with — node-postgres reads it and verifies the certificate.
       - key: DATABASE_URL
-        fromDatabase:
-          name: sonar-db
-          property: connectionString
+        sync: false
       - key: SESSION_SECRET
         generateValue: true
       - key: OPENAI_API_KEY
@@ -183,16 +188,3 @@ services:
   #
   # The consequence for this service: CORS_ORIGIN above must be the Vercel
   # domain, and nothing else.
-
-databases:
-  # The worker does NOT use this connection string. It connects as the
-  # least-privilege role from src/worker-role.sql, which has to be created by
-  # hand after the first deploy — see the comment on the worker's DATABASE_URL.
-  #
-  # Render's free database tier is time-limited: it is removed after a fixed
-  # period, taking every row with it. Check the current terms before putting a
-  # paying client's data on it.
-  - name: sonar-db
-    plan: free
-    region: frankfurt
-    postgresMajorVersion: "16"
