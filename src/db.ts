@@ -108,6 +108,13 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitle_preset TEXT NOT NULL DEFAULT 'classic'`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS remove_breaths BOOLEAN NOT NULL DEFAULT false`,
+  `CREATE TABLE IF NOT EXISTS transcript_cache (
+     audio_hash TEXT PRIMARY KEY,
+     words      JSONB NOT NULL,
+     text       TEXT NOT NULL,
+     language   TEXT,
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
   `CREATE INDEX IF NOT EXISTS idx_video_edit_jobs_pipeline ON video_edit_jobs(pipeline, status, claimed_at)`,
 ];
 

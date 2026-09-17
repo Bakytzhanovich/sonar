@@ -10,6 +10,7 @@ import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
 import { runBreathPass } from './breathPass';
+import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './transcriptCache';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
 import { downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
 import { localMediaConfigFromEnv, localStorageIo } from './localMedia';
@@ -344,9 +345,32 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     }
 
     await reportProgress(db, job.id, 'transcribe', 0.3);
+
+    // Same audio, same captions — see transcriptCache.ts. Checked before
+    // spending anything: a re-render after a caption correction, or two
+    // tenants with the same clip, should not pay twice or get different
+    // words than last time.
+    const audioHash = await hashAudioFile(audioPath);
+    const cached = await readCachedTranscript(db, audioHash);
+    if (cached) {
+      transcript = { words: cached.words, language: cached.language };
+      await saveArtifact(db, job, 'transcript', transcript);
+    }
+
     try {
-      const result = await deps.transcribe(audioPath);
-      transcript = { words: result.words, language: result.language };
+      if (!transcript) {
+        const result = await deps.transcribe(audioPath);
+        transcript = { words: result.words, language: result.language };
+        // Failing to cache must not fail the job: the transcript is in hand,
+        // and the only cost is recognising this file again next time.
+        await writeCachedTranscript(db, audioHash, {
+          words: result.words,
+          text: result.text,
+          language: result.language,
+        }).catch((err) =>
+          console.warn(`[video-pipeline] transcript not cached: ${err instanceof Error ? err.message : String(err)}`)
+        );
+      }
     } catch (err) {
       // TranscriptionError already carries the machine-readable code; anything
       // else (a socket reset, a JSON parse failure) collapses to the generic

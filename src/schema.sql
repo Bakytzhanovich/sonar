@@ -441,6 +441,25 @@ CREATE INDEX idx_notifications_tenant ON notifications(tenant_id, created_at);
 -- doesn't need a schema change). password_hash is bcrypt — unlike
 -- api_keys.key_hash (SHA-256, see apiKeys.ts), a human-chosen password
 -- needs a slow, salted KDF to resist offline brute-forcing.
+-- Transcripts, keyed by the audio itself.
+--
+-- Recognition is not deterministic: the audio model hears the same file
+-- slightly differently on each pass, which is what makes the ensemble work
+-- but also means re-rendering a clip produced different captions every time.
+-- Keyed by a hash of the extracted audio, the same source always yields the
+-- same words — and is never paid for twice.
+--
+-- Not per tenant: the key is the content, and two tenants uploading the same
+-- file get the same transcript, which is correct and saves the second bill.
+-- Nothing tenant-specific is stored, only what was said.
+CREATE TABLE transcript_cache (
+  audio_hash  TEXT PRIMARY KEY,
+  words       JSONB NOT NULL,
+  text        TEXT NOT NULL,
+  language    TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE users (
   id            TEXT PRIMARY KEY,
   tenant_id     TEXT NOT NULL REFERENCES tenants(id),
