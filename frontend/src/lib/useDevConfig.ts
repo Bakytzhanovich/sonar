@@ -24,9 +24,29 @@ function readStoredConfig(): DevConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_CONFIG;
+    const stored = JSON.parse(raw);
+
+    // A key saved by an earlier version is still sitting in this browser.
+    // Rewriting on read is what actually removes it — refusing to restore it
+    // would leave the value in storage indefinitely, readable by exactly the
+    // script we are protecting it from.
+    if (stored && typeof stored.apiKey === 'string' && stored.apiKey !== '') {
+      writeStoredConfig({ ...DEFAULT_CONFIG, ...stored, apiKey: '' });
+    }
+
     return {
       ...DEFAULT_CONFIG,
-      ...JSON.parse(raw),
+      ...stored,
+      // Never restored. A tenant API key does not expire and authenticates
+      // every route, so in localStorage it is one XSS hole — or one bad
+      // dependency, which runs with the same access — away from being
+      // someone else's key forever. That is the exact theft the session
+      // moved into an httpOnly cookie to prevent; leaving the key behind
+      // would have kept the hole open next to the closed one.
+      //
+      // It stays in React state, so a dev panel still works for as long as
+      // the tab is open. It just stops outliving it.
+      apiKey: '',
       // baseUrl is NOT restored from storage. It stopped being a per-browser
       // setting when the frontend started proxying /api/*: the browser must
       // address this origin so the session cookie is same-site. A value saved
@@ -42,7 +62,15 @@ function readStoredConfig(): DevConfig {
 
 function writeStoredConfig(config: DevConfig) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    // Listed field by field rather than spread-minus-apiKey: a field added
+    // to DevConfig later should have to be named here to be persisted, so
+    // that the next secret someone puts in this object does not end up in
+    // storage by inheriting the spread.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      botId: config.botId,
+      externalAccountId: config.externalAccountId,
+      devMode: config.devMode,
+    }));
   } catch {
     // Keep the current tab usable if persistent storage is unavailable.
   }

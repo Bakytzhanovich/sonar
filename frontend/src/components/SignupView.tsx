@@ -22,6 +22,7 @@ export default function SignupView() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -65,7 +66,7 @@ export default function SignupView() {
 
     setSubmitting(true);
     try {
-      const res = await api.signup({ baseUrl: API_BASE_URL }, email, password);
+      const res = await api.signup({ baseUrl: API_BASE_URL }, email, password, inviteCode.trim());
       const nextSession = {
         userId: res.user.id,
         userEmail: res.user.email,
@@ -80,6 +81,10 @@ export default function SignupView() {
         if (code === 'email_taken') setError('Этот email уже зарегистрирован — попробуйте войти');
         else if (code === 'invalid_email') setError('Некорректный email');
         else if (code === 'invalid_password') setError(`Пароль должен быть не короче ${MIN_PASSWORD_LENGTH} символов`);
+        else if (code === 'invalid_invite_code') setError('Неверный код приглашения');
+        // Not "wrong code": the deployment has no code configured at all, so
+        // there is nothing the visitor could type that would work.
+        else if (code === 'signup_closed') setError('Регистрация сейчас закрыта — она доступна по приглашению');
         else setError('Не удалось зарегистрироваться, попробуйте ещё раз');
       } else {
         setError('Не удалось зарегистрироваться, попробуйте ещё раз');
@@ -97,6 +102,20 @@ export default function SignupView() {
       <div className={styles.card}>
         <h1 className={styles.title}>Создать аккаунт</h1>
         <form className={styles.form} onSubmit={handleSubmit}>
+          <div className={styles.field}>
+            <label className={styles.label} htmlFor="signup-invite">
+              Код приглашения
+            </label>
+            <input
+              id="signup-invite"
+              className={`${controls.input} ${styles.input}`}
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value)}
+            />
+          </div>
           <div className={styles.field}>
             <label className={styles.label} htmlFor="signup-email">
               Email

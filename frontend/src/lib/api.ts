@@ -336,7 +336,8 @@ export const api = {
     apiRequest(config, 'POST', '/api/tenants', { name, email }),
 
   // ---- Auth (Логика Б) ----------------------------------------------------
-  signup: (config: ApiConfig, email: string, password: string) => apiRequest(config, 'POST', '/api/auth/signup', { email, password }),
+  signup: (config: ApiConfig, email: string, password: string, inviteCode: string) =>
+    apiRequest(config, 'POST', '/api/auth/signup', { email, password, inviteCode }),
 
   login: (config: ApiConfig, email: string, password: string) => apiRequest(config, 'POST', '/api/auth/login', { email, password }),
 

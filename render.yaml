@@ -41,6 +41,25 @@ services:
         sync: false
       - key: VAPID_PRIVATE_KEY
         sync: false
+      # The two routes that mint a credential without needing one, and so the
+      # two that decide who can get into this deployment at all.
+      #
+      # UNSET MEANS CLOSED. Leaving these blank does not open signup, it shuts
+      # it — an unset variable is an oversight during a deploy far more often
+      # than it is a decision to let the internet register. The API says which
+      # one is missing in its boot log.
+      #
+      # SIGNUP_INVITE_CODE is what invited testers type into the signup form.
+      # Rotate it when a testing round ends; existing accounts keep working,
+      # the code only guards creating new ones.
+      - key: SIGNUP_INVITE_CODE
+        sync: false
+      # Presented as the x-sonar-admin-secret header to POST /api/tenants,
+      # which answers with a tenant API key in plaintext. Not needed unless
+      # someone is issuing keys for the API directly — the product's own
+      # signup does not use this path.
+      - key: ADMIN_BOOTSTRAP_SECRET
+        sync: false
       # The Instagram webhook simulator stays off in production — it can
       # trigger DMs from a client's connected account. If a staff-assisted
       # demo needs it, set both of these together (the server refuses to

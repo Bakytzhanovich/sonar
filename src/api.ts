@@ -8,6 +8,7 @@ import { exec, isUniqueViolation, queryAll, queryOne, type Db } from './db';
 import { createApiKeyForTenant, resolveTenantIdFromApiKey } from './apiKeys';
 import { hashPassword, verifyPassword, signSession, verifySession, deriveKey, DUMMY_PASSWORD_HASH } from './auth';
 import { MOCK_WEBHOOK_SECRET_HEADER, isMockWebhookEnabled, verifyMockWebhookSecret } from './webhookAuth';
+import { ADMIN_SECRET_HEADER, evaluateGate, gateStartupWarnings } from './credentialGates';
 import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessionCookie } from './sessionCookie';
 import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
 import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
@@ -142,6 +143,13 @@ export function createApp(db: Db): Express {
     console.warn('[api] CORS_ORIGIN is unset — cross-origin browser requests are refused; set it if a frontend calls this API directly');
   }
 
+  // The two routes that mint a credential without needing one. See
+  // credentialGates.ts for why an unset secret closes them rather than
+  // opening them.
+  const adminBootstrapSecret = process.env.ADMIN_BOOTSTRAP_SECRET ?? null;
+  const signupInviteCode = process.env.SIGNUP_INVITE_CODE ?? null;
+  for (const warning of gateStartupWarnings(process.env)) console.warn(warning);
+
   app.use((req, res, next) => {
     if (corsOrigin) {
       res.header('Access-Control-Allow-Origin', corsOrigin);
@@ -218,6 +226,20 @@ export function createApp(db: Db): Express {
   // ---- Tenant bootstrap (not API-key protected — this is how a tenant
   // gets its first key; equivalent to a signup step). --------------------
   app.post('/api/tenants', authRateLimit, asyncHandler(async (req, res) => {
+    const gate = evaluateGate({
+      isProduction,
+      configuredSecret: adminBootstrapSecret,
+      providedSecret: req.header(ADMIN_SECRET_HEADER),
+    });
+    if (!gate.allowed) {
+      // 404 when the route is closed outright: there is no reason to confirm
+      // that a key-issuing endpoint exists here. A wrong secret gets 401,
+      // because at that point the caller already knows.
+      return gate.reason === 'not_configured'
+        ? res.status(404).json({ error: 'not_found' })
+        : res.status(401).json({ error: 'invalid_admin_secret' });
+    }
+
     const { name, email } = req.body ?? {};
     if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
 
@@ -246,6 +268,19 @@ export function createApp(db: Db): Express {
     }
     if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
       return res.status(400).json({ error: 'invalid_password', minLength: MIN_PASSWORD_LENGTH });
+    }
+
+    // Checked before the email lookup below, so a caller without an invite
+    // cannot use signup to find out which addresses are registered.
+    const gate = evaluateGate({
+      isProduction,
+      configuredSecret: signupInviteCode,
+      providedSecret: req.body?.inviteCode,
+    });
+    if (!gate.allowed) {
+      return res.status(403).json({
+        error: gate.reason === 'not_configured' ? 'signup_closed' : 'invalid_invite_code',
+      });
     }
     // Email identity must be case-insensitive (RFC 5321 leaves the local
     // part case-sensitive in theory, but no mainstream provider treats it
