@@ -122,7 +122,7 @@ export default function SchedulerView() {
   return (
     <div className={styles.page}>
       <header className={layout.header}>
-        <div><span className={styles.eyebrow}>ПУБЛИКАЦИЯ</span><span className={layout.title}>Автопостинг</span></div>
+        <div className={styles.headerTitle}><span className={styles.eyebrow}>ПУБЛИКАЦИЯ</span><span className={layout.title}>Автопостинг</span></div>
         {pending.length > 0 && <PulseIndicator count={pending.length} label="постов ждут согласования" />}
         <ModuleNav current="/scheduler" />
       </header>
@@ -130,7 +130,7 @@ export default function SchedulerView() {
       <div className={layout.twoPane}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>
           {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
-          <div className={styles.panelHeading}><span className={styles.eyebrow}>COMPOSER</span><h2>Новый пост</h2></div>
+          <div className={styles.sectionLabel}>Новый пост</div>
 
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Платформа</span>

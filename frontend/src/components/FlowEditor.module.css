@@ -65,7 +65,10 @@
   }
 
   .canvasWrap {
-    min-height: 340px;
+    /* The graph is the screen's reason to exist, and at 340px its node
+     * labels are unreadable — the panels below it can be scrolled to, the
+     * canvas cannot be zoomed into what is not there. */
+    min-height: 62vh;
   }
 
   .sidebar {

@@ -75,7 +75,7 @@ export default function ContentPlanView() {
   return (
     <div className={styles.page}>
       <header className={layout.header}>
-        <div><span className={styles.eyebrow}>СТРАТЕГИЯ</span><span className={layout.title}>Контент-план</span></div>
+        <div className={styles.headerTitle}><span className={styles.eyebrow}>СТРАТЕГИЯ</span><span className={layout.title}>Контент-план</span></div>
         <ModuleNav current="/content-plan" />
       </header>
 

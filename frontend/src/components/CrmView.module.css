@@ -1765,3 +1765,15 @@
     border-color: Highlight;
   }
 }
+
+/* ---- Phone layout -------------------------------------------------------
+ * The onboarding card sat in the upper half with a dead screen below it. It
+ * claims the leftover height instead. */
+@media (max-width: 760px) {
+  .mainPane { display: flex; flex-direction: column; flex: 1; }
+  .mainInner { display: flex; flex-direction: column; flex: 1; }
+  .workspaceEmpty,
+  .onboardingCard { flex: 1; }
+  .pageIntro { padding-bottom: 4px; }
+  .pageLead { font-size: 13px; }
+}
