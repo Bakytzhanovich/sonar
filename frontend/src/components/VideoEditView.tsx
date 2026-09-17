@@ -6,6 +6,7 @@ import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
 import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
+import Switch from './Switch';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
 import StatusMessage from './StatusMessage';
@@ -330,21 +331,11 @@ export default function VideoEditView() {
                   </>
                 )}
               </label>
-
-              {/* A real switch, not a system checkbox: on a phone the native
-                  control is a ~13px tap target next to 15px text. */}
-              <label className={styles.switchRow}>
-                <span className={styles.switchLabel}>Вжечь динамические субтитры</span>
-                <input
-                  type="checkbox"
-                  className={styles.switchInput}
-                  checked={subtitles}
-                  onChange={(e) => setSubtitles(e.target.checked)}
-                />
-                <span className={styles.switchTrack} aria-hidden="true">
-                  <span className={styles.switchThumb} />
-                </span>
-              </label>
+              <Switch
+                checked={subtitles}
+                onChange={setSubtitles}
+                label="Вжечь динамические субтитры"
+              />
             </>
           ) : (
             <label className={styles.field}>

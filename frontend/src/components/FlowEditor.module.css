@@ -228,3 +228,6 @@
   background: var(--canvas-node-border);
   border: 1px solid var(--canvas-node-bg);
 }
+
+/* The inspector's pickers sit under their own labels. */
+.inspectorSelect { margin-top: 4px; }

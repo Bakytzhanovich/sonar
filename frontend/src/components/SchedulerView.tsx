@@ -6,6 +6,8 @@ import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
+import Select from './Select';
+import Switch from './Switch';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
 import StatusMessage from './StatusMessage';
@@ -135,13 +137,11 @@ export default function SchedulerView() {
 
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Платформа</span>
-            <select className={controls.input} value={platform} onChange={(e) => setPlatform(e.target.value as PostingPlatform)}>
-              {PLATFORMS.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={platform}
+              onChange={(next) => setPlatform(next as PostingPlatform)}
+              options={PLATFORMS.map((p) => ({ value: p, label: p }))}
+            />
           </label>
 
           <label className={styles.field}>
@@ -154,9 +154,12 @@ export default function SchedulerView() {
             <input className={controls.input} type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
           </label>
 
-          <label className={styles.checkboxRow}>
-            <input type="checkbox" checked={requiresApproval} onChange={(e) => setRequiresApproval(e.target.checked)} /> Нужно согласование
-          </label>
+          <Switch
+            checked={requiresApproval}
+            onChange={setRequiresApproval}
+            label="Нужно согласование"
+            hint="Пост встанет в очередь и будет ждать подтверждения"
+          />
 
           {/* Secondary, not primary: "Добавить в очередь" and "Approve" (below)
               can both be on screen at once — the left form is always rendered,

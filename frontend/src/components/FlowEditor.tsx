@@ -26,6 +26,7 @@ import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
+import Select from './Select';
 import styles from './FlowEditor.module.css';
 import controls from './Controls.module.css';
 
@@ -451,10 +452,16 @@ export default function FlowEditor() {
                   </label>
                   <label>
                     Тип совпадения
-                    <select className={controls.input} value={selectedNode.data.matchType} onChange={(e) => updateSelectedData({ matchType: e.target.value as MatchType })} style={{ display: 'block', width: '100%', marginTop: 4 }}>
-                      <option value="contains">contains</option>
-                      <option value="exact">exact</option>
-                    </select>
+                    <Select
+                      className={styles.inspectorSelect}
+                      value={selectedNode.data.matchType}
+                      onChange={(next) => updateSelectedData({ matchType: next as MatchType })}
+                      aria-label="Тип совпадения"
+                      options={[
+                        { value: 'contains', label: 'contains' },
+                        { value: 'exact', label: 'exact' },
+                      ]}
+                    />
                   </label>
                 </>
               ) : (
@@ -465,15 +472,16 @@ export default function FlowEditor() {
                   </label>
                   <label>
                     Fallback-канал вне 24ч окна
-                    <select
-                      className={controls.input}
+                    <Select
+                      className={styles.inspectorSelect}
                       value={selectedNode.data.fallbackChannel ?? ''}
-                      onChange={(e) => updateSelectedData({ fallbackChannel: (e.target.value || undefined) as FallbackChannel | undefined })}
-                      style={{ display: 'block', width: '100%', marginTop: 4 }}
-                    >
-                      <option value="">нет (провалится вне окна)</option>
-                      <option value="comment_reply">comment_reply</option>
-                    </select>
+                      onChange={(next) => updateSelectedData({ fallbackChannel: (next || undefined) as FallbackChannel | undefined })}
+                      aria-label="Запасной канал"
+                      options={[
+                        { value: '', label: 'нет (провалится вне окна)' },
+                        { value: 'comment_reply', label: 'comment_reply' },
+                      ]}
+                    />
                   </label>
                 </>
               )}

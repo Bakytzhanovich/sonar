@@ -7,6 +7,7 @@ import { api, type ConversationMessage, type LeadStatus, type Note, type Subscri
 import { useDevConfig } from '@/lib/useDevConfig';
 import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
+import Select from './Select';
 import PulseIndicator, { LiveDot } from './PulseIndicator';
 import styles from './CrmView.module.css';
 import controls from './Controls.module.css';
@@ -757,16 +758,16 @@ export default function CrmView() {
 
                     <label className={styles.filterField}>
                       <span>Статус</span>
-                      <select
-                        className={`${controls.input} ${styles.filterInput}`}
+                      <Select
+                        className={styles.filterInput}
                         value={leadStatusFilter}
-                        onChange={(event) => changeStatusFilter(event.target.value as LeadStatus | '')}
-                      >
-                        <option value="">Все статусы</option>
-                        {LEAD_STATUSES.map((leadStatus) => (
-                          <option key={leadStatus} value={leadStatus}>{STATUS_LABEL[leadStatus]}</option>
-                        ))}
-                      </select>
+                        onChange={(next) => changeStatusFilter(next as LeadStatus | '')}
+                        aria-label="Фильтр по статусу"
+                        options={[
+                          { value: '', label: 'Все статусы' },
+                          ...LEAD_STATUSES.map((leadStatus) => ({ value: leadStatus, label: STATUS_LABEL[leadStatus] })),
+                        ]}
+                      />
                     </label>
 
                     <form className={styles.tagFilterForm} onSubmit={applyTagFilter}>
@@ -952,16 +953,13 @@ export default function CrmView() {
                                     </button>
                                     <label className={styles.kanbanMove}>
                                       <span>Переместить</span>
-                                      <select
-                                        className={controls.input}
+                                      <Select
                                         value={subscriber.lead_status}
-                                        onChange={(event) => void changeLeadStatus(subscriber.id, event.target.value as LeadStatus)}
+                                        onChange={(next) => void changeLeadStatus(subscriber.id, next as LeadStatus)}
                                         disabled={savingAction !== null}
-                                      >
-                                        {LEAD_STATUSES.map((leadStatus) => (
-                                          <option key={leadStatus} value={leadStatus}>{STATUS_LABEL[leadStatus]}</option>
-                                        ))}
-                                      </select>
+                                        aria-label="Статус лида"
+                                        options={LEAD_STATUSES.map((leadStatus) => ({ value: leadStatus, label: STATUS_LABEL[leadStatus] }))}
+                                      />
                                     </label>
                                   </article>
                                 ))
@@ -1040,16 +1038,14 @@ export default function CrmView() {
               <section className={styles.profileControls} aria-label="Данные лида">
                 <label className={styles.detailField}>
                   <span>Статус лида</span>
-                  <select
-                    className={`${controls.input} ${styles.detailSelect}`}
+                  <Select
+                    className={styles.detailSelect}
                     value={selected.lead_status}
-                    onChange={(event) => void changeLeadStatus(selected.id, event.target.value as LeadStatus)}
+                    onChange={(next) => void changeLeadStatus(selected.id, next as LeadStatus)}
                     disabled={savingAction !== null}
-                  >
-                    {LEAD_STATUSES.map((leadStatus) => (
-                      <option key={leadStatus} value={leadStatus}>{STATUS_LABEL[leadStatus]}</option>
-                    ))}
-                  </select>
+                    aria-label="Статус лида"
+                    options={LEAD_STATUSES.map((leadStatus) => ({ value: leadStatus, label: STATUS_LABEL[leadStatus] }))}
+                  />
                 </label>
 
                 <div className={styles.tagsSection}>

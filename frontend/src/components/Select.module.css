@@ -1,0 +1,49 @@
+.wrap {
+  position: relative;
+  display: block;
+}
+
+.select {
+  /* appearance:none is what removes the OS chrome — the bevel on Windows,
+   * the rounded grey pill on macOS — and leaves a box we can style. */
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  /* Right padding clears the chevron below. */
+  padding: 10px 36px 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-base);
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.select:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.select:disabled { opacity: .55; cursor: default; }
+.select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The options themselves are still drawn by the OS and cannot be styled
+ * beyond this — which is the trade for keeping the native picker on a
+ * phone. Setting both explicitly stops a dark-theme page from opening a
+ * white list on some platforms. */
+.select option {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.chevron {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  color: var(--foreground-muted);
+  /* Without this the arrow eats the click that should open the list. */
+  pointer-events: none;
+}
+
+@media (max-width: 760px) {
+  .select { min-height: 44px; }
+}

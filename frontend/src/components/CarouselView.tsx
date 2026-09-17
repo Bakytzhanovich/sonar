@@ -7,6 +7,7 @@ import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
+import Select from './Select';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import StatusMessage from './StatusMessage';
 import controls from './Controls.module.css';
@@ -212,14 +213,12 @@ export default function CarouselView() {
             placeholder="О чём карусель?"
           />
           <div className={styles.presetRow}>
-            <select className={controls.input} value={presetId} onChange={(e) => setPresetId(e.target.value)}>
-              <option value="">без пресета</option>
-              {presets.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={presetId}
+              onChange={setPresetId}
+              aria-label="Визуальный пресет"
+              options={[{ value: '', label: 'без пресета' }, ...presets.map((preset) => ({ value: preset.id, label: preset.name }))]}
+            />
             <Swatch preset={activePreset} />
           </div>
           <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={generate}>Сгенерировать</button>
