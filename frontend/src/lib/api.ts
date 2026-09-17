@@ -215,6 +215,12 @@ export interface VideoEditJob {
   review_mode?: 'auto' | 'always' | 'never';
 }
 
+export interface SubtitlePreset {
+  id: string;
+  label: string;
+  description: string;
+}
+
 export interface VideoUploadTicket {
   objectKey: string;
   uploadUrl: string;
@@ -494,11 +500,14 @@ export const api = {
     apiRequest(config, 'POST', '/api/video-uploads', { contentType }) as Promise<VideoUploadTicket>,
 
   // No denoise/review flags: the pipeline measures the recording and decides.
-  createSmartCutJob: (config: ApiConfig, sourceObjectKey: string, subtitles: boolean) =>
+  listSubtitlePresets: (config: ApiConfig) => apiRequest(config, 'GET', '/api/subtitle-presets'),
+
+  createSmartCutJob: (config: ApiConfig, sourceObjectKey: string, subtitles: boolean, subtitlePreset: string) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', {
       template: 'ai_smart_cut',
       sourceObjectKey,
       subtitles,
+      subtitlePreset,
     }) as Promise<{ job: VideoEditJob }>,
 
   // Uploads straight to storage with the presigned URL — deliberately NOT

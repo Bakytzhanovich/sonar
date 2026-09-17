@@ -379,6 +379,10 @@ CREATE TABLE video_edit_jobs (
   -- models get wrong often enough to matter. Russian and English go straight
   -- through; Kazakh stops for a human.
   review_mode       TEXT NOT NULL DEFAULT 'auto',
+  -- Which caption look to burn in (see subtitlePresets.ts). Stored per job,
+  -- not per tenant: a blogger's serious piece and their joke reel do not
+  -- want the same typography.
+  subtitle_preset   TEXT NOT NULL DEFAULT 'classic',
   -- Worker lease. Unlike the preset path, a smart_cut job legitimately sits
   -- in 'processing' for minutes, so a timestamped claim is the only way to
   -- tell "another worker is on it" from "a worker died holding it".

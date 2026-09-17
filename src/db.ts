@@ -106,6 +106,7 @@ const MIGRATIONS: string[] = [
   // Login throttling (see users table in schema.sql).
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_logins INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitle_preset TEXT NOT NULL DEFAULT 'classic'`,
   `CREATE INDEX IF NOT EXISTS idx_video_edit_jobs_pipeline ON video_edit_jobs(pipeline, status, claimed_at)`,
 ];
 

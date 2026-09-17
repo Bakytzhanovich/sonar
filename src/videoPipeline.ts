@@ -8,6 +8,7 @@ import { DEFAULT_SMART_CUT_OPTIONS, planSmartCut, type SmartCutOptions } from '.
 import { buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, type ChunkOptions, type SubtitleStyle } from './subtitles';
 import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
+import { styleForPreset } from './subtitlePresets';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
 import { downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
 import { localMediaConfigFromEnv, localStorageIo } from './localMedia';
@@ -373,8 +374,8 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // timings came from this same plan, so the captions stay in step with the
     // cut — only the words changed.
     const { ass, chunks } = approved
-      ? buildSubtitlesFromLines(approved, deps.subtitleStyle)
-      : buildSubtitlesForPlan(plan.words, plan.segments, deps.subtitleStyle, deps.chunkOptions);
+      ? buildSubtitlesFromLines(approved, styleForPreset(job.subtitle_preset))
+      : buildSubtitlesForPlan(plan.words, plan.segments, styleForPreset(job.subtitle_preset), deps.chunkOptions);
     // A transcript that survives the cut as zero chunks (all filler, or a
     // plan that kept only silence) is not a failure — render without them
     // rather than burning an empty subtitle track.

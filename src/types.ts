@@ -334,6 +334,7 @@ export interface VideoEditJob {
   subtitles: boolean;
   denoise_mode: 'auto' | 'on' | 'off';
   review_mode: 'auto' | 'always' | 'never';
+  subtitle_preset: string;
 }
 
 // ---- Push notifications (shared by Modules 5 and 8) ----------------------

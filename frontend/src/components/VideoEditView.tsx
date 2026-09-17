@@ -1,12 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { api, type VideoEditJob, type VideoTemplate } from '@/lib/api';
+import { api, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
 import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
 import Switch from './Switch';
+import Select from './Select';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
 import StatusMessage from './StatusMessage';
@@ -145,6 +146,10 @@ export default function VideoEditView() {
   const [template, setTemplate] = useState<VideoTemplate>('ai_smart_cut');
   const [file, setFile] = useState<File | null>(null);
   const [subtitles, setSubtitles] = useState(true);
+  // The catalogue comes from the server rather than a copy kept here: the
+  // styles are defined in the renderer's terms, and two lists drift.
+  const [presets, setPresets] = useState<SubtitlePreset[]>([]);
+  const [subtitlePreset, setSubtitlePreset] = useState('classic');
   // Off by default: removing ambience is right for a street recording and
   // wrong for anything where the background is part of the shot.
   // Line edits for the job currently under review, keyed by job id.
@@ -168,6 +173,15 @@ export default function VideoEditView() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
+
+  useEffect(() => {
+    // Public catalogue — no credential needed, and it never changes between
+    // renders, so one fetch per mount.
+    api
+      .listSubtitlePresets({ baseUrl })
+      .then((res) => setPresets(res.presets ?? []))
+      .catch(() => setPresets([]));
+  }, [baseUrl]);
 
   // Auto-poll while anything is still rendering — no real webhook/push to
   // tell us when a job finishes (that's the deferred push-notification
@@ -203,7 +217,7 @@ export default function VideoEditView() {
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);
 
-      await api.createSmartCutJob(config, ticket.objectKey, subtitles);
+      await api.createSmartCutJob(config, ticket.objectKey, subtitles, subtitlePreset);
       await load();
       setFile(null);
       setStatus(
@@ -336,6 +350,19 @@ export default function VideoEditView() {
                 onChange={setSubtitles}
                 label="Вжечь динамические субтитры"
               />
+
+              {/* Only shown when there is something to style. */}
+              {subtitles && presets.length > 0 && (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Стиль субтитров</span>
+                  <Select
+                    value={subtitlePreset}
+                    onChange={setSubtitlePreset}
+                    aria-label="Стиль субтитров"
+                    options={presets.map((preset) => ({ value: preset.id, label: `${preset.label} — ${preset.description}` }))}
+                  />
+                </label>
+              )}
             </>
           ) : (
             <label className={styles.field}>

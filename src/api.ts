@@ -10,6 +10,7 @@ import { hashPassword, verifyPassword, signSession, verifySession, deriveKey, DU
 import { MOCK_WEBHOOK_SECRET_HEADER, isMockWebhookEnabled, verifyMockWebhookSecret } from './webhookAuth';
 import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessionCookie } from './sessionCookie';
 import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
+import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { analyzeReelMock, generateScriptMock } from './reelAnalysis';
@@ -353,6 +354,17 @@ export function createApp(db: Db): Express {
     if (!user || !tenant) return res.status(401).json({ error: 'invalid_session' });
     res.json({ user: { id: user.id, email: user.email }, tenant });
   }));
+
+  // Before the credential check on purpose: this is the application's own
+  // catalogue of caption looks, not tenant data. The frontend needs it to
+  // render the picker, including on a screen reached before sign-in.
+  //
+  // The frontend renders whatever this returns instead of keeping its own
+  // copy — two lists drift, and these styles are defined in the renderer's
+  // terms (ASS colour order), not the browser's.
+  app.get('/api/subtitle-presets', (_req, res) => {
+    res.json({ presets: SUBTITLE_PRESETS.map(({ id, label, description }) => ({ id, label, description })) });
+  });
 
   app.use('/api', requireProductCredential(db));
 
@@ -1431,11 +1443,14 @@ export function createApp(db: Db): Express {
       // friction on the ones they get right.
       // Same shape as denoise: measured decision by default, override on request.
       const reviewMode = ['always', 'never'].includes(req.body?.reviewMode) ? req.body.reviewMode : 'auto';
+      // An unrecognised id falls back rather than failing: it can only come
+      // from a stale client, and a caption look is not worth a 400.
+      const subtitlePreset = isSubtitlePresetId(req.body?.subtitlePreset) ? req.body.subtitlePreset : DEFAULT_SUBTITLE_PRESET;
 
       const id = randomUUID();
       await exec(
         db,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
@@ -1443,7 +1458,8 @@ export function createApp(db: Db): Express {
         sourceObjectKey,
         subtitles,
         denoiseMode,
-        reviewMode
+        reviewMode,
+        subtitlePreset
       );
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
     }
