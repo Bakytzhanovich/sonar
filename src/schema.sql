@@ -438,6 +438,12 @@ CREATE TABLE users (
   tenant_id     TEXT NOT NULL REFERENCES tenants(id),
   email         TEXT NOT NULL,
   password_hash TEXT NOT NULL,
+  -- Consecutive failed sign-ins, and when the account stops accepting
+  -- attempts. The IP-based rate limit alone does not protect an account:
+  -- spread across ten addresses it still allows ~1900 guesses a day at one
+  -- password, which is well inside reach for anything a person chose.
+  failed_logins INTEGER NOT NULL DEFAULT 0,
+  locked_until  TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

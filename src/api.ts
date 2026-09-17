@@ -9,6 +9,7 @@ import { createApiKeyForTenant, resolveTenantIdFromApiKey } from './apiKeys';
 import { hashPassword, verifyPassword, signSession, verifySession, deriveKey, DUMMY_PASSWORD_HASH } from './auth';
 import { MOCK_WEBHOOK_SECRET_HEADER, isMockWebhookEnabled, verifyMockWebhookSecret } from './webhookAuth';
 import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessionCookie } from './sessionCookie';
+import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { analyzeReelMock, generateScriptMock } from './reelAnalysis';
@@ -290,9 +291,37 @@ export function createApp(db: Db): Express {
     // "wrong password" — the identical error message above could then be
     // sidestepped by timing the response instead of reading it.
     const user = await queryOne<User>(db, `SELECT * FROM users WHERE email = ?`, email);
+    const now = new Date();
+
+    // Checked before the password: a locked account gets the same answer
+    // whatever is typed, so the lock cannot be probed for the right one.
+    if (isLocked(user, now)) {
+      return res.status(429).json({ error: 'account_locked', retryAfterSec: secondsUntilUnlock(user, now) });
+    }
+
     const passwordMatches = await verifyPassword(password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
     if (!user || !passwordMatches) {
+      // Only a real account has a counter to raise. An unknown email is not
+      // recorded at all — there is nothing to protect, and writing a row per
+      // guessed address would hand an attacker a way to fill the table.
+      if (user) {
+        const next = nextFailureState(user, now);
+        await exec(
+          db,
+          `UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?`,
+          next.failedLogins,
+          next.lockedUntil ? next.lockedUntil.toISOString() : null,
+          user.id
+        );
+      }
       return res.status(401).json({ error: 'invalid_credentials' });
+    }
+
+    // The right password ends the lock immediately, so an attacker cannot
+    // keep the owner out by failing on purpose — they are delayed, not
+    // locked out.
+    if (user.failed_logins > 0 || user.locked_until) {
+      await exec(db, `UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?`, user.id);
     }
 
     const tenant = await queryOne<{ id: string; name: string }>(db, `SELECT id, name FROM tenants WHERE id = ?`, user.tenant_id);

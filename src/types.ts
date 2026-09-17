@@ -366,5 +366,8 @@ export interface User {
   tenant_id: string;
   email: string;
   password_hash: string;
+  // Sign-in throttling — see loginThrottle.ts.
+  failed_logins: number;
+  locked_until: string | null;
   created_at: string;
 }
