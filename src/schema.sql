@@ -383,6 +383,10 @@ CREATE TABLE video_edit_jobs (
   -- not per tenant: a blogger's serious piece and their joke reel do not
   -- want the same typography.
   subtitle_preset   TEXT NOT NULL DEFAULT 'classic',
+  -- Remove audible breaths and mouth noise (breathDetector.ts). Off by
+  -- default: it is the most destructive pass in the pipeline, and on a
+  -- recording with a high noise floor it finds nothing anyway.
+  remove_breaths    BOOLEAN NOT NULL DEFAULT false,
   -- Worker lease. Unlike the preset path, a smart_cut job legitimately sits
   -- in 'processing' for minutes, so a timestamped claim is the only way to
   -- tell "another worker is on it" from "a worker died holding it".

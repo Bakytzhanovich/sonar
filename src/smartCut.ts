@@ -145,7 +145,12 @@ function totalLength(intervals: Interval[]): number {
 export function planSmartCut(
   words: TranscriptWord[],
   durationSec: number,
-  options: SmartCutOptions = DEFAULT_SMART_CUT_OPTIONS
+  options: SmartCutOptions = DEFAULT_SMART_CUT_OPTIONS,
+  // Intervals found by looking at the signal rather than the transcript —
+  // breaths and mouth noise, which no transcript ever marks (see
+  // breathDetector.ts). Passed in rather than detected here so this stays a
+  // pure function over words: the detector needs the audio.
+  extraRemovals: Interval[] = []
 ): SmartCutPlan {
   const { maxPauseSec, paddingSec, minRemovalSec, minSegmentSec, maxSegments, fillerWords } = options;
   const fillers = new Set(fillerWords.map(normalizeWord));
@@ -188,6 +193,12 @@ export function planSmartCut(
     boundaries.push({ start: 0, end: kept[0].start });
     for (let i = 1; i < kept.length; i++) boundaries.push({ start: kept[i - 1].end, end: kept[i].start });
     boundaries.push({ start: kept[kept.length - 1].end, end: durationSec });
+  }
+
+  // Breaths are removed whatever their length: unlike a pause, an audible
+  // inhale is not something a viewer reads as rhythm.
+  for (const extra of extraRemovals) {
+    if (extra.end > extra.start) removals.push({ start: extra.start, end: extra.end });
   }
 
   for (const gap of boundaries) {

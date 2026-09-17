@@ -301,6 +301,10 @@ export interface VideoJobArtifacts {
   // Why the audio was or was not cleaned, so the UI can say so instead of
   // leaving the decision invisible.
   noise?: { headroomDb: number; denoised: boolean };
+  // What the signal-level pass removed, so the card can say so — the user
+  // asked for breaths to go and otherwise has no way to tell whether any
+  // were found.
+  breaths?: { count: number; removedSec: number };
   subtitles?: { chunkCount: number; wordCount: number };
   // The caption lines as the viewer will see them — already remapped onto the
   // output timeline, so what is edited here is exactly what gets burned in.
@@ -335,6 +339,7 @@ export interface VideoEditJob {
   denoise_mode: 'auto' | 'on' | 'off';
   review_mode: 'auto' | 'always' | 'never';
   subtitle_preset: string;
+  remove_breaths: boolean;
 }
 
 // ---- Push notifications (shared by Modules 5 and 8) ----------------------

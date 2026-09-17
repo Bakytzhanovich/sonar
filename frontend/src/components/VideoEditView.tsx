@@ -150,6 +150,7 @@ export default function VideoEditView() {
   // styles are defined in the renderer's terms, and two lists drift.
   const [presets, setPresets] = useState<SubtitlePreset[]>([]);
   const [subtitlePreset, setSubtitlePreset] = useState('classic');
+  const [removeBreaths, setRemoveBreaths] = useState(false);
   // Off by default: removing ambience is right for a street recording and
   // wrong for anything where the background is part of the shot.
   // Line edits for the job currently under review, keyed by job id.
@@ -217,7 +218,7 @@ export default function VideoEditView() {
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);
 
-      await api.createSmartCutJob(config, ticket.objectKey, subtitles, subtitlePreset);
+      await api.createSmartCutJob(config, ticket.objectKey, subtitles, subtitlePreset, removeBreaths);
       await load();
       setFile(null);
       setStatus(
@@ -349,6 +350,13 @@ export default function VideoEditView() {
                 checked={subtitles}
                 onChange={setSubtitles}
                 label="Вжечь динамические субтитры"
+              />
+
+              <Switch
+                checked={removeBreaths}
+                onChange={setRemoveBreaths}
+                label="Убрать вздохи"
+                hint="Ищет придыхания между словами — их не видит расшифровка"
               />
 
               {/* Only shown when there is something to style. */}

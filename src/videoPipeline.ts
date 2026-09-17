@@ -9,6 +9,7 @@ import { buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, 
 import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
+import { runBreathPass } from './breathPass';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
 import { downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
 import { localMediaConfigFromEnv, localStorageIo } from './localMedia';
@@ -102,6 +103,7 @@ export interface PipelineDeps {
     denoiseAvailable: typeof denoiseModelAvailable;
     measureNoise: typeof measureNoise;
   };
+  findBreaths: typeof runBreathPass;
 }
 
 export function defaultPipelineDeps(): PipelineDeps {
@@ -125,6 +127,7 @@ export function defaultPipelineDeps(): PipelineDeps {
     subtitleStyle: DEFAULT_SUBTITLE_STYLE,
     chunkOptions: DEFAULT_CHUNK_OPTIONS,
     ffmpeg: { available: ffmpegAvailable, probe, extractAudio, render: renderSegments, poster: extractPosterFrame, denoiseAvailable: denoiseModelAvailable, measureNoise },
+    findBreaths: runBreathPass,
   };
 }
 
@@ -352,7 +355,32 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
 
   // ---- Stage 3: plan cuts (pure) ----------------------------------------
   await setStage(db, job, 'plan_cuts', now);
-  const plan = planSmartCut(transcript.words, probeResult.durationSec, deps.smartCutOptions);
+  // Breaths are found in the signal, not the transcript — and only when the
+  // recording has room for them to stand out. Measured on real footage: with
+  // a street-level noise floor the band between "room" and "voice" is about
+  // 4dB, too narrow to tell a breath from wind, while the same audio cleaned
+  // opens it to 35dB. So the search runs on denoised audio when denoising is
+  // happening, and is skipped when the floor leaves no band at all.
+  let breaths: Array<{ start: number; end: number }> = [];
+  if (job.remove_breaths) {
+    try {
+      breaths = await deps.findBreaths(
+        sourcePath,
+        transcript.words,
+        probeResult.durationSec,
+        // Same decision the render will make, so the analysis hears what the
+        // viewer will.
+        job.artifacts.noise?.denoised ? RNNOISE_MODEL_PATH : undefined
+      );
+      await saveArtifact(db, job, 'breaths', { count: breaths.length, removedSec: breaths.reduce((sum, b) => sum + (b.end - b.start), 0) });
+    } catch (err) {
+      // Never fatal: a job that cannot find breaths is a job with breaths in
+      // it, not a failed render.
+      console.warn(`[video-pipeline] job ${job.id}: breath pass skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  const plan = planSmartCut(transcript.words, probeResult.durationSec, deps.smartCutOptions, breaths);
   if (plan.segments.length === 0) throw new PipelineError('nothing_to_cut');
   await saveArtifact(db, job, 'plan', {
     segments: plan.segments,

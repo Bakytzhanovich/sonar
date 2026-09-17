@@ -1446,11 +1446,14 @@ export function createApp(db: Db): Express {
       // An unrecognised id falls back rather than failing: it can only come
       // from a stale client, and a caption look is not worth a 400.
       const subtitlePreset = isSubtitlePresetId(req.body?.subtitlePreset) ? req.body.subtitlePreset : DEFAULT_SUBTITLE_PRESET;
+      // Opt-in: the most destructive pass in the pipeline, and on a noisy
+      // recording it finds nothing anyway.
+      const removeBreaths = req.body?.removeBreaths === true;
 
       const id = randomUUID();
       await exec(
         db,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, remove_breaths) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
@@ -1459,7 +1462,8 @@ export function createApp(db: Db): Express {
         subtitles,
         denoiseMode,
         reviewMode,
-        subtitlePreset
+        subtitlePreset,
+        removeBreaths
       );
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
     }

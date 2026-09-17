@@ -46,6 +46,7 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
       denoiseAvailable: async () => true,
       measureNoise: async () => ({ rmsDb: -20, noiseFloorDb: -80, headroomDb: 60 }),
     },
+    findBreaths: async () => [],
     ...overrides,
   };
 }
