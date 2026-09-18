@@ -331,9 +331,29 @@ export function escapeFilterPath(filePath: string): string {
   return filePath.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
 }
 
-export function buildConcatFilter(segments: KeepSegment[], subtitlePath?: string, denoiseModelPath?: string): string {
+/**
+ * Gain and safety limiting for audio that has already been cleaned outside
+ * the graph. No arnndn, no afftdn: DeepFilterNet has done the separating, and
+ * running a second denoiser over its output only costs consonants.
+ */
+export function buildCleanedAudioChain(): string {
+  return 'highpass=f=80,volume=6dB,alimiter=limit=0.95';
+}
+
+/**
+ * @param cleanedAudio  Audio segments are taken from input 1 (a pre-cleaned
+ *                      track) instead of input 0's own audio. The caller adds
+ *                      that input; the video always comes from input 0.
+ */
+export function buildConcatFilter(
+  segments: KeepSegment[],
+  subtitlePath?: string,
+  denoiseModelPath?: string,
+  cleanedAudio = false
+): string {
   const parts: string[] = [];
   const labels: string[] = [];
+  const audioIn = cleanedAudio ? '1:a' : '0:a';
 
   segments.forEach((segment, i) => {
     const duration = segment.end - segment.start;
@@ -343,7 +363,7 @@ export function buildConcatFilter(segments: KeepSegment[], subtitlePath?: string
     // and the output keeps the gaps we just removed.
     parts.push(`[0:v]trim=start=${segment.start.toFixed(4)}:end=${segment.end.toFixed(4)},setpts=PTS-STARTPTS[v${i}]`);
     parts.push(
-      `[0:a]atrim=start=${segment.start.toFixed(4)}:end=${segment.end.toFixed(4)},asetpts=PTS-STARTPTS,` +
+      `[${audioIn}]atrim=start=${segment.start.toFixed(4)}:end=${segment.end.toFixed(4)},asetpts=PTS-STARTPTS,` +
         `afade=t=in:st=0:d=${JOIN_FADE_SEC},afade=t=out:st=${fadeOutStart}:d=${JOIN_FADE_SEC}[a${i}]`
     );
     labels.push(`[v${i}][a${i}]`);
@@ -353,9 +373,11 @@ export function buildConcatFilter(segments: KeepSegment[], subtitlePath?: string
   // network with internal state, and restarting it on every fragment would
   // make it re-learn the noise profile dozens of times per render — audible
   // as the hiss swelling back at each cut.
-  const audioOut = denoiseModelPath ? '[acat]' : '[aout]';
-  parts.push(`${labels.join('')}concat=n=${segments.length}:v=1:a=1[vcat]${audioOut}`);
-  if (denoiseModelPath) {
+  const needsAudioPass = cleanedAudio || Boolean(denoiseModelPath);
+  parts.push(`${labels.join('')}concat=n=${segments.length}:v=1:a=1[vcat]${needsAudioPass ? '[acat]' : '[aout]'}`);
+  if (cleanedAudio) {
+    parts.push(`[acat]${buildCleanedAudioChain()}[aout]`);
+  } else if (denoiseModelPath) {
     parts.push(`[acat]${buildDenoiseChain(denoiseModelPath)}[aout]`);
   }
   // force_original_aspect_ratio=decrease + pad keeps a source that is not
@@ -388,24 +410,36 @@ export interface RenderOptions {
   subtitlePath?: string;
   // Path to an RNNoise model. Absent: the audio is passed through untouched.
   denoiseModelPath?: string;
+  // An already-denoised copy of the full source audio, same length and
+  // timeline as the original. Takes precedence over denoiseModelPath: the
+  // cleaning has happened, the graph only cuts and levels it.
+  cleanedAudioPath?: string;
   onProgress?: (fraction: number) => void;
 }
 
 export async function renderSegments(options: RenderOptions): Promise<void> {
-  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, onProgress } = options;
+  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, onProgress } = options;
   if (segments.length === 0) throw new FfmpegError('no segments to render', '');
 
   // The graph is written to a file rather than passed as an argument: at a
   // few hundred segments the filter string runs past 100KB, and the OS
   // argument-length limit (ARG_MAX) turns that into an opaque E2BIG failure.
   const filterPath = path.join(workDir, 'filter.txt');
-  await fs.writeFile(filterPath, buildConcatFilter(segments, subtitlePath, denoiseModelPath), 'utf-8');
+  await fs.writeFile(
+    filterPath,
+    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath)),
+    'utf-8'
+  );
 
   await run(
     FFMPEG,
     [
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
       '-i', inputPath,
+      // Input 1, when present, is the cleaned audio. The graph reads video
+      // from input 0 and audio from here, so the two must share a timeline —
+      // the cleaner processes the whole track and changes no timings.
+      ...(cleanedAudioPath ? ['-i', cleanedAudioPath] : []),
       '-filter_complex_script', filterPath,
       '-map', '[vout]', '-map', '[aout]',
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',

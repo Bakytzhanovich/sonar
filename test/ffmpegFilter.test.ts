@@ -130,3 +130,32 @@ describe('denoise (RNNoise / arnndn)', () => {
     expect(graph).toContain('[vout]');
   });
 });
+
+describe('pre-cleaned audio', () => {
+  const segments = [{ start: 0, end: 2 }, { start: 5, end: 7 }];
+
+  it('takes audio from the second input, video from the first', () => {
+    const graph = buildConcatFilter(segments, undefined, undefined, true);
+    // Video is always the source; the cleaned track has no picture.
+    expect(graph).toContain('[0:v]trim=');
+    expect(graph).toContain('[1:a]atrim=');
+    expect(graph).not.toContain('[0:a]atrim=');
+  });
+
+  it('does not denoise twice', () => {
+    // DeepFilterNet has already separated the speech. Running arnndn over its
+    // output costs consonants and removes nothing that is left.
+    const graph = buildConcatFilter(segments, undefined, '/models/bd.rnnn', true);
+    expect(graph).not.toContain('arnndn');
+    expect(graph).not.toContain('afftdn');
+    // Levelling still happens — the cleaner returns a quieter track.
+    expect(graph).toContain('volume=6dB');
+    expect(graph).toContain('alimiter');
+  });
+
+  it('keeps the old in-graph chain when nothing was pre-cleaned', () => {
+    const graph = buildConcatFilter(segments, undefined, '/models/bd.rnnn', false);
+    expect(graph).toContain('arnndn=m=/models/bd.rnnn');
+    expect(graph).toContain('[0:a]atrim=');
+  });
+});

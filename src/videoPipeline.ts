@@ -10,6 +10,7 @@ import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
 import { runBreathPass } from './breathPass';
+import { cleanAudioTrack } from './deepFilter';
 import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './transcriptCache';
 import { CLAIM_LEASE_MS } from './jobLease';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
@@ -108,6 +109,10 @@ export interface PipelineDeps {
     measureNoise: typeof measureNoise;
   };
   findBreaths: typeof runBreathPass;
+  // Speech separation outside the render graph. Returns null when the tool is
+  // not installed, and the graph falls back to its own denoiser — a worker
+  // without it still produces correct cuts and captions.
+  cleanAudio: typeof cleanAudioTrack;
 }
 
 export function defaultPipelineDeps(): PipelineDeps {
@@ -132,6 +137,7 @@ export function defaultPipelineDeps(): PipelineDeps {
     chunkOptions: DEFAULT_CHUNK_OPTIONS,
     ffmpeg: { available: ffmpegAvailable, probe, extractAudio, render: renderSegments, poster: extractPosterFrame, denoiseAvailable: denoiseModelAvailable, measureNoise },
     findBreaths: runBreathPass,
+    cleanAudio: cleanAudioTrack,
   };
 }
 
@@ -470,6 +476,17 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
 
   // ---- Stage 5: render ---------------------------------------------------
   await setStage(db, job, 'render', now);
+
+  // The recorded decision, not a re-evaluation: the card already told the user
+  // whether the sound would be cleaned, and deciding twice invites the two to
+  // differ.
+  const wantsDenoise = Boolean(job.artifacts.noise?.denoised);
+
+  // Cleaned outside the render when the better separator is installed. It
+  // works on the whole track before any cutting, so the graph can trim it
+  // with the source's own timestamps. A null here is not a failure — the
+  // graph falls back to the older in-filter denoiser.
+  const cleanedAudioPath = wantsDenoise ? await deps.cleanAudio(sourcePath, workDir) : null;
   try {
     await deps.ffmpeg.render({
       inputPath: sourcePath,
@@ -482,7 +499,9 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       // a correct cut, just without the noise removal it asked for.
       // The recorded decision, not a re-evaluation: the card already told the
       // user what would happen, and deciding twice invites the two to differ.
-      denoiseModelPath: job.artifacts.noise?.denoised ? RNNOISE_MODEL_PATH : undefined,
+      denoiseModelPath: wantsDenoise ? RNNOISE_MODEL_PATH : undefined,
+      // When the better cleaner ran, its output supersedes the in-graph one.
+      cleanedAudioPath: cleanedAudioPath ?? undefined,
       // Fire-and-forget: a progress write must never be able to fail the
       // render it is only describing.
       onProgress: (fraction) => void reportProgress(db, job.id, 'render', fraction).catch(() => {}),

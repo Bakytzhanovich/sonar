@@ -153,11 +153,17 @@ describe('gateStartupWarnings', () => {
 
 describe('the credential-minting routes in production', () => {
   let db: Db;
-  let saved: NodeJS.ProcessEnv;
+  // Only the keys this file touches, restored individually. Replacing
+  // process.env wholesale swaps the object other code may already hold a
+  // reference to, and NODE_ENV in particular decides whether the tenant
+  // route exists at all — leaking it makes unrelated tests fail with a
+  // message about a missing property.
+  const TOUCHED = ['NODE_ENV', 'CORS_ORIGIN', 'ADMIN_BOOTSTRAP_SECRET', 'SIGNUP_INVITE_CODE', 'SIGNUP_MODE'] as const;
+  let saved: Record<string, string | undefined>;
 
   beforeEach(async () => {
     db = await createTestDb();
-    saved = { ...process.env };
+    saved = Object.fromEntries(TOUCHED.map((k) => [k, process.env[k]]));
     process.env.NODE_ENV = 'production';
     // createApp refuses cross-origin requests without this in production, and
     // it is unrelated to what these tests are about.
@@ -168,7 +174,10 @@ describe('the credential-minting routes in production', () => {
   });
 
   afterEach(async () => {
-    process.env = saved;
+    for (const key of TOUCHED) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
     if (db) await dropTestDb(db);
   });
 

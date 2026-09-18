@@ -17,6 +17,13 @@ function basicDefinition(overrides: { emptyText?: boolean } = {}) {
 
 async function createTenant(app: Express, email = 't@example.com') {
   const res = await request(app).post('/api/tenants').send({ name: 'Blogger', email });
+  // Checked before reading the body. Without this a route that answers
+  // anything but 201 — a closed credential gate, a database error — surfaces
+  // as "cannot read properties of undefined (reading 'id')" from whichever
+  // test happened to call this, which says nothing about what went wrong.
+  if (res.status !== 201) {
+    throw new Error(`POST /api/tenants answered ${res.status}: ${JSON.stringify(res.body)}`);
+  }
   return { apiKey: res.body.apiKey as string, tenantId: res.body.tenant.id as string };
 }
 

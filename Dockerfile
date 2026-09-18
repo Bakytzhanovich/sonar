@@ -23,6 +23,22 @@ RUN apt-get update \
 RUN fc-list | grep -qi montserrat \
     || (echo 'Montserrat not installed — captions would silently fall back to another font' && exit 1)
 
+# DeepFilterNet: the speech separator that replaced RNNoise for the render's
+# own audio. Fetched as a release binary rather than built — it is Rust, and
+# a toolchain in this image would cost more than the 34MB it saves.
+#
+# The musl build is statically linked, so it runs on this slim Debian base
+# without matching its glibc. Pinned: an unpinned "latest" would change what
+# the worker sounds like on a rebuild nobody asked for.
+#
+# Not fatal if it is ever missing at runtime — deepFilter.ts falls back to the
+# in-graph denoiser — but a build that silently shipped without it would mean
+# every render quietly got worse, so the check below fails the build instead.
+ARG DEEP_FILTER_VERSION=0.5.6
+ADD https://github.com/Rikorose/DeepFilterNet/releases/download/v${DEEP_FILTER_VERSION}/deep-filter-${DEEP_FILTER_VERSION}-x86_64-unknown-linux-musl /usr/local/bin/deep-filter
+RUN chmod +x /usr/local/bin/deep-filter && deep-filter --help > /dev/null \
+    || (echo 'deep-filter did not run — the render would fall back to the weaker denoiser' && exit 1)
+
 WORKDIR /app
 
 # Dependencies are copied and installed before the source so that a code-only
