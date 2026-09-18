@@ -19,6 +19,7 @@ import {
 import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessionCookie } from './sessionCookie';
 import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
 import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
+import { isAwaitingWorker } from './jobLease';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { analyzeReelMock, generateScriptMock } from './reelAnalysis';
@@ -1545,12 +1546,21 @@ export function createApp(db: Db): Express {
       db,
       `SELECT id, seq, tenant_id, source_video_url, template, status, progress_percent,
               output_url, poster_url, failure_reason, created_at, completed_at,
-              pipeline, stage, subtitles, denoise_mode, review_mode,
+              pipeline, stage, subtitles, denoise_mode, review_mode, claimed_at,
               artifacts - 'transcript' AS artifacts
        FROM video_edit_jobs WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`,
       res.locals.tenantId
     );
-    res.json({ jobs });
+
+    // Derived here rather than sent as a raw lease timestamp: the frontend has
+    // no business knowing how long a claim lasts, and a second copy of that
+    // constant would drift from the one the worker actually uses.
+    const now = new Date();
+    res.json({
+      jobs: (jobs as Array<Record<string, unknown> & { status: string; claimed_at: string | null }>).map(
+        ({ claimed_at, ...job }) => ({ ...job, awaiting_worker: isAwaitingWorker({ status: job.status, claimed_at }, now) })
+      ),
+    });
   }));
 
   // The frontend polls this while a job is `processing` to drive the

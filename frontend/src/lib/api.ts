@@ -214,6 +214,12 @@ export interface VideoEditJob {
   subtitles?: boolean;
   denoise_mode?: 'auto' | 'on' | 'off';
   review_mode?: 'auto' | 'always' | 'never';
+  /**
+   * True while nothing has picked the job up. Computed by the API from the
+   * worker's lease — the status stays 'processing' either way, so this is
+   * the only thing that distinguishes "in the queue" from "being rendered".
+   */
+  awaiting_worker?: boolean;
 }
 
 export interface SubtitlePreset {

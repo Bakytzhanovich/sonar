@@ -11,6 +11,7 @@ import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
 import { runBreathPass } from './breathPass';
 import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './transcriptCache';
+import { CLAIM_LEASE_MS } from './jobLease';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
 import { downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
 import { localMediaConfigFromEnv, localStorageIo } from './localMedia';
@@ -31,8 +32,6 @@ const MAX_SOURCE_DURATION_SEC = 20 * 60;
 // comfortably exceed a real render (a 10-minute source on a small instance
 // takes a few minutes), or two workers will process the same job in parallel
 // and the second will overwrite the first's result.
-const CLAIM_LEASE_MS = 30 * 60 * 1000;
-
 const MAX_ATTEMPTS = 3;
 
 // Failures worth retrying are the ones caused by the world rather than by the

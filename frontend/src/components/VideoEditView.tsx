@@ -274,7 +274,7 @@ export default function VideoEditView() {
     }
   }
 
-  const processingCount = jobs.filter((j) => j.status === 'processing').length;
+  const processingCount = jobs.filter((j) => j.status === 'processing' && !j.awaiting_worker).length;
 
   // Why the submit button is unavailable, in the order the user hits them:
   // no key means every request 401s, so say that before asking for a file.
@@ -463,17 +463,30 @@ export default function VideoEditView() {
                 <div key={j.id} className={styles.jobCard} style={{ '--job-color': STATUS_COLOR[j.status] } as React.CSSProperties}>
                   <div className={styles.jobHeader}>
                     <span className={styles.jobTemplate}>{TEMPLATES.find((t) => t.value === j.template)?.title ?? j.template}</span>
-                    <span className={styles.statusBadge}>{STATUS_LABEL[j.status]}</span>
+                    <span className={styles.statusBadge}>
+                      {j.awaiting_worker ? 'В очереди' : STATUS_LABEL[j.status]}
+                    </span>
                   </div>
 
-                  <div className={styles.progressRow}>
-                    <div className={styles.progressTrack}>
-                      <div className={styles.progressFill} style={{ width: `${j.progress_percent}%` }} />
+                  {/* No bar while the job is only queued. A track frozen at
+                      0% claims progress that is not happening, and that reads
+                      as a broken site rather than as a wait. */}
+                  {!j.awaiting_worker && (
+                    <div className={styles.progressRow}>
+                      <div className={styles.progressTrack}>
+                        <div className={styles.progressFill} style={{ width: `${j.progress_percent}%` }} />
+                      </div>
+                      <span className={styles.progressPercent}>{j.progress_percent}%</span>
                     </div>
-                    <span className={styles.progressPercent}>{j.progress_percent}%</span>
-                  </div>
+                  )}
 
-                  {j.status === 'processing' && j.stage && (
+                  {j.awaiting_worker && (
+                    <div className={styles.jobMeta}>
+                      Ждёт свободного обработчика — начнётся автоматически.
+                    </div>
+                  )}
+
+                  {j.status === 'processing' && !j.awaiting_worker && j.stage && (
                     <div className={styles.jobMeta}>{STAGE_LABEL[j.stage] ?? j.stage}…</div>
                   )}
 
