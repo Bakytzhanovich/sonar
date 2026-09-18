@@ -41,11 +41,31 @@ export class StorageNotConfiguredError extends Error {
   }
 }
 
+/**
+ * Reads a credential from the environment, minus the whitespace a hosting
+ * panel's textarea adds.
+ *
+ * Learned from a real failure and not a hypothetical one: a newline on the
+ * end of STORAGE_ACCESS_KEY_ID went straight into the SigV4 credential
+ * scope, so the signed URL carried `...328b978%0A%2F20260918%2F...`. R2
+ * answered 400, and because an error response carries no CORS headers the
+ * browser reported it as a CORS problem — which sent the search in the wrong
+ * direction entirely.
+ *
+ * These values are copied by hand out of one web console and pasted into
+ * another. Being strict about what arrives is cheaper than the hour it costs
+ * to find a stray byte in a signature.
+ */
+function readTrimmed(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
 export function storageConfigFromEnv(): StorageConfig | null {
-  const endpoint = process.env.STORAGE_ENDPOINT;
-  const bucket = process.env.STORAGE_BUCKET;
-  const accessKeyId = process.env.STORAGE_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.STORAGE_SECRET_ACCESS_KEY;
+  const endpoint = readTrimmed('STORAGE_ENDPOINT');
+  const bucket = readTrimmed('STORAGE_BUCKET');
+  const accessKeyId = readTrimmed('STORAGE_ACCESS_KEY_ID');
+  const secretAccessKey = readTrimmed('STORAGE_SECRET_ACCESS_KEY');
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) return null;
 
   return {
@@ -53,10 +73,10 @@ export function storageConfigFromEnv(): StorageConfig | null {
     bucket,
     // R2 ignores the region but still requires a syntactically valid one in
     // the credential scope; 'auto' is what Cloudflare documents.
-    region: process.env.STORAGE_REGION ?? 'auto',
+    region: readTrimmed('STORAGE_REGION') ?? 'auto',
     accessKeyId,
     secretAccessKey,
-    publicBaseUrl: process.env.STORAGE_PUBLIC_BASE_URL?.replace(/\/+$/, ''),
+    publicBaseUrl: readTrimmed('STORAGE_PUBLIC_BASE_URL')?.replace(/\/+$/, ''),
   };
 }
 

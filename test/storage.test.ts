@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { presign, publicUrlFor, type StorageConfig } from '../src/storage';
+import { describe, it, expect, afterEach } from 'vitest';
+import { presign, publicUrlFor, storageConfigFromEnv, type StorageConfig } from '../src/storage';
 
 const config: StorageConfig = {
   endpoint: 'https://account.r2.cloudflarestorage.com',
@@ -82,5 +82,59 @@ describe('publicUrlFor', () => {
   it('falls back to a presigned GET when no public domain is set', () => {
     const url = publicUrlFor(config, 'tenants/t1/renders/job.mp4');
     expect(url).toContain('X-Amz-Signature=');
+  });
+});
+
+describe('storageConfigFromEnv', () => {
+  const saved = { ...process.env };
+  afterEach(() => { process.env = { ...saved }; });
+
+  function setEnv(values: Record<string, string>) {
+    Object.assign(process.env, values);
+  }
+
+  it('strips the newline a hosting panel adds to a pasted key', () => {
+    // The failure this exists for: a trailing newline on the access key went
+    // into the SigV4 credential scope, the signed URL carried
+    // "...328b978%0A%2F20260918%2F...", and R2 answered 400 — reported by the
+    // browser as a CORS error, because an error response carries no CORS
+    // headers. Hours in the wrong direction over one invisible byte.
+    setEnv({
+      STORAGE_ENDPOINT: 'https://acc.r2.cloudflarestorage.com\n',
+      STORAGE_BUCKET: ' sonar-media ',
+      STORAGE_ACCESS_KEY_ID: '72a762d819afc578cd5c2e1da328b978\n',
+      STORAGE_SECRET_ACCESS_KEY: '  secret\r\n',
+    });
+
+    const config = storageConfigFromEnv();
+    expect(config).not.toBeNull();
+    expect(config!.accessKeyId).toBe('72a762d819afc578cd5c2e1da328b978');
+    expect(config!.secretAccessKey).toBe('secret');
+    expect(config!.bucket).toBe('sonar-media');
+    expect(config!.endpoint).toBe('https://acc.r2.cloudflarestorage.com');
+  });
+
+  it('signs a URL with no stray characters in the credential', () => {
+    setEnv({
+      STORAGE_ENDPOINT: 'https://acc.r2.cloudflarestorage.com',
+      STORAGE_BUCKET: 'sonar-media',
+      STORAGE_ACCESS_KEY_ID: 'KEYID\n',
+      STORAGE_SECRET_ACCESS_KEY: 'secret',
+    });
+
+    const url = presign(storageConfigFromEnv()!, { method: 'PUT', key: 'a/b.mov', contentType: 'video/quicktime' });
+    // %0A is the encoded newline that made the original URL unusable.
+    expect(url).not.toContain('%0A');
+    expect(url).toContain('X-Amz-Credential=KEYID%2F');
+  });
+
+  it('treats a whitespace-only value as unset rather than as a credential', () => {
+    setEnv({
+      STORAGE_ENDPOINT: 'https://acc.r2.cloudflarestorage.com',
+      STORAGE_BUCKET: 'sonar-media',
+      STORAGE_ACCESS_KEY_ID: '   ',
+      STORAGE_SECRET_ACCESS_KEY: 'secret',
+    });
+    expect(storageConfigFromEnv()).toBeNull();
   });
 });
