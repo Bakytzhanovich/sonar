@@ -351,7 +351,15 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // tenants with the same clip, should not pay twice or get different
     // words than last time.
     const audioHash = await hashAudioFile(audioPath);
-    const cached = await readCachedTranscript(db, audioHash);
+    // A cache that cannot be read is a missed saving, never a failed render.
+    // It is also how this first breaks when the worker runs under the
+    // least-privilege role and someone forgets to grant the new table: the
+    // job should recognise the audio again, not die holding a permission
+    // error from an optimisation.
+    const cached = await readCachedTranscript(db, audioHash).catch((err) => {
+      console.warn(`[video-pipeline] transcript cache unreadable: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    });
     if (cached) {
       transcript = { words: cached.words, language: cached.language };
       await saveArtifact(db, job, 'transcript', transcript);

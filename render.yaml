@@ -68,7 +68,7 @@ services:
       # nothing else: a stranger can spend what is on the account and not a
       # cent more. Keep the balance small and auto-recharge OFF.
       - key: SIGNUP_MODE
-        sync: false
+        value: open
       # Presented as the x-sonar-admin-secret header to POST /api/tenants,
       # which answers with a tenant API key in plaintext. Not needed unless
       # someone is issuing keys for the API directly — the product's own

@@ -22,7 +22,13 @@
 
 CREATE ROLE sonar_worker LOGIN PASSWORD :password;
 
-GRANT CONNECT ON DATABASE sonar TO sonar_worker;
+-- The database name differs by host: 'sonar' locally, 'neondb' on Neon, and
+-- whatever a managed provider chose elsewhere. current_database() avoids
+-- having to remember which, since this always runs connected to the one
+-- being granted.
+DO $$ BEGIN
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO sonar_worker', current_database());
+END $$;
 GRANT USAGE ON SCHEMA public TO sonar_worker;
 
 -- Claims jobs, records stages and artifacts, writes the finished output.
@@ -33,6 +39,13 @@ GRANT INSERT ON notifications TO sonar_worker;
 
 -- Reads browser push endpoints to deliver that notification.
 GRANT SELECT ON push_subscriptions TO sonar_worker;
+
+-- Recognised speech, keyed by the audio's hash. The worker both reads it
+-- (to avoid paying for the same file twice, and to give the same clip the
+-- same captions every time) and writes it after a fresh transcription.
+-- No UPDATE: entries are written once and never revised — overwriting one
+-- would break the promise the table exists to make.
+GRANT SELECT, INSERT ON transcript_cache TO sonar_worker;
 
 -- Sequences behind BIGSERIAL columns on the tables above.
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO sonar_worker;
