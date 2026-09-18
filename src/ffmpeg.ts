@@ -58,10 +58,25 @@ export function buildDenoiseChain(modelPath: string = RNNOISE_MODEL_PATH): strin
     // them, so it can spend its capacity on the noise it is actually good at.
     'highpass=f=80,' +
     `aresample=48000,arnndn=m=${escapeFilterPath(modelPath)},` +
-    // A gentle spectral pass after the network cleans up what it leaves
-    // behind. -30dB noise floor is deliberately conservative: pushed harder
-    // this filter starts eating consonants.
-    'afftdn=nf=-30,' +
+    // A spectral pass after the network, cleaning up what it leaves behind.
+    //
+    // -45 with nr=20, not the -30 this used to be. The conservative setting
+    // was chosen against a recording quieter than the ones this actually
+    // meets: on real street footage it left a continuous broadband wash
+    // across the whole band, audible under the voice while the measured
+    // noise floor looked fine — the floor describes the pauses, and the
+    // complaint was about what sits under the speech.
+    //
+    // Safe to push here because denoising only runs at all when the measured
+    // headroom is under 25dB (see shouldDenoise). A clean recording never
+    // reaches this filter, so there is no quiet source to over-process.
+    //
+    // Measured on a 13.5dB-headroom clip: pauses go from a visible wash to
+    // silence, and speech harmonics survive intact. Pushed further still
+    // (nf=-50, nr=28, two RNNoise passes) the pauses are no cleaner and the
+    // air above 10kHz starts thinning out of the consonants — so this is the
+    // end of the useful range, not the middle of it.
+    'afftdn=nf=-45:nr=20,' +
     // +6dB, not the +10 that would restore the original peak level. Gain
     // lifts signal and noise together, so matching the source's loudness
     // would hand back the noise this chain just removed — measured on real

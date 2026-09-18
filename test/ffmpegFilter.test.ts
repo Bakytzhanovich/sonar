@@ -100,9 +100,20 @@ describe('denoise (RNNoise / arnndn)', () => {
   it('resamples to 48kHz around the filter, the rate RNNoise expects', () => {
     const chain = buildDenoiseChain('/models/cb.rnnn');
     expect(chain).toBe(
-      'highpass=f=80,aresample=48000,arnndn=m=/models/cb.rnnn,afftdn=nf=-30,' +
+      'highpass=f=80,aresample=48000,arnndn=m=/models/cb.rnnn,afftdn=nf=-45:nr=20,' +
         'volume=6dB,alimiter=limit=0.95,aresample=48000'
     );
+  });
+
+  it('cleans hard enough for footage that actually needs cleaning', () => {
+    // -30 left a continuous broadband wash under the voice on real street
+    // footage — audible to the person who recorded it, while the measured
+    // noise floor looked fine, because that figure describes the pauses.
+    //
+    // Safe to push because denoising only runs when the measured headroom is
+    // under 25dB (shouldDenoise), so a quiet recording never gets here.
+    const chain = buildDenoiseChain('/models/cb.rnnn');
+    expect(chain).toContain('afftdn=nf=-45:nr=20');
   });
 
   it('escapes a model path that would otherwise break the filter syntax', () => {

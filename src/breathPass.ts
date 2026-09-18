@@ -35,6 +35,11 @@ export async function runBreathPass(
   const audioPath = path.join(workDir, 'analysis.wav');
 
   try {
+    // Deliberately gentler than the render's own chain (nf=-30, not -45).
+    // This audio is never heard — it is measured, and the thresholds in
+    // breathDetector.ts were calibrated against a signal cleaned exactly this
+    // much. Cleaning harder here would push a breath below the floor the
+    // detector looks above, and the pass would quietly stop finding anything.
     const filters = denoiseModelPath
       ? `highpass=f=80,aresample=48000,arnndn=m=${denoiseModelPath},afftdn=nf=-30,aresample=16000`
       : 'aresample=16000';
