@@ -10,6 +10,13 @@ import { useSession } from '@/lib/useSession';
 import controls from './Controls.module.css';
 import styles from './AuthView.module.css';
 
+// Where a signed-in person lands. The video editor, not the guided chat-bot
+// tour: that tour walks through keywords and demo contacts, which is the part
+// of the product currently switched off pending the personal-data question,
+// while the editor is the part clients have paid for. Someone who wants the
+// tour can still reach /onboarding from the nav.
+const HOME_ROUTE = '/video';
+
 export default function LoginView() {
   const router = useRouter();
   const [session, setSession] = useSession();
@@ -30,7 +37,7 @@ export default function LoginView() {
     api
       .me({ baseUrl: API_BASE_URL })
       .then(() => {
-        if (!cancelled) router.replace('/onboarding');
+        if (!cancelled) router.replace(HOME_ROUTE);
       })
       .catch(() => {
         if (cancelled) return;
@@ -56,7 +63,7 @@ export default function LoginView() {
         tenantName: res.tenant.name,
       };
       setSession(nextSession);
-      router.replace('/onboarding');
+      router.replace(HOME_ROUTE);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError('Неверный email или пароль');
