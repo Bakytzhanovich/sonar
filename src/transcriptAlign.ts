@@ -159,6 +159,11 @@ export function resemblance(a: string, b: string): number {
 // fallback is for.
 const ANCHOR_THRESHOLD = 0.3;
 
+// The shortest span a word can occupy. Below this the highlight has nothing
+// to land on; above a tenth of a second it would start pushing words visibly
+// out of step with the voice.
+const MIN_WORD_SEC = 0.06;
+
 // Enough anchors to trust the alignment rather than the proportional split.
 // With fewer, the two readings have almost nothing in common and matching
 // them would place words by coincidence — worse than spreading them evenly,
@@ -266,14 +271,40 @@ function spreadBetweenAnchors(timed: TranscriptWord[], words: string[], slotOf: 
     cursor = endIndex;
   }
 
+  // Every word needs a span the renderer can show. Anchors that sit flush
+  // against each other leave nothing between them, and the words in that gap
+  // came out zero-length — a fifth of them on real footage, each one a word
+  // the karaoke highlight skips over entirely.
+  //
+  // Widening the end rather than moving the next word's start: a few
+  // milliseconds of overlap between neighbouring words is imperceptible,
+  // while a word with no duration is simply never highlighted.
+  for (let k = 0; k < out.length; k++) {
+    if (out[k].end - out[k].start < MIN_WORD_SEC) {
+      out[k] = { ...out[k], end: out[k].start + MIN_WORD_SEC };
+    }
+  }
+
   // The captions must cover the speech from end to end. Anchoring can leave
   // the outermost slots unused — the last word matching the second-to-last
   // slot, say — and then the final caption disappears while the speaker is
-  // still talking. Only ever widened, never pulled in.
+  // still talking.
   if (out.length > 0) {
     out[0] = { ...out[0], start: Math.min(out[0].start, timed[0].start) };
     const last = out.length - 1;
     out[last] = { ...out[last], end: Math.max(out[last].end, timed[timed.length - 1].end) };
+  }
+
+  // Nothing may sit outside the source timeline. These timings are projected
+  // onto the output timeline after the cuts are applied, and a word past the
+  // last slot has no segment to land in — the widening above is exactly the
+  // sort of thing that would push one there.
+  const floor = timed[0].start;
+  const ceiling = timed[timed.length - 1].end;
+  for (let k = 0; k < out.length; k++) {
+    const start = Math.min(Math.max(out[k].start, floor), ceiling);
+    const end = Math.min(Math.max(out[k].end, start), ceiling);
+    out[k] = { ...out[k], start, end };
   }
 
   return out;

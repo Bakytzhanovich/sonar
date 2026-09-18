@@ -163,3 +163,31 @@ describe('alignment by resemblance', () => {
     }
   });
 });
+
+describe('word spans are always showable', () => {
+  it('gives every word a span, even between anchors that touch', () => {
+    // Two anchors flush against each other: 'бір' ends exactly where 'екі'
+    // begins, and the corrected reading puts two extra words between them.
+    // Before this, those came out zero-length and were never highlighted.
+    const timed = [
+      { word: 'бір', start: 0, end: 1 },
+      { word: 'екі', start: 1, end: 2 },
+      { word: 'үш', start: 2, end: 3 },
+    ];
+    const out = alignTextToWordTimings(timed, 'бір қосымша тағы екі үш');
+
+    expect(out).toHaveLength(5);
+    for (const w of out) {
+      expect(w.end - w.start).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps starts in order while widening', () => {
+    const timed = Array.from({ length: 6 }, (_unused, i) => ({ word: `сөз${i}`, start: i * 0.1, end: (i + 1) * 0.1 }));
+    const out = alignTextToWordTimings(timed, 'сөз0 a b сөз1 c сөз2 d сөз3 сөз4 сөз5');
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i].start).toBeGreaterThanOrEqual(out[i - 1].start - 1e-9);
+      expect(out[i].end).toBeGreaterThan(out[i].start);
+    }
+  });
+});
