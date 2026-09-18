@@ -164,12 +164,21 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 0;
+    /* Above the tab bar, not under it. Both are fixed to the bottom of the
+     * viewport, and the tab bar wins on z-index — so at bottom: 0 this sat
+     * behind it and the primary action of the screen was invisible on a
+     * phone while being perfectly visible on a laptop.
+     *
+     * 62px is the tab bar's height, the same figure globals.css reserves as
+     * body padding for exactly this reason. The safe-area inset is added
+     * once more here because the tab bar's own padding consumes it below
+     * this point. */
+    bottom: calc(62px + env(safe-area-inset-bottom, 0px));
     z-index: 20;
     display: flex;
     flex-direction: column-reverse;
     gap: 6px;
-    padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+    padding: 10px 14px;
     border-top: 1px solid var(--border);
     background: var(--background);
   }
