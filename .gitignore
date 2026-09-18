@@ -1,7 +1,13 @@
 node_modules/
 dist/
+# Every env file, whatever it is called. Listing them one by one meant the
+# next one — .env.production, holding a production database password and R2
+# keys — was tracked by default, which is the wrong way round for a file
+# whose entire purpose is holding secrets.
 .env
-.env.local
+.env.*
+# ...except the templates, which carry names and comments but never values.
+!.env.example
 *.log
 .DS_Store
 *.sqlite
