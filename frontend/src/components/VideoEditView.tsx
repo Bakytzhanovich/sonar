@@ -348,31 +348,40 @@ export default function VideoEditView() {
                   </>
                 )}
               </label>
-              <Switch
-                checked={subtitles}
-                onChange={setSubtitles}
-                label="Вжечь динамические субтитры"
-              />
+              <div className={styles.controls}>
+                <Switch
+                  checked={subtitles}
+                  onChange={setSubtitles}
+                  label="Вжечь динамические субтитры"
+                />
 
-              <Switch
-                checked={removeBreaths}
-                onChange={setRemoveBreaths}
-                label="Убрать вздохи"
-                hint="Ищет придыхания между словами — их не видит расшифровка"
-              />
+                <Switch
+                  checked={removeBreaths}
+                  onChange={setRemoveBreaths}
+                  label="Убрать вздохи"
+                  hint="Ищет придыхания между словами — их не видит расшифровка"
+                />
 
-              {/* Only shown when there is something to style. */}
-              {subtitles && presets.length > 0 && (
-                <label className={styles.field}>
-                  <span className={styles.fieldLabel}>Стиль субтитров</span>
-                  <Select
-                    value={subtitlePreset}
-                    onChange={setSubtitlePreset}
-                    aria-label="Стиль субтитров"
-                    options={presets.map((preset) => ({ value: preset.id, label: `${preset.label} — ${preset.description}` }))}
-                  />
-                </label>
-              )}
+                {/* Only shown when there is something to style. */}
+                {subtitles && presets.length > 0 && (
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>Стиль субтитров</span>
+                    {/* The name alone in the option: a phone-width select
+                        truncates anything longer, and "жёлтая подсветка сл"
+                        reads as a bug rather than as an abbreviation. The
+                        description goes underneath, where it fits. */}
+                    <Select
+                      value={subtitlePreset}
+                      onChange={setSubtitlePreset}
+                      aria-label="Стиль субтитров"
+                      options={presets.map((preset) => ({ value: preset.id, label: preset.label }))}
+                    />
+                    <span className={styles.fieldHint}>
+                      {presets.find((preset) => preset.id === subtitlePreset)?.description}
+                    </span>
+                  </label>
+                )}
+              </div>
             </>
           ) : (
             <label className={styles.field}>

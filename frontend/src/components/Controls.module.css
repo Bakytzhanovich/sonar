@@ -63,10 +63,16 @@
   filter: brightness(1.08);
 }
 
+/* Dimmed, not restyled. Turning transparent made the disabled primary button
+ * identical to a secondary one, so the screen's main action read as a
+ * different, lesser kind of button rather than as the same button waiting for
+ * something. Keeping the fill and dropping the opacity says "this one, not
+ * yet". */
 .buttonPrimary:disabled {
-  background: transparent;
-  border-color: var(--border);
-  color: var(--foreground-muted);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--background);
+  opacity: 0.38;
   cursor: not-allowed;
 }
 
