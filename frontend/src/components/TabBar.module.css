@@ -84,4 +84,12 @@
   }
 
   .sheetItemActive { color: var(--accent); background: var(--accent-soft); }
+
+  /* Separated from the navigation above it: leaving is not another place to
+   * go, and a border says so without a heading. */
+  .sheetFooter {
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
 }

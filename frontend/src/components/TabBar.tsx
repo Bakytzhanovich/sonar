@@ -4,6 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Bot, Film, Images, LayoutGrid, Send, Sparkles, Users, Video } from 'lucide-react';
 import type { ModuleRoute } from './ModuleNav';
+import LogoutButton from './LogoutButton';
+import { useSession } from '@/lib/useSession';
 import styles from './TabBar.module.css';
 
 // Bottom navigation, phone only. The七 modules previously lived behind a
@@ -30,6 +32,7 @@ const SECONDARY: { href: ModuleRoute; label: string; Icon: typeof Bot }[] = [
 
 export default function TabBar({ current }: { current: ModuleRoute }) {
   const [moreOpen, setMoreOpen] = useState(false);
+  const [session] = useSession();
   const moreIsActive = SECONDARY.some((item) => item.href === current);
 
   return (
@@ -52,6 +55,18 @@ export default function TabBar({ current }: { current: ModuleRoute }) {
                 {label}
               </Link>
             ))}
+            {/* The only way out on a phone. The header's logout is hidden
+                below 760px — the tab bar replaces that whole nav — so
+                without this there was no way to sign out on the device most
+                people use. */}
+            {/* Rendered only with a session: LogoutButton returns null
+                without one, and the divider would then be a line under
+                nothing. */}
+            {session && (
+              <div className={styles.sheetFooter}>
+                <LogoutButton variant="stacked" />
+              </div>
+            )}
           </div>
         </div>
       )}
