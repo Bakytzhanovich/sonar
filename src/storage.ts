@@ -112,6 +112,12 @@ export interface PresignOptions {
   key: string;
   expiresInSec?: number;
   contentType?: string;
+  // Makes the storage answer with Content-Disposition: attachment, so the
+  // browser saves the response instead of playing it. Signed like any other
+  // query parameter, which is why it has to be passed in here rather than
+  // appended to a finished URL — an extra parameter invalidates the
+  // signature.
+  downloadFilename?: string;
   now?: Date;
 }
 
@@ -138,6 +144,12 @@ export function presign(config: StorageConfig, options: PresignOptions): string 
     'X-Amz-Expires': String(expiresInSec),
     'X-Amz-SignedHeaders': signedHeaders,
   });
+  if (options.downloadFilename) {
+    // Quotes around the filename, and only safe characters inside it: a quote
+    // or a newline here would let a job name break out of the header.
+    const safe = options.downloadFilename.replace(/[^\w.-]/g, '_');
+    query.set('response-content-disposition', `attachment; filename="${safe}"`);
+  }
 
   // SigV4 requires the canonical query string sorted by key, with both key
   // and value RFC 3986 encoded. URLSearchParams.sort() plus manual encoding
@@ -180,6 +192,23 @@ export function publicUrlFor(config: StorageConfig, key: string): string {
   // readable by anyone who guesses the key, with no signature and no expiry.
   if (config.publicBaseUrl) return `${config.publicBaseUrl}/${encodeKeyPath(key)}`;
   return presign(config, { method: 'GET', key, expiresInSec: RENDER_URL_TTL_SEC });
+}
+
+/**
+ * The same object, as a link that saves rather than plays.
+ *
+ * Separate from publicUrlFor because the player needs the opposite: a URL the
+ * browser renders inline. Downloading used to be JavaScript's job — fetch the
+ * bytes, build a blob, click it — which broke once the player had already
+ * range-requested the same URL without CORS: the fetch hit those cached
+ * partial responses and failed the CORS check before reaching the network.
+ * A plain link the storage marks as an attachment involves neither.
+ */
+export function downloadUrlFor(config: StorageConfig, key: string, filename: string): string {
+  // A public bucket serves the object straight from its own domain, where
+  // there is no signature to carry the disposition. Nothing to add here.
+  if (config.publicBaseUrl) return `${config.publicBaseUrl}/${encodeKeyPath(key)}`;
+  return presign(config, { method: 'GET', key, expiresInSec: RENDER_URL_TTL_SEC, downloadFilename: filename });
 }
 
 export async function downloadToFile(config: StorageConfig, key: string, destPath: string): Promise<void> {

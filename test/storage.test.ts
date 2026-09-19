@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { presign, publicUrlFor, storageConfigFromEnv, type StorageConfig } from '../src/storage';
+import { downloadUrlFor, presign, publicUrlFor, storageConfigFromEnv, type StorageConfig } from '../src/storage';
 
 const config: StorageConfig = {
   endpoint: 'https://account.r2.cloudflarestorage.com',
@@ -82,6 +82,34 @@ describe('publicUrlFor', () => {
   it('falls back to a presigned GET when no public domain is set', () => {
     const url = publicUrlFor(config, 'tenants/t1/renders/job.mp4');
     expect(url).toContain('X-Amz-Signature=');
+  });
+});
+
+describe('downloadUrlFor', () => {
+  it('asks the storage to send the object as an attachment', () => {
+    const url = new URL(downloadUrlFor(config, 'tenants/t1/renders/job.mp4', 'sonar-ab12cd34.mp4'));
+    expect(url.searchParams.get('response-content-disposition')).toBe('attachment; filename="sonar-ab12cd34.mp4"');
+  });
+
+  it('signs the disposition rather than appending it', () => {
+    // The bug this guards: a parameter bolted onto a finished presigned URL is
+    // outside the signature, and S3 answers 403 for the whole request.
+    const plain = publicUrlFor(config, 'a/b.mp4');
+    const download = downloadUrlFor(config, 'a/b.mp4', 'b.mp4');
+    expect(signatureOf(download)).not.toBe(signatureOf(plain));
+    expect(new URL(download).searchParams.get('X-Amz-SignedHeaders')).toBe('host');
+  });
+
+  it('refuses a filename that could break out of the header', () => {
+    const url = new URL(downloadUrlFor(config, 'a/b.mp4', 'evil"\n; filename="other.exe'));
+    expect(url.searchParams.get('response-content-disposition')).toBe(
+      'attachment; filename="evil____filename__other.exe"'
+    );
+  });
+
+  it('leaves a public bucket alone, having no signature to carry the header', () => {
+    const url = downloadUrlFor({ ...config, publicBaseUrl: 'https://cdn.sonar.kz' }, 'a/b.mp4', 'b.mp4');
+    expect(url).toBe('https://cdn.sonar.kz/a/b.mp4');
   });
 });
 

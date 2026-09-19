@@ -27,7 +27,7 @@ import { generateCarouselSlides } from './carouselGeneration';
 import { publishDuePosts } from './publisher';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
-import { presign, storageConfigFromEnv } from './storage';
+import { downloadUrlFor, presign, storageConfigFromEnv } from './storage';
 import { localMediaConfigFromEnv, resolveKeyPath, signLocalUrl, verifyLocalUrl } from './localMedia';
 import { notify, listNotifications } from './notifications';
 import { getOrCreateVapidKeys } from './vapidKeys';
@@ -1537,6 +1537,17 @@ export function createApp(db: Db): Express {
     res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
   }));
 
+  // A finished render, as a link that saves instead of playing. Falls back to
+  // the inline URL where there is nothing to sign: the mock Level-1/2 pipeline
+  // keeps no object key, and local development serves media from this same
+  // origin, where the anchor's own `download` attribute already works.
+  function downloadUrlForJob(objectKey: string | null, jobId: string, outputUrl: string | null): string | null {
+    if (!outputUrl) return null;
+    const storage = storageConfigFromEnv();
+    if (!storage || !objectKey) return outputUrl;
+    return downloadUrlFor(storage, objectKey, `sonar-${jobId.slice(0, 8)}.mp4`);
+  }
+
   app.get('/api/video-edit-jobs', asyncHandler(async (req, res) => {
     // artifacts minus the transcript: the frontend polls this every 2s while
     // anything renders, and a 20-minute clip's word list is tens of kilobytes
@@ -1547,6 +1558,7 @@ export function createApp(db: Db): Express {
       `SELECT id, seq, tenant_id, source_video_url, template, status, progress_percent,
               output_url, poster_url, failure_reason, created_at, completed_at,
               pipeline, stage, subtitles, denoise_mode, review_mode, claimed_at,
+              output_object_key,
               artifacts - 'transcript' AS artifacts
        FROM video_edit_jobs WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`,
       res.locals.tenantId
@@ -1557,9 +1569,15 @@ export function createApp(db: Db): Express {
     // constant would drift from the one the worker actually uses.
     const now = new Date();
     res.json({
-      jobs: (jobs as Array<Record<string, unknown> & { status: string; claimed_at: string | null }>).map(
-        ({ claimed_at, ...job }) => ({ ...job, awaiting_worker: isAwaitingWorker({ status: job.status, claimed_at }, now) })
-      ),
+      jobs: (
+        jobs as Array<Record<string, unknown> & { id: string; status: string; claimed_at: string | null; output_url: string | null; output_object_key: string | null }>
+      ).map(({ claimed_at, output_object_key, ...job }) => ({
+        ...job,
+        awaiting_worker: isAwaitingWorker({ status: job.status, claimed_at }, now),
+        // The object key itself stays server-side; what leaves is a link that
+        // already carries the filename the browser should save it under.
+        download_url: downloadUrlForJob(output_object_key, job.id, job.output_url),
+      })),
     });
   }));
 

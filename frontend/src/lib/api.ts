@@ -204,6 +204,9 @@ export interface VideoEditJob {
   status: VideoJobStatus;
   progress_percent: number;
   output_url: string | null;
+  // The same render, signed so the storage marks it as an attachment. The
+  // player needs output_url, which plays inline; this one saves.
+  download_url?: string | null;
   poster_url: string | null;
   failure_reason: string | null;
   created_at: string;
