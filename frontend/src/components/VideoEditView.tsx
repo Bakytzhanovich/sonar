@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
+import { STAFF_BOOTSTRAP_AVAILABLE } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
 import Switch from './Switch';
@@ -434,16 +435,20 @@ export default function VideoEditView() {
               {blockedReason}
               {!hasAccess && (
                 <>
-                  {/* Two ways out of this state, so both are offered: the
-                      real one for a person with an account, and the demo one
-                      for a staff-assisted session. Naming both in the text
-                      while only linking one left the other unreachable. */}
+                  {/* Every way out of this state is offered, and only the ones
+                      that work here: signing in, registering, and — where the
+                      API still answers it — the staff-assisted demo tenant. */}
                   <a className={styles.inlineAction} href="/login">
                     Войти
                   </a>
-                  <button className={styles.inlineAction} onClick={quickSetup}>
-                    Создать тестовый
-                  </button>
+                  <a className={styles.inlineAction} href="/signup">
+                    Регистрация
+                  </a>
+                  {STAFF_BOOTSTRAP_AVAILABLE && (
+                    <button className={styles.inlineAction} onClick={quickSetup}>
+                      Создать тестовый
+                    </button>
+                  )}
                 </>
               )}
             </p>

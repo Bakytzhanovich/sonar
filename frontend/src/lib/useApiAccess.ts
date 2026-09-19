@@ -3,6 +3,13 @@
 import { useDevConfig } from './useDevConfig';
 import { useSession } from './useSession';
 
+// "Быстрый старт" / "Создать тестовый" both POST /api/tenants, which the API
+// closes outright when it runs in production — it answers 404 there, by
+// design, so that a key-issuing route does not confirm it exists. Offering
+// the button anyway is how a working deployment reads as broken: it fails
+// every time and the only explanation lands in the console.
+export const STAFF_BOOTSTRAP_AVAILABLE = process.env.NODE_ENV !== 'production';
+
 /**
  * Whether this browser can call the API, and the config to call it with.
  *
