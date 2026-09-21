@@ -17,17 +17,21 @@ describe('planSmartCut', () => {
     expect(plan.removedDurationSec).toBe(0);
   });
 
+  // These three pin their own threshold and padding rather than reading the
+  // defaults: they describe how the arithmetic works, and the defaults are a
+  // product judgement that gets retuned. Inheriting them meant a tuning change
+  // broke tests that had nothing to say about tuning.
   it('ignores pauses at or below the threshold', () => {
-    // 0.7s gap — exactly the threshold, which is "long enough to be natural".
-    const plan = planSmartCut(words(['раз', 0, 0.5], ['два', 1.2, 1.7]), 1.7);
+    // A gap exactly at the threshold, which is "long enough to be natural".
+    const plan = planSmartCut(words(['раз', 0, 0.5], ['два', 1.2, 1.7]), 1.7, { ...opts, maxPauseSec: 0.7 });
     expect(plan.segments).toHaveLength(1);
   });
 
   it('cuts a long pause but leaves padding on both sides', () => {
-    // 3s of silence between two words. Padding is 0.12s per side, so 0.24s
-    // of it must survive — a cut straight to zero is what makes an edit
-    // sound chopped.
-    const plan = planSmartCut(words(['раз', 0, 1], ['два', 4, 5]), 5);
+    // 3s of silence between two words. At 0.12s of padding per side, 0.24s of
+    // it must survive — a cut straight to zero is what makes an edit sound
+    // chopped.
+    const plan = planSmartCut(words(['раз', 0, 1], ['два', 4, 5]), 5, { ...opts, paddingSec: 0.12 });
 
     expect(plan.segments).toEqual([
       { start: 0, end: 1.12 },
@@ -37,11 +41,22 @@ describe('planSmartCut', () => {
   });
 
   it('trims dead air at the start and end of the clip', () => {
-    const plan = planSmartCut(words(['слово', 5, 6]), 11);
+    const plan = planSmartCut(words(['слово', 5, 6]), 11, { ...opts, paddingSec: 0.12 });
 
     expect(plan.segments).toHaveLength(1);
     expect(plan.segments[0].start).toBeCloseTo(4.88, 5);
     expect(plan.segments[0].end).toBeCloseTo(6.12, 5);
+  });
+
+  it('cuts the ordinary half-second pause of everyday speech', () => {
+    // The regression that produced the complaint: at a 0.7s threshold a
+    // recording full of 0.3-0.6s pauses came back essentially uncut, so the
+    // feature looked like it had not run. Pinned because it is the whole
+    // point of the default, not an incidental consequence of it.
+    const plan = planSmartCut(words(['раз', 0, 0.5], ['два', 1.05, 1.55]), 1.55);
+
+    expect(plan.segments).toHaveLength(2);
+    expect(plan.removedDurationSec).toBeGreaterThan(0.3);
   });
 
   it('drops filler words and reports how many', () => {

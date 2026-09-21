@@ -19,12 +19,12 @@ export interface KeepSegment {
 
 export interface SmartCutOptions {
   // Pauses shorter than this stay untouched — they are the natural rhythm of
-  // speech, not dead air. The ТЗ asks for 0.7s.
+  // speech, not dead air.
   maxPauseSec: number;
   // How much silence to LEAVE on each side of a cut. Cutting a pause down to
   // exactly zero clips the consonants that trail off at the end of a word and
   // the breath that starts the next one, which is what makes naive
-  // auto-editors sound chopped. A 0.7s pause therefore becomes 2*padding,
+  // auto-editors sound chopped. A cut pause therefore becomes 2*padding,
   // not 0.
   paddingSec: number;
   // A removal shorter than this is not worth making: the cut itself costs a
@@ -41,8 +41,12 @@ export interface SmartCutOptions {
 }
 
 export const DEFAULT_SMART_CUT_OPTIONS: SmartCutOptions = {
-  maxPauseSec: 0.7,
-  paddingSec: 0.12,
+  // 0.4, not the 0.7 the ТЗ names. At 0.7 a typical recording lost around a
+  // tenth of its runtime, because ordinary speech pauses for 0.3-0.6s and
+  // every one of those survived untouched — the feature ran, and the result
+  // still sounded unedited, which is the complaint that reached us.
+  maxPauseSec: 0.4,
+  paddingSec: 0.08,
   minRemovalSec: 0.08,
   minSegmentSec: 0.15,
   maxSegments: 300,
