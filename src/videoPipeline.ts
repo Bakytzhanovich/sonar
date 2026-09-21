@@ -9,6 +9,7 @@ import { buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, 
 import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
+import { applyPosition } from './subtitlePositions';
 import { runBreathPass } from './breathPass';
 import { cleanAudioTrack } from './deepFilter';
 import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './transcriptCache';
@@ -442,9 +443,13 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // Rebuild from the user's corrected lines when there are any. Their
     // timings came from this same plan, so the captions stay in step with the
     // cut — only the words changed.
+    // The look comes from the preset, the placement from the position — two
+    // separate choices, resolved in that order because an explicit position is
+    // the more recent thing the person said.
+    const captionStyle = applyPosition(styleForPreset(job.subtitle_preset), job.subtitle_position);
     const { ass, chunks } = approved
-      ? buildSubtitlesFromLines(approved, styleForPreset(job.subtitle_preset))
-      : buildSubtitlesForPlan(plan.words, plan.segments, styleForPreset(job.subtitle_preset), deps.chunkOptions);
+      ? buildSubtitlesFromLines(approved, captionStyle)
+      : buildSubtitlesForPlan(plan.words, plan.segments, captionStyle, deps.chunkOptions);
     // A transcript that survives the cut as zero chunks (all filler, or a
     // plan that kept only silence) is not a failure — render without them
     // rather than burning an empty subtitle track.

@@ -340,6 +340,7 @@ export interface VideoEditJob {
   denoise_mode: 'auto' | 'on' | 'off';
   review_mode: 'auto' | 'always' | 'never';
   subtitle_preset: string;
+  subtitle_position: string;
   remove_breaths: boolean;
 }
 

@@ -19,6 +19,7 @@ import {
 import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessionCookie } from './sessionCookie';
 import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
 import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
+import { DEFAULT_SUBTITLE_POSITION, isSubtitlePositionId, SUBTITLE_POSITIONS } from './subtitlePositions';
 import { isAwaitingWorker } from './jobLease';
 import { SMART_CUT_WORKER, isWorkerOnline } from './workerHealth';
 import { runFlow, collectMessageNodes } from './flowEngine';
@@ -424,7 +425,13 @@ export function createApp(db: Db): Express {
   // copy — two lists drift, and these styles are defined in the renderer's
   // terms (ASS colour order), not the browser's.
   app.get('/api/subtitle-presets', (_req, res) => {
-    res.json({ presets: SUBTITLE_PRESETS.map(({ id, label, description }) => ({ id, label, description })) });
+    res.json({
+      presets: SUBTITLE_PRESETS.map(({ id, label, description }) => ({ id, label, description })),
+      // Shipped alongside the looks rather than from a second endpoint: the
+      // picker shows both, and one request means the two can never arrive out
+      // of step with each other.
+      positions: SUBTITLE_POSITIONS.map(({ id, label, description }) => ({ id, label, description })),
+    });
   });
 
   app.use('/api', requireProductCredential(db));
@@ -1507,6 +1514,11 @@ export function createApp(db: Db): Express {
       // An unrecognised id falls back rather than failing: it can only come
       // from a stale client, and a caption look is not worth a 400.
       const subtitlePreset = isSubtitlePresetId(req.body?.subtitlePreset) ? req.body.subtitlePreset : DEFAULT_SUBTITLE_PRESET;
+      // Same fallback, and the default is 'auto' — the absence of an override,
+      // which leaves the preset's own placement alone.
+      const subtitlePosition = isSubtitlePositionId(req.body?.subtitlePosition)
+        ? req.body.subtitlePosition
+        : DEFAULT_SUBTITLE_POSITION;
       // Opt-in: the most destructive pass in the pipeline, and on a noisy
       // recording it finds nothing anyway.
       const removeBreaths = req.body?.removeBreaths === true;
@@ -1514,7 +1526,7 @@ export function createApp(db: Db): Express {
       const id = randomUUID();
       await exec(
         db,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, remove_breaths) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, remove_breaths) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
@@ -1524,6 +1536,7 @@ export function createApp(db: Db): Express {
         denoiseMode,
         reviewMode,
         subtitlePreset,
+        subtitlePosition,
         removeBreaths
       );
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });

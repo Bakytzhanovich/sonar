@@ -231,6 +231,13 @@ export interface SubtitlePreset {
   description: string;
 }
 
+// Where the captions sit — a separate axis from how they look.
+export interface SubtitlePosition {
+  id: string;
+  label: string;
+  description: string;
+}
+
 export interface VideoUploadTicket {
   objectKey: string;
   uploadUrl: string;
@@ -513,20 +520,26 @@ export const api = {
     apiRequest(config, 'POST', '/api/video-uploads', { contentType }) as Promise<VideoUploadTicket>,
 
   // No denoise/review flags: the pipeline measures the recording and decides.
-  listSubtitlePresets: (config: ApiConfig) => apiRequest(config, 'GET', '/api/subtitle-presets'),
+  listSubtitlePresets: (config: ApiConfig) =>
+    apiRequest(config, 'GET', '/api/subtitle-presets') as Promise<{
+      presets?: SubtitlePreset[];
+      positions?: SubtitlePosition[];
+    }>,
 
   createSmartCutJob: (
     config: ApiConfig,
     sourceObjectKey: string,
     subtitles: boolean,
     subtitlePreset: string,
-    removeBreaths: boolean
+    removeBreaths: boolean,
+    subtitlePosition: string
   ) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', {
       template: 'ai_smart_cut',
       sourceObjectKey,
       subtitles,
       subtitlePreset,
+      subtitlePosition,
       removeBreaths,
     }) as Promise<{ job: VideoEditJob }>,
 

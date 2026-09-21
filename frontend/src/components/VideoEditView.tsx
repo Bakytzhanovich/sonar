@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { api, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
+import { api, type SubtitlePosition, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
 import { STAFF_BOOTSTRAP_AVAILABLE } from '@/lib/useApiAccess';
@@ -131,6 +131,10 @@ export default function VideoEditView() {
   // styles are defined in the renderer's terms, and two lists drift.
   const [presets, setPresets] = useState<SubtitlePreset[]>([]);
   const [subtitlePreset, setSubtitlePreset] = useState('classic');
+  const [positions, setPositions] = useState<SubtitlePosition[]>([]);
+  // 'auto' is the absence of an override, which leaves the chosen style's own
+  // placement alone — the older "Снизу" style still positions itself.
+  const [subtitlePosition, setSubtitlePosition] = useState('auto');
   const [removeBreaths, setRemoveBreaths] = useState(false);
   // Off by default: removing ambience is right for a street recording and
   // wrong for anything where the background is part of the shot.
@@ -165,8 +169,14 @@ export default function VideoEditView() {
     // renders, so one fetch per mount.
     api
       .listSubtitlePresets({ baseUrl })
-      .then((res) => setPresets(res.presets ?? []))
-      .catch(() => setPresets([]));
+      .then((res) => {
+        setPresets(res.presets ?? []);
+        setPositions(res.positions ?? []);
+      })
+      .catch(() => {
+        setPresets([]);
+        setPositions([]);
+      });
   }, [baseUrl]);
 
   // Auto-poll while anything is still rendering — no real webhook/push to
@@ -203,7 +213,7 @@ export default function VideoEditView() {
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);
 
-      await api.createSmartCutJob(config, ticket.objectKey, subtitles, subtitlePreset, removeBreaths);
+      await api.createSmartCutJob(config, ticket.objectKey, subtitles, subtitlePreset, removeBreaths, subtitlePosition);
       await load();
       setFile(null);
       setStatus(
@@ -361,6 +371,24 @@ export default function VideoEditView() {
                     />
                     <span className={styles.fieldHint}>
                       {presets.find((preset) => preset.id === subtitlePreset)?.description}
+                    </span>
+                  </label>
+                )}
+
+                {/* Placement is its own control, not a style: the same
+                    typography belongs over the face on one clip and under it
+                    on the next. */}
+                {subtitles && positions.length > 0 && (
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>Положение субтитров</span>
+                    <Select
+                      value={subtitlePosition}
+                      onChange={setSubtitlePosition}
+                      aria-label="Положение субтитров"
+                      options={positions.map((position) => ({ value: position.id, label: position.label }))}
+                    />
+                    <span className={styles.fieldHint}>
+                      {positions.find((position) => position.id === subtitlePosition)?.description}
                     </span>
                   </label>
                 )}

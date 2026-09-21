@@ -383,6 +383,11 @@ CREATE TABLE video_edit_jobs (
   -- not per tenant: a blogger's serious piece and their joke reel do not
   -- want the same typography.
   subtitle_preset   TEXT NOT NULL DEFAULT 'classic',
+  -- Where in the frame those captions sit (see subtitlePositions.ts). A
+  -- separate axis from the look, because the same typography belongs over the
+  -- face on one clip and under it on the next. 'auto' means "wherever the
+  -- preset puts it", which is what keeps the older 'Снизу' preset honest.
+  subtitle_position TEXT NOT NULL DEFAULT 'auto',
   -- Remove audible breaths and mouth noise (breathDetector.ts). Off by
   -- default: it is the most destructive pass in the pipeline, and on a
   -- recording with a high noise floor it finds nothing anyway.

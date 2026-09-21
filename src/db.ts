@@ -146,6 +146,7 @@ const MIGRATIONS: string[] = [
      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
   `CREATE INDEX IF NOT EXISTS idx_video_edit_jobs_pipeline ON video_edit_jobs(pipeline, status, claimed_at)`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitle_position TEXT NOT NULL DEFAULT 'auto'`,
   `CREATE TABLE IF NOT EXISTS worker_heartbeats (
      worker_kind  TEXT PRIMARY KEY,
      last_seen_at TIMESTAMPTZ NOT NULL
