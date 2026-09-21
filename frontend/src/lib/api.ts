@@ -238,6 +238,14 @@ export interface SubtitlePosition {
   description: string;
 }
 
+// Typeface, size step and colour for the headline band. Same shape for all
+// three, so one picker component renders any of them.
+export interface HeadlineOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
 export interface VideoUploadTicket {
   objectKey: string;
   uploadUrl: string;
@@ -525,6 +533,9 @@ export const api = {
       presets?: SubtitlePreset[];
       positions?: SubtitlePosition[];
       headlineMaxChars?: number;
+      headlineFonts?: HeadlineOption[];
+      headlineSizes?: HeadlineOption[];
+      headlineColors?: HeadlineOption[];
     }>,
 
   createSmartCutJob: (
@@ -534,7 +545,8 @@ export const api = {
     subtitlePreset: string,
     removeBreaths: boolean,
     subtitlePosition: string,
-    headline: string
+    headline: string,
+    headlineStyle: { font: string; size: string; color: string }
   ) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', {
       template: 'ai_smart_cut',
@@ -543,6 +555,9 @@ export const api = {
       subtitlePreset,
       subtitlePosition,
       headline,
+      headlineFont: headlineStyle.font,
+      headlineSize: headlineStyle.size,
+      headlineColor: headlineStyle.color,
       removeBreaths,
     }) as Promise<{ job: VideoEditJob }>,
 

@@ -57,8 +57,19 @@ describe('burned-in subtitles', () => {
     const filter = buildConcatFilter(segments, '/tmp/job/captions.ass');
 
     // libass renders at the frame size it is handed; scaling afterwards would
-    // resample the text and soften every edge.
-    expect(filter).toMatch(/fps=30,ass=filename=\/tmp\/job\/captions\.ass,format=yuv420p\[vout\]/);
+    // resample the text and soften every edge. The filter's own options are
+    // matched loosely — what this pins is the position in the chain.
+    expect(filter).toMatch(/fps=30,ass=filename=\/tmp\/job\/captions\.ass[^,]*,format=yuv420p\[vout\]/);
+  });
+
+  it('points libass at the fonts that ship with the code', () => {
+    // Without fontsdir libass asks the system, and answers a family it cannot
+    // find by silently using another one. That is not hypothetical: captions
+    // rendered in Verdana for days because the laptop running the worker had
+    // no Montserrat and nothing reported the substitution.
+    const filter = buildConcatFilter(segments, '/tmp/job/captions.ass');
+    expect(filter).toContain('fontsdir=');
+    expect(filter).toMatch(/fontsdir=[^,:]*assets/);
   });
 
   it('stays inside the single filter_complex pass', () => {

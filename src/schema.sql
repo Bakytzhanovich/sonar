@@ -391,6 +391,13 @@ CREATE TABLE video_edit_jobs (
   -- Typed by hand, drawn in a band above the picture (headline.ts). NULL
   -- means no band at all, and the video keeps the whole frame.
   headline          TEXT,
+  -- How that headline is set: typeface, size step and colour, each an id from
+  -- headlineStyles.ts rather than a raw font name or hex. A closed list is
+  -- what keeps a render from asking libass for a family it will quietly
+  -- replace, and a colour from landing unreadable on the black band.
+  headline_font     TEXT NOT NULL DEFAULT 'montserrat',
+  headline_size     TEXT NOT NULL DEFAULT 'medium',
+  headline_color    TEXT NOT NULL DEFAULT 'white',
   -- Remove audible breaths and mouth noise (breathDetector.ts). Off by
   -- default: it is the most destructive pass in the pipeline, and on a
   -- recording with a high noise floor it finds nothing anyway.

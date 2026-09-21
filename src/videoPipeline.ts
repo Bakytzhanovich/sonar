@@ -10,7 +10,7 @@ import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
 import { applyPosition } from './subtitlePositions';
-import { buildHeadlineAss, clearOfHeadline } from './headline';
+import { buildHeadlineAss, clearOfHeadline, headlineStyleFor } from './headline';
 import { runBreathPass } from './breathPass';
 import { cleanAudioTrack } from './deepFilter';
 import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './transcriptCache';
@@ -493,7 +493,9 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   // Written outside the subtitles stage because it does not belong to it: a
   // headline shows whether or not captions were asked for.
   let headlinePath: string | undefined;
-  const headlineAss = job.headline ? buildHeadlineAss(job.headline) : null;
+  const headlineAss = job.headline
+    ? buildHeadlineAss(job.headline, headlineStyleFor({ font: job.headline_font, size: job.headline_size, colour: job.headline_color }))
+    : null;
   if (headlineAss) {
     headlinePath = path.join(workDir, 'headline.ass');
     await fs.writeFile(headlinePath, headlineAss, 'utf-8');

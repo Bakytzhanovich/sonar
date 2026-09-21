@@ -13,6 +13,8 @@
 // speaker's face. ffmpeg.ts shrinks the picture to make room whenever there is
 // a headline to place.
 
+import { headlineColour, headlineFont, headlineSize } from './headlineStyles';
+
 /** How much of the 1920-high frame the band takes. */
 export const HEADLINE_BAND_HEIGHT = 420;
 
@@ -30,10 +32,10 @@ export interface HeadlineStyle {
 }
 
 export const DEFAULT_HEADLINE_STYLE: HeadlineStyle = {
-  // Same family as the captions, and the same caveat: libass substitutes a
-  // missing family silently, so the render "succeeds" with the wrong
-  // typography and nothing says so. The Dockerfile installs Montserrat.
-  fontName: process.env.SUBTITLE_FONT ?? 'Montserrat',
+  // No env override and no system lookup: the family comes from a file in
+  // assets/fonts/ that ffmpeg is pointed at directly, so this name is one
+  // libass is guaranteed to resolve rather than quietly replace.
+  fontName: 'Montserrat',
   fontSize: 96,
   fontSizeSmall: 74,
   primaryColour: '&H00FFFFFF', // white
@@ -41,6 +43,28 @@ export const DEFAULT_HEADLINE_STYLE: HeadlineStyle = {
   playResY: 1920,
   bandHeight: HEADLINE_BAND_HEIGHT,
 };
+
+/**
+ * The style for what a person picked in the three headline controls.
+ *
+ * The small size is derived rather than chosen: it is the step the builder
+ * takes when the text needs a third line, and asking someone to nominate both
+ * numbers would be asking them to solve a layout problem we can solve.
+ */
+export function headlineStyleFor(choice: {
+  font?: string | null;
+  size?: string | null;
+  colour?: string | null;
+}): HeadlineStyle {
+  const fontSize = headlineSize(choice.size).fontSize;
+  return {
+    ...DEFAULT_HEADLINE_STYLE,
+    fontName: headlineFont(choice.font).family,
+    fontSize,
+    fontSizeSmall: Math.round(fontSize * 0.78),
+    primaryColour: headlineColour(choice.colour).colour,
+  };
+}
 
 /**
  * Longest headline accepted, and it is deliberately what fits rather than a

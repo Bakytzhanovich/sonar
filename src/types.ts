@@ -342,6 +342,9 @@ export interface VideoEditJob {
   subtitle_preset: string;
   subtitle_position: string;
   headline: string | null;
+  headline_font: string;
+  headline_size: string;
+  headline_color: string;
   remove_breaths: boolean;
 }
 

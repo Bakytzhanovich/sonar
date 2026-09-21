@@ -21,6 +21,11 @@ import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle'
 import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
 import { DEFAULT_SUBTITLE_POSITION, isSubtitlePositionId, SUBTITLE_POSITIONS } from './subtitlePositions';
 import { HEADLINE_MAX_CHARS, sanitizeHeadline } from './headline';
+import {
+  DEFAULT_HEADLINE_COLOUR, DEFAULT_HEADLINE_FONT, DEFAULT_HEADLINE_SIZE,
+  HEADLINE_COLOURS, HEADLINE_FONTS, HEADLINE_SIZES,
+  isHeadlineColourId, isHeadlineFontId, isHeadlineSizeId,
+} from './headlineStyles';
 import { isAwaitingWorker } from './jobLease';
 import { SMART_CUT_WORKER, isWorkerOnline } from './workerHealth';
 import { runFlow, collectMessageNodes } from './flowEngine';
@@ -434,6 +439,11 @@ export function createApp(db: Db): Express {
       positions: SUBTITLE_POSITIONS.map(({ id, label, description }) => ({ id, label, description })),
       // The renderer's limit, not a second copy of it in the browser.
       headlineMaxChars: HEADLINE_MAX_CHARS,
+      // The headline catalogues travel with the caption ones for the same
+      // reason: the picker renders what the renderer actually has.
+      headlineFonts: HEADLINE_FONTS.map(({ id, label, description }) => ({ id, label, description })),
+      headlineSizes: HEADLINE_SIZES.map(({ id, label, description }) => ({ id, label, description })),
+      headlineColors: HEADLINE_COLOURS.map(({ id, label, description }) => ({ id, label, description })),
     });
   });
 
@@ -1532,11 +1542,17 @@ export function createApp(db: Db): Express {
       // band for blank space.
       const headline =
         typeof req.body?.headline === 'string' ? sanitizeHeadline(req.body.headline) || null : null;
+      // Ids from a closed list, never a font name or a hex colour: an
+      // unresolvable family is replaced by libass without a word, and a dark
+      // colour disappears into the black band.
+      const headlineFontId = isHeadlineFontId(req.body?.headlineFont) ? req.body.headlineFont : DEFAULT_HEADLINE_FONT;
+      const headlineSizeId = isHeadlineSizeId(req.body?.headlineSize) ? req.body.headlineSize : DEFAULT_HEADLINE_SIZE;
+      const headlineColourId = isHeadlineColourId(req.body?.headlineColor) ? req.body.headlineColor : DEFAULT_HEADLINE_COLOUR;
 
       const id = randomUUID();
       await exec(
         db,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, headline, remove_breaths) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, headline, headline_font, headline_size, headline_color, remove_breaths) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
@@ -1548,6 +1564,9 @@ export function createApp(db: Db): Express {
         subtitlePreset,
         subtitlePosition,
         headline,
+        headlineFontId,
+        headlineSizeId,
+        headlineColourId,
         removeBreaths
       );
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });

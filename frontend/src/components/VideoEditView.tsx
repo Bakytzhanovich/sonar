@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { api, type SubtitlePosition, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
+import { api, type HeadlineOption, type SubtitlePosition, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
 import { STAFF_BOOTSTRAP_AVAILABLE } from '@/lib/useApiAccess';
@@ -138,6 +138,12 @@ export default function VideoEditView() {
   // Typed by hand and drawn in a band above the video. Empty means no band.
   const [headline, setHeadline] = useState('');
   const [headlineMaxChars, setHeadlineMaxChars] = useState(48);
+  const [headlineFonts, setHeadlineFonts] = useState<HeadlineOption[]>([]);
+  const [headlineSizes, setHeadlineSizes] = useState<HeadlineOption[]>([]);
+  const [headlineColors, setHeadlineColors] = useState<HeadlineOption[]>([]);
+  const [headlineFont, setHeadlineFont] = useState('montserrat');
+  const [headlineSize, setHeadlineSize] = useState('medium');
+  const [headlineColor, setHeadlineColor] = useState('white');
   const [removeBreaths, setRemoveBreaths] = useState(false);
   // Off by default: removing ambience is right for a street recording and
   // wrong for anything where the background is part of the shot.
@@ -177,10 +183,16 @@ export default function VideoEditView() {
         setPositions(res.positions ?? []);
         // The renderer owns this number; the input only enforces what it says.
         if (res.headlineMaxChars) setHeadlineMaxChars(res.headlineMaxChars);
+        setHeadlineFonts(res.headlineFonts ?? []);
+        setHeadlineSizes(res.headlineSizes ?? []);
+        setHeadlineColors(res.headlineColors ?? []);
       })
       .catch(() => {
         setPresets([]);
         setPositions([]);
+        setHeadlineFonts([]);
+        setHeadlineSizes([]);
+        setHeadlineColors([]);
       });
   }, [baseUrl]);
 
@@ -218,7 +230,11 @@ export default function VideoEditView() {
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);
 
-      await api.createSmartCutJob(config, ticket.objectKey, subtitles, subtitlePreset, removeBreaths, subtitlePosition, headline);
+      await api.createSmartCutJob(config, ticket.objectKey, subtitles, subtitlePreset, removeBreaths, subtitlePosition, headline, {
+        font: headlineFont,
+        size: headlineSize,
+        color: headlineColor,
+      });
       await load();
       setFile(null);
       setStatus(
@@ -366,6 +382,52 @@ export default function VideoEditView() {
                       : 'Пусто — плашки не будет, видео займёт весь кадр'}
                   </span>
                 </label>
+
+                {/* Only once there is a headline to style. Shown over an empty
+                    field they are three controls for something that will not
+                    be rendered. */}
+                {headline.trim() !== '' && headlineFonts.length > 0 && (
+                  <>
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Шрифт заголовка</span>
+                      <Select
+                        value={headlineFont}
+                        onChange={setHeadlineFont}
+                        aria-label="Шрифт заголовка"
+                        options={headlineFonts.map((f) => ({ value: f.id, label: f.label }))}
+                      />
+                      <span className={styles.fieldHint}>
+                        {headlineFonts.find((f) => f.id === headlineFont)?.description}
+                      </span>
+                    </label>
+
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Размер заголовка</span>
+                      <Select
+                        value={headlineSize}
+                        onChange={setHeadlineSize}
+                        aria-label="Размер заголовка"
+                        options={headlineSizes.map((x) => ({ value: x.id, label: x.label }))}
+                      />
+                      <span className={styles.fieldHint}>
+                        {headlineSizes.find((x) => x.id === headlineSize)?.description}
+                      </span>
+                    </label>
+
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Цвет заголовка</span>
+                      <Select
+                        value={headlineColor}
+                        onChange={setHeadlineColor}
+                        aria-label="Цвет заголовка"
+                        options={headlineColors.map((c) => ({ value: c.id, label: c.label }))}
+                      />
+                      <span className={styles.fieldHint}>
+                        {headlineColors.find((c) => c.id === headlineColor)?.description}
+                      </span>
+                    </label>
+                  </>
+                )}
 
                 <Switch
                   checked={subtitles}

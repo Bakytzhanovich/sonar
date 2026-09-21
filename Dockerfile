@@ -8,20 +8,20 @@ FROM node:20-slim
 # ffmpeg pulls in the codecs; ca-certificates is needed for the HTTPS calls to
 # object storage and the transcription API. --no-install-recommends keeps the
 # image from also pulling X11 and friends via ffmpeg's recommendations.
-# fonts-montserrat is what the burned-in captions are styled with, and
-# fontconfig is what libass asks for it through. fonts-liberation is the
-# fallback for glyphs Montserrat lacks.
+# No font packages. The typefaces used for captions and headlines are
+# committed under assets/fonts/ and handed to libass through the ass filter's
+# `fontsdir`, so they do not have to be installed anywhere — see the README
+# there. fontconfig stays because libass links against it regardless;
+# fonts-liberation stays as the last-resort source of glyphs a chosen family
+# happens to lack.
+#
+# Installing them instead was what caused the bug that led here: the image had
+# Montserrat, the laptop running the worker did not, and libass answered the
+# difference by silently rendering everything in Verdana.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ffmpeg ca-certificates fontconfig fonts-montserrat fonts-liberation \
+        ffmpeg ca-certificates fontconfig fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
-
-# Fail the BUILD if the caption font is missing, rather than the render.
-# libass does not error on an unresolvable family — it silently substitutes
-# whatever it can find, so without this check a deploy would quietly ship
-# captions in the wrong typeface and nothing anywhere would say so.
-RUN fc-list | grep -qi montserrat \
-    || (echo 'Montserrat not installed — captions would silently fall back to another font' && exit 1)
 
 # DeepFilterNet: the speech separator that replaced RNNoise for the render's
 # own audio. Fetched as a release binary rather than built — it is Rust, and
@@ -57,8 +57,17 @@ COPY assets ./assets
 RUN npm run build && npm prune --omit=dev
 
 # Fail the build rather than ship an image where "убрать фоновый шум" silently
-# does nothing — same reasoning as the Montserrat check for subtitles.
+# does nothing.
 RUN test -f assets/rnnoise/bd.rnnn
+
+# Same stance for the fonts, and the more important one: a missing model is
+# audible, a missing font is not. libass substitutes without a word, so an
+# image short a typeface renders a client's video in the wrong one and says
+# nothing. The list mirrors HEADLINE_FONTS in src/headlineStyles.ts.
+RUN for f in Montserrat Oswald Unbounded PlayfairDisplay; do \
+        test -f "assets/fonts/$f.ttf" \
+        || (echo "assets/fonts/$f.ttf missing — headlines would silently fall back to another font" && exit 1); \
+    done
 
 ENV NODE_ENV=production
 CMD ["node", "dist/worker.js"]

@@ -37,6 +37,19 @@ const JOIN_FADE_SEC = 0.015;
 export const RNNOISE_MODEL_PATH =
   process.env.RNNOISE_MODEL_PATH ?? path.resolve(__dirname, '..', 'assets', 'rnnoise', 'bd.rnnn');
 
+// Fonts ship with the code, and libass is pointed straight at them.
+//
+// Not a convenience. libass answers a missing family by silently choosing
+// another one — no warning, no log line — so a render "succeeds" in somebody
+// else's typeface and the only way to notice is to look at the video. It had
+// already happened: the code asked for Montserrat, the Docker image had it,
+// and the worker was running on a laptop that did not, so every burned-in
+// caption and headline came out in Verdana.
+//
+// Pointing at a directory removes the question. The same four files resolve on
+// a laptop, in the container and anywhere else, whatever is installed there.
+export const FONTS_DIR = process.env.FONTS_DIR ?? path.resolve(__dirname, '..', 'assets', 'fonts');
+
 // RNNoise is trained at 48 kHz and degrades measurably at other rates, so the
 // chain resamples into it and leaves the output at 48 kHz — which is what the
 // AAC encoder wants anyway.
@@ -392,7 +405,8 @@ export function buildConcatFilter(
   // this graph rather than in a separate -vf pass — ffmpeg rejects -vf and
   // -filter_complex on the same output, and a second pass would mean decoding
   // and re-encoding the whole video twice.
-  const subtitleFilter = subtitlePath ? `,ass=filename=${escapeFilterPath(subtitlePath)}` : '';
+  const fontsDir = `:fontsdir=${escapeFilterPath(FONTS_DIR)}`;
+  const subtitleFilter = subtitlePath ? `,ass=filename=${escapeFilterPath(subtitlePath)}${fontsDir}` : '';
   // A headline needs room of its own. Fitting the picture into the frame
   // minus the band, then offsetting it down by exactly that band, leaves a
   // strip no part of the video reaches — which is the difference between a
@@ -406,7 +420,7 @@ export function buildConcatFilter(
   // picture half a band too low.
   const offsetY = band ? `${band}+(${videoHeight}-ih)/2` : '(oh-ih)/2';
   // After the captions, so the band is drawn over anything that overlaps it.
-  const headlineFilter = headlinePath ? `,ass=filename=${escapeFilterPath(headlinePath)}` : '';
+  const headlineFilter = headlinePath ? `,ass=filename=${escapeFilterPath(headlinePath)}${fontsDir}` : '';
   parts.push(
     `[vcat]scale=${OUTPUT_WIDTH}:${videoHeight}:force_original_aspect_ratio=decrease,` +
       `pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:${offsetY},fps=${OUTPUT_FPS}` +
