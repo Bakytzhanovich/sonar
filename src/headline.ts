@@ -24,7 +24,6 @@ export interface HeadlineStyle {
   fontSizeSmall: number;
   /** ASS colours are &HAABBGGRR — alpha, then BLUE-GREEN-RED. */
   primaryColour: string;
-  bracketColour: string;
   playResX: number;
   playResY: number;
   bandHeight: number;
@@ -38,8 +37,6 @@ export const DEFAULT_HEADLINE_STYLE: HeadlineStyle = {
   fontSize: 96,
   fontSizeSmall: 74,
   primaryColour: '&H00FFFFFF', // white
-  // #34d399 (emerald-400) as BGR: 99D334.
-  bracketColour: '&H0099D334',
   playResX: 1080,
   playResY: 1920,
   bandHeight: HEADLINE_BAND_HEIGHT,
@@ -127,37 +124,6 @@ export function sanitizeHeadline(text: string): string {
     .slice(0, HEADLINE_MAX_CHARS);
 }
 
-/**
- * The two corner brackets around the text, as ASS vector drawings.
- *
- * Fixed to the band rather than fitted to the text, because fitting needs the
- * rendered width of a string in a font this process never loads. They sit near
- * the frame edges, which is where the reference puts them anyway.
- */
-function bracketEvents(style: HeadlineStyle): string[] {
-  const height = Math.round(style.bandHeight * 0.72);
-  const top = Math.round((style.bandHeight - height) / 2);
-  const thickness = 14;
-  const arm = 88;
-  const margin = 56;
-  const rightX = style.playResX - margin - arm;
-
-  // "[": down the left edge, with an arm at the top and bottom.
-  const left = `m 0 0 l ${arm} 0 l ${arm} ${thickness} l ${thickness} ${thickness} ` +
-    `l ${thickness} ${height - thickness} l ${arm} ${height - thickness} l ${arm} ${height} l 0 ${height}`;
-  // "]": the same shape mirrored.
-  const right = `m ${arm} 0 l 0 0 l 0 ${thickness} l ${arm - thickness} ${thickness} ` +
-    `l ${arm - thickness} ${height - thickness} l 0 ${height - thickness} l 0 ${height} l ${arm} ${height}`;
-
-  // \an7 makes \pos the drawing's top-left corner, so the shape coordinates
-  // above are plain offsets from it. \p1 enters drawing mode, \p0 leaves it.
-  return [left, right].map((shape, i) =>
-    event(
-      `{\\an7\\pos(${i === 0 ? margin : rightX},${top})\\c${style.bracketColour}\\1a&H00&\\bord0\\shad0\\p1}${shape}{\\p0}`
-    )
-  );
-}
-
 // One event, held for the whole clip. An explicit end far past any accepted
 // source is simpler than threading the duration down here, and a headline that
 // outlives the video by hours is never seen.
@@ -203,8 +169,8 @@ export function buildHeadlineAss(rawText: string, style: HeadlineStyle = DEFAULT
   const header = [
     '[Script Info]',
     'ScriptType: v4.00+',
-    // Wrapping is done above, in words we can count. Letting libass do it
-    // would break lines without regard for the brackets framing them.
+    // Wrapping is done above, in words we can count, and balanced there too
+    // — libass would break lines wherever they happened to run out of room.
     'WrapStyle: 2',
     'ScaledBorderAndShadow: yes',
     `PlayResX: ${style.playResX}`,
@@ -226,7 +192,6 @@ export function buildHeadlineAss(rawText: string, style: HeadlineStyle = DEFAULT
   const events = [
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-    ...bracketEvents(style),
     textEvent,
   ].join('\n');
 

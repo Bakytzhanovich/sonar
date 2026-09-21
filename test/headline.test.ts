@@ -56,14 +56,14 @@ describe('buildHeadlineAss', () => {
     expect(buildHeadlineAss('   ')).toBeNull();
   });
 
-  it('draws the text and both brackets', () => {
+  it('draws the text and nothing else', () => {
     const ass = buildHeadlineAss('БРОСЬ РАБОТУ')!;
     const events = ass.split('\n').filter((l) => l.startsWith('Dialogue:'));
-    // Two brackets and one line of text.
-    expect(events).toHaveLength(3);
+    expect(events).toHaveLength(1);
     expect(ass).toContain('БРОСЬ РАБОТУ');
-    // \p1 is ASS drawing mode — the brackets are vector shapes, not glyphs.
-    expect(events.filter((e) => e.includes('\\p1'))).toHaveLength(2);
+    // \p1 is ASS drawing mode. There are no drawings any more — the bracket
+    // frame was removed, and a stray one would be decoration nobody asked for.
+    expect(events.filter((e) => e.includes('\\p1'))).toHaveLength(0);
   });
 
   it('shrinks the font when the headline needs a third line', () => {
