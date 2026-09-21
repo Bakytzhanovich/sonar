@@ -388,6 +388,9 @@ CREATE TABLE video_edit_jobs (
   -- face on one clip and under it on the next. 'auto' means "wherever the
   -- preset puts it", which is what keeps the older 'Снизу' preset honest.
   subtitle_position TEXT NOT NULL DEFAULT 'auto',
+  -- Typed by hand, drawn in a band above the picture (headline.ts). NULL
+  -- means no band at all, and the video keeps the whole frame.
+  headline          TEXT,
   -- Remove audible breaths and mouth noise (breathDetector.ts). Off by
   -- default: it is the most destructive pass in the pipeline, and on a
   -- recording with a high noise floor it finds nothing anyway.

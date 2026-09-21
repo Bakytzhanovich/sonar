@@ -524,6 +524,7 @@ export const api = {
     apiRequest(config, 'GET', '/api/subtitle-presets') as Promise<{
       presets?: SubtitlePreset[];
       positions?: SubtitlePosition[];
+      headlineMaxChars?: number;
     }>,
 
   createSmartCutJob: (
@@ -532,7 +533,8 @@ export const api = {
     subtitles: boolean,
     subtitlePreset: string,
     removeBreaths: boolean,
-    subtitlePosition: string
+    subtitlePosition: string,
+    headline: string
   ) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', {
       template: 'ai_smart_cut',
@@ -540,6 +542,7 @@ export const api = {
       subtitles,
       subtitlePreset,
       subtitlePosition,
+      headline,
       removeBreaths,
     }) as Promise<{ job: VideoEditJob }>,
 

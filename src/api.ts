@@ -20,6 +20,7 @@ import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessio
 import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
 import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
 import { DEFAULT_SUBTITLE_POSITION, isSubtitlePositionId, SUBTITLE_POSITIONS } from './subtitlePositions';
+import { HEADLINE_MAX_CHARS, sanitizeHeadline } from './headline';
 import { isAwaitingWorker } from './jobLease';
 import { SMART_CUT_WORKER, isWorkerOnline } from './workerHealth';
 import { runFlow, collectMessageNodes } from './flowEngine';
@@ -431,6 +432,8 @@ export function createApp(db: Db): Express {
       // picker shows both, and one request means the two can never arrive out
       // of step with each other.
       positions: SUBTITLE_POSITIONS.map(({ id, label, description }) => ({ id, label, description })),
+      // The renderer's limit, not a second copy of it in the browser.
+      headlineMaxChars: HEADLINE_MAX_CHARS,
     });
   });
 
@@ -1522,11 +1525,18 @@ export function createApp(db: Db): Express {
       // Opt-in: the most destructive pass in the pipeline, and on a noisy
       // recording it finds nothing anyway.
       const removeBreaths = req.body?.removeBreaths === true;
+      // Stored already cleaned, so the renderer is not the last line of defence
+      // against a brace that would break out of an ASS override block. Empty
+      // becomes NULL rather than '': no headline and a headline of nothing are
+      // the same thing, and one of the two spellings would otherwise reserve a
+      // band for blank space.
+      const headline =
+        typeof req.body?.headline === 'string' ? sanitizeHeadline(req.body.headline) || null : null;
 
       const id = randomUUID();
       await exec(
         db,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, remove_breaths) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, headline, remove_breaths) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
@@ -1537,6 +1547,7 @@ export function createApp(db: Db): Express {
         reviewMode,
         subtitlePreset,
         subtitlePosition,
+        headline,
         removeBreaths
       );
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });

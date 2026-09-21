@@ -135,6 +135,9 @@ export default function VideoEditView() {
   // 'auto' is the absence of an override, which leaves the chosen style's own
   // placement alone — the older "Снизу" style still positions itself.
   const [subtitlePosition, setSubtitlePosition] = useState('auto');
+  // Typed by hand and drawn in a band above the video. Empty means no band.
+  const [headline, setHeadline] = useState('');
+  const [headlineMaxChars, setHeadlineMaxChars] = useState(48);
   const [removeBreaths, setRemoveBreaths] = useState(false);
   // Off by default: removing ambience is right for a street recording and
   // wrong for anything where the background is part of the shot.
@@ -172,6 +175,8 @@ export default function VideoEditView() {
       .then((res) => {
         setPresets(res.presets ?? []);
         setPositions(res.positions ?? []);
+        // The renderer owns this number; the input only enforces what it says.
+        if (res.headlineMaxChars) setHeadlineMaxChars(res.headlineMaxChars);
       })
       .catch(() => {
         setPresets([]);
@@ -213,7 +218,7 @@ export default function VideoEditView() {
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);
 
-      await api.createSmartCutJob(config, ticket.objectKey, subtitles, subtitlePreset, removeBreaths, subtitlePosition);
+      await api.createSmartCutJob(config, ticket.objectKey, subtitles, subtitlePreset, removeBreaths, subtitlePosition, headline);
       await load();
       setFile(null);
       setStatus(
@@ -342,6 +347,26 @@ export default function VideoEditView() {
                 )}
               </label>
               <div className={styles.controls}>
+                {/* First, because it is the one thing here nobody can generate
+                    for you — and the limit is shown while typing rather than
+                    enforced by a renderer that silently drops the overflow. */}
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Заголовок на плашке</span>
+                  <input
+                    className={controls.input}
+                    value={headline}
+                    onChange={(e) => setHeadline(e.target.value.slice(0, headlineMaxChars))}
+                    maxLength={headlineMaxChars}
+                    placeholder="БРОСЬ РАБОТУ ПРЯМО СЕЙЧАС"
+                    aria-label="Заголовок на плашке"
+                  />
+                  <span className={styles.fieldHint}>
+                    {headline
+                      ? `Полоса сверху, видео сдвинется вниз · ${headline.length}/${headlineMaxChars}`
+                      : 'Пусто — плашки не будет, видео займёт весь кадр'}
+                  </span>
+                </label>
+
                 <Switch
                   checked={subtitles}
                   onChange={setSubtitles}

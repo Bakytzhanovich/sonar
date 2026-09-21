@@ -10,6 +10,7 @@ import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
 import { applyPosition } from './subtitlePositions';
+import { buildHeadlineAss, clearOfHeadline } from './headline';
 import { runBreathPass } from './breathPass';
 import { cleanAudioTrack } from './deepFilter';
 import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './transcriptCache';
@@ -446,7 +447,14 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // The look comes from the preset, the placement from the position — two
     // separate choices, resolved in that order because an explicit position is
     // the more recent thing the person said.
-    const captionStyle = applyPosition(styleForPreset(job.subtitle_preset), job.subtitle_position);
+    // ...and then pushed clear of the headline, if there is one. Top-aligned
+    // captions measure their margin from the frame edge, which is where the
+    // band now is — without this the two land on top of each other, and the
+    // only place that is visible is the finished video.
+    const captionStyle = clearOfHeadline(
+      applyPosition(styleForPreset(job.subtitle_preset), job.subtitle_position),
+      job.headline
+    );
     const { ass, chunks } = approved
       ? buildSubtitlesFromLines(approved, captionStyle)
       : buildSubtitlesForPlan(plan.words, plan.segments, captionStyle, deps.chunkOptions);
@@ -482,6 +490,15 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   // ---- Stage 5: render ---------------------------------------------------
   await setStage(db, job, 'render', now);
 
+  // Written outside the subtitles stage because it does not belong to it: a
+  // headline shows whether or not captions were asked for.
+  let headlinePath: string | undefined;
+  const headlineAss = job.headline ? buildHeadlineAss(job.headline) : null;
+  if (headlineAss) {
+    headlinePath = path.join(workDir, 'headline.ass');
+    await fs.writeFile(headlinePath, headlineAss, 'utf-8');
+  }
+
   // The recorded decision, not a re-evaluation: the card already told the user
   // whether the sound would be cleaned, and deciding twice invites the two to
   // differ.
@@ -500,6 +517,8 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       segments: plan.segments,
       expectedDurationSec: plan.keptDurationSec,
       subtitlePath,
+      // Its presence is also what reserves the band in the filter graph.
+      headlinePath,
       // A missing model file must not fail the render: the job still produces
       // a correct cut, just without the noise removal it asked for.
       // The recorded decision, not a re-evaluation: the card already told the

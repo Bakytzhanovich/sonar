@@ -341,6 +341,7 @@ export interface VideoEditJob {
   review_mode: 'auto' | 'always' | 'never';
   subtitle_preset: string;
   subtitle_position: string;
+  headline: string | null;
   remove_breaths: boolean;
 }
 

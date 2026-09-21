@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { KeepSegment } from './smartCut';
+import { HEADLINE_BAND_HEIGHT } from './headline';
 
 // Thin wrapper around the ffmpeg/ffprobe binaries. Deliberately not a library
 // wrapper (fluent-ffmpeg and friends): everything below is argument
@@ -349,7 +350,8 @@ export function buildConcatFilter(
   segments: KeepSegment[],
   subtitlePath?: string,
   denoiseModelPath?: string,
-  cleanedAudio = false
+  cleanedAudio = false,
+  headlinePath?: string
 ): string {
   const parts: string[] = [];
   const labels: string[] = [];
@@ -391,9 +393,24 @@ export function buildConcatFilter(
   // -filter_complex on the same output, and a second pass would mean decoding
   // and re-encoding the whole video twice.
   const subtitleFilter = subtitlePath ? `,ass=filename=${escapeFilterPath(subtitlePath)}` : '';
+  // A headline needs room of its own. Fitting the picture into the frame
+  // minus the band, then offsetting it down by exactly that band, leaves a
+  // strip no part of the video reaches — which is the difference between a
+  // headline over black and a headline over the speaker's forehead. A source
+  // already letterboxed would have had space, but one shot vertically on a
+  // phone fills the frame edge to edge and has none.
+  const band = headlinePath ? HEADLINE_BAND_HEIGHT : 0;
+  const videoHeight = OUTPUT_HEIGHT - band;
+  // Centred within the region BELOW the band, hence the literal height rather
+  // than pad's own `oh` — oh is the full frame, and using it would push the
+  // picture half a band too low.
+  const offsetY = band ? `${band}+(${videoHeight}-ih)/2` : '(oh-ih)/2';
+  // After the captions, so the band is drawn over anything that overlaps it.
+  const headlineFilter = headlinePath ? `,ass=filename=${escapeFilterPath(headlinePath)}` : '';
   parts.push(
-    `[vcat]scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,` +
-      `pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2,fps=${OUTPUT_FPS}${subtitleFilter},format=yuv420p[vout]`
+    `[vcat]scale=${OUTPUT_WIDTH}:${videoHeight}:force_original_aspect_ratio=decrease,` +
+      `pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:${offsetY},fps=${OUTPUT_FPS}` +
+      `${subtitleFilter}${headlineFilter},format=yuv420p[vout]`
   );
 
   return parts.join(';\n');
@@ -414,11 +431,14 @@ export interface RenderOptions {
   // timeline as the original. Takes precedence over denoiseModelPath: the
   // cleaning has happened, the graph only cuts and levels it.
   cleanedAudioPath?: string;
+  // Absolute path to an .ass drawing the headline band. Its presence is what
+  // reserves the strip at the top — without one the picture fills the frame.
+  headlinePath?: string;
   onProgress?: (fraction: number) => void;
 }
 
 export async function renderSegments(options: RenderOptions): Promise<void> {
-  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, onProgress } = options;
+  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, headlinePath, onProgress } = options;
   if (segments.length === 0) throw new FfmpegError('no segments to render', '');
 
   // The graph is written to a file rather than passed as an argument: at a
@@ -427,7 +447,7 @@ export async function renderSegments(options: RenderOptions): Promise<void> {
   const filterPath = path.join(workDir, 'filter.txt');
   await fs.writeFile(
     filterPath,
-    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath)),
+    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath), headlinePath),
     'utf-8'
   );
 
