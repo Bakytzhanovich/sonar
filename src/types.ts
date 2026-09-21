@@ -381,5 +381,9 @@ export interface User {
   // Sign-in throttling — see loginThrottle.ts.
   failed_logins: number;
   locked_until: string | null;
+  // owner | editor | viewer — see roles.ts. Typed as a plain string because
+  // this is a database column: a row written by an older version can hold
+  // anything, and asRole() is what turns it into a role.
+  role: string;
   created_at: string;
 }

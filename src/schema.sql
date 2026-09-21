@@ -499,6 +499,11 @@ CREATE TABLE users (
   -- password, which is well inside reach for anything a person chose.
   failed_logins INTEGER NOT NULL DEFAULT 0,
   locked_until  TIMESTAMPTZ,
+  -- owner | editor | viewer (src/roles.ts). Defaults to owner because that is
+  -- what everyone who exists today is: signup creates a workspace and the
+  -- person who created it runs it. Anyone weaker arrives by invitation, which
+  -- names their role explicitly.
+  role          TEXT NOT NULL DEFAULT 'owner',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

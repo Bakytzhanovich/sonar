@@ -27,6 +27,7 @@ import {
   isHeadlineColourId, isHeadlineFontId, isHeadlineSizeId,
 } from './headlineStyles';
 import { isAwaitingWorker } from './jobLease';
+import { asRole, canPerform, requiredRole, ROLE_LABELS } from './roles';
 import { SMART_CUT_WORKER, isWorkerOnline } from './workerHealth';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
@@ -420,7 +421,11 @@ export function createApp(db: Db): Express {
     const user = await queryOne<User>(db, `SELECT * FROM users WHERE id = ?`, userId);
     const tenant = await queryOne<{ id: string; name: string }>(db, `SELECT id, name FROM tenants WHERE id = ?`, tenantId);
     if (!user || !tenant) return res.status(401).json({ error: 'invalid_session' });
-    res.json({ user: { id: user.id, email: user.email }, tenant });
+    // The role travels with the profile so the interface can stop offering
+    // what the API will refuse. It is not the enforcement — that is
+    // requireRoleForRequest, server-side — only what lets a viewer see a
+    // read-only screen instead of buttons that answer 403.
+    res.json({ user: { id: user.id, email: user.email, role: asRole(user.role) }, tenant });
   }));
 
   // Before the credential check on purpose: this is the application's own
@@ -448,6 +453,7 @@ export function createApp(db: Db): Express {
   });
 
   app.use('/api', requireProductCredential(db));
+  app.use('/api', requireRoleForRequest);
 
   // ---- Bots --------------------------------------------------------------
   // Workspace discovery for both returning browser sessions and API-key
@@ -1934,6 +1940,10 @@ function requireProductCredential(db: Db) {
       const apiKeyTenantId = await resolveTenantIdFromApiKey(db, credential);
       if (apiKeyTenantId) {
         res.locals.tenantId = apiKeyTenantId;
+        // A tenant API key is the workspace itself, not a person in it, and it
+        // is issued by a staff-only route. Treating it as an owner keeps every
+        // existing integration working exactly as before roles existed.
+        res.locals.role = 'owner';
         return next();
       }
 
@@ -1941,15 +1951,20 @@ function requireProductCredential(db: Db) {
       if (session.ok) {
         // A correctly signed token for a user/tenant pair that no longer
         // exists is not a valid current product session.
-        const user = await queryOne<{ id: string }>(
+        // The role is read here rather than carried in the token: a token
+        // lives a week, and a demotion that only takes effect when it expires
+        // is not a demotion. This row is already being fetched, so it costs
+        // nothing.
+        const user = await queryOne<{ id: string; role: string }>(
           db,
-          `SELECT id FROM users WHERE id = ? AND tenant_id = ?`,
+          `SELECT id, role FROM users WHERE id = ? AND tenant_id = ?`,
           session.payload.userId,
           session.payload.tenantId
         );
         if (user) {
           res.locals.tenantId = session.payload.tenantId;
           res.locals.session = session.payload;
+          res.locals.role = asRole(user.role);
           return next();
         }
       }
@@ -1959,6 +1974,32 @@ function requireProductCredential(db: Db) {
       next(err);
     }
   };
+}
+
+// Default-deny by method (src/roles.ts), mounted straight after the
+// credential check so that everything past this line is covered — including
+// routes nobody has written yet.
+//
+// 403 with the role that was needed, not a bare refusal: the person is
+// legitimately signed in, and "нет прав" without saying whose rights would
+// leave them retrying the same thing.
+function requireRoleForRequest(req: Request, res: Response, next: NextFunction) {
+  const role = asRole(res.locals.role);
+  // baseUrl + path, and neither one alone. Express strips the mount point from
+  // req.path, so inside a handler mounted at '/api' it reads '/bots' — every
+  // rule below is written against '/api/bots' and would simply never match,
+  // silently collapsing three roles into "can write". originalUrl would carry
+  // the full path but also the query string, which must not be able to steer
+  // which rule applies.
+  const fullPath = `${req.baseUrl}${req.path}`;
+  if (canPerform(role, req.method, fullPath)) return next();
+  const needed = requiredRole(req.method, fullPath);
+  return res.status(403).json({
+    error: 'insufficient_role',
+    role,
+    requiredRole: needed,
+    message: `Нужна роль «${ROLE_LABELS[needed]}», у вас «${ROLE_LABELS[role]}»`,
+  });
 }
 
 // Auth-profile routes specifically require a human session and keep their
