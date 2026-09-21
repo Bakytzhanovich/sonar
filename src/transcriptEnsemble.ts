@@ -21,6 +21,8 @@
 // back. It also means the model is writing plausible text rather than
 // transcribing — see the guard in buildReconstructionPrompt.
 
+import { usageFromResponse, type UsageEntry } from './usage';
+
 const CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 
 // An audio-input chat model, not a transcription endpoint. Measured on a real
@@ -49,7 +51,7 @@ export async function transcribeWithAudioModel(
   format: 'mp3' | 'wav',
   apiKey: string,
   fetchImpl: typeof fetch = fetch
-): Promise<string> {
+): Promise<{ text: string; usage: UsageEntry }> {
   const response = await fetchImpl(CHAT_URL, {
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
@@ -75,7 +77,10 @@ export async function transcribeWithAudioModel(
     choices?: Array<{ message?: { content?: string; audio?: { transcript?: string } } }>;
   };
   const message = payload.choices?.[0]?.message;
-  return (message?.content ?? message?.audio?.transcript ?? '').trim();
+  return {
+    text: (message?.content ?? message?.audio?.transcript ?? '').trim(),
+    usage: usageFromResponse(AUDIO_MODEL, payload),
+  };
 }
 
 export { AUDIO_PASSES };
@@ -139,11 +144,12 @@ export async function reconstructTranscript(
   variants: TranscriptVariant[],
   apiKey: string,
   fetchImpl: typeof fetch = fetch
-): Promise<string | null> {
+): Promise<{ text: string | null; usage: UsageEntry | null }> {
   const usable = variants.filter((v) => v.text.trim().length > 0);
   // With one transcript there is no disagreement to reason about, and asking
-  // a model to "fix" a lone transcript is pure invention.
-  if (usable.length < 2) return null;
+  // a model to "fix" a lone transcript is pure invention. Nothing is called,
+  // so nothing is billed.
+  if (usable.length < 2) return { text: null, usage: null };
 
   const response = await fetchImpl(CHAT_URL, {
     method: 'POST',
@@ -160,8 +166,11 @@ export async function reconstructTranscript(
   if (!response.ok) throw new Error(`transcript repair ${response.status}: ${(await response.text()).slice(0, 200)}`);
 
   const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const usage = usageFromResponse(RECONSTRUCTION_MODEL, payload);
   const text = payload.choices?.[0]?.message?.content?.trim() ?? '';
-  if (!text) return null;
+  // The call was made and billed whether or not its answer was usable, so the
+  // usage comes back even when the text does not.
+  if (!text) return { text: null, usage };
 
-  return isPlausibleReconstruction(usable, text) ? text : null;
+  return { text: isPlausibleReconstruction(usable, text) ? text : null, usage };
 }

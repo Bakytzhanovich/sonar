@@ -3,6 +3,8 @@
 // React Flow's { nodes, edges } shape so the future canvas editor can
 // read/write it directly with no translation layer.
 
+import type { JobUsage } from './usage';
+
 // ---- Flow graph (FlowDefinition) ------------------------------------
 
 export type NodeId = string;
@@ -306,6 +308,10 @@ export interface VideoJobArtifacts {
   // asked for breaths to go and otherwise has no way to tell whether any
   // were found.
   breaths?: { count: number; removedSec: number };
+  // What the job cost, in the units the bills are written in. Absent means
+  // "not measured" — a job from before this was recorded, or one served
+  // entirely from the transcript cache — which is not the same as free.
+  usage?: JobUsage;
   subtitles?: { chunkCount: number; wordCount: number };
   // The caption lines as the viewer will see them — already remapped onto the
   // output timeline, so what is edited here is exactly what gets burned in.

@@ -51,20 +51,29 @@ describe('isPlausibleReconstruction', () => {
 describe('reconstructTranscript', () => {
   it('returns the repaired text when it stays faithful', async () => {
     const out = await reconstructTranscript(VARIANTS, 'k', fakeFetch('ол жүру керек қойбай энергия көтеру керек'));
-    expect(out).toBe('ол жүру керек қойбай энергия көтеру керек');
+    expect(out.text).toBe('ол жүру керек қойбай энергия көтеру керек');
+    // The call was billed, and what it cost comes back with what it produced.
+    expect(out.usage?.calls).toBe(1);
   });
 
   it('refuses to repair a single transcript', async () => {
     // With nothing to compare against, "fixing" is just invention.
     let called = false;
     const spy = (async () => { called = true; return new Response('{}', { status: 200 }); }) as unknown as typeof fetch;
-    expect(await reconstructTranscript([VARIANTS[0]], 'k', spy)).toBeNull();
+    const out = await reconstructTranscript([VARIANTS[0]], 'k', spy);
+    expect(out.text).toBeNull();
+    // Nothing was called, so nothing was billed — which is different from a
+    // call that produced nothing usable.
+    expect(out.usage).toBeNull();
     expect(called).toBe(false);
   });
 
   it('discards a reconstruction that invented content', async () => {
     const invented = Array.from({ length: 60 }, (_, i) => `сөз${i}`).join(' ');
-    expect(await reconstructTranscript(VARIANTS, 'k', fakeFetch(invented))).toBeNull();
+    const out = await reconstructTranscript(VARIANTS, 'k', fakeFetch(invented));
+    expect(out.text).toBeNull();
+    // Rejected, but paid for: a discarded answer still cost what it cost.
+    expect(out.usage?.calls).toBe(1);
   });
 
   it('surfaces an API failure rather than silently returning nothing', async () => {
@@ -82,7 +91,7 @@ describe('transcribeWithAudioModel', () => {
     }) as unknown as typeof fetch;
 
     const out = await transcribeWithAudioModel('YXVkaW8=', 'mp3', 'k', spy);
-    expect(out).toBe('Осы успешные адамдар');
+    expect(out.text).toBe('Осы успешные адамдар');
     expect(body.modalities).toEqual(['text']);
     const content = (body.messages as Array<{ content: Array<{ type: string }> }>)[0].content;
     expect(content.map((c) => c.type)).toEqual(['text', 'input_audio']);
@@ -91,7 +100,7 @@ describe('transcribeWithAudioModel', () => {
   it('reads the transcript when the model answers in the audio field', async () => {
     const spy = (async () =>
       new Response(JSON.stringify({ choices: [{ message: { audio: { transcript: 'сәлем' } } }] }), { status: 200 })) as unknown as typeof fetch;
-    expect(await transcribeWithAudioModel('YXVkaW8=', 'mp3', 'k', spy)).toBe('сәлем');
+    expect((await transcribeWithAudioModel('YXVkaW8=', 'mp3', 'k', spy)).text).toBe('сәлем');
   });
 
   it('reports a failure instead of returning empty text', async () => {

@@ -14,6 +14,7 @@ import { buildHeadlineAss, clearOfHeadline, headlineStyleFor } from './headline'
 import { runBreathPass } from './breathPass';
 import { cleanAudioTrack } from './deepFilter';
 import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './transcriptCache';
+import { summarizeUsage } from './usage';
 import { CLAIM_LEASE_MS } from './jobLease';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
 import { downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
@@ -376,6 +377,14 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       if (!transcript) {
         const result = await deps.transcribe(audioPath);
         transcript = { words: result.words, language: result.language };
+        // Recorded per job rather than totalled somewhere central: the
+        // question worth answering is what ONE video costs, and an average
+        // over a month hides that a Kazakh clip costs several times what a
+        // Russian one does. A cache hit records nothing, which is correct —
+        // it spent nothing.
+        if (result.usage?.length) {
+          await saveArtifact(db, job, 'usage', summarizeUsage(result.usage));
+        }
         // Failing to cache must not fail the job: the transcript is in hand,
         // and the only cost is recognising this file again next time.
         await writeCachedTranscript(db, audioHash, {

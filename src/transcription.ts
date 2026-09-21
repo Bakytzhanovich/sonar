@@ -8,7 +8,17 @@ import { AUDIO_PASSES, reconstructTranscript, transcribeWithAudioModel } from '.
 // API" (not a locally hosted model), which is the reason this whole pipeline
 // stays in Node: there is no heavy local computation here, only an HTTP call.
 
+import { usageFromSeconds, type UsageEntry } from './usage';
+
 const TRANSCRIPTION_URL = 'https://api.openai.com/v1/audio/transcriptions';
+
+// The endpoint bills by length of audio and returns no usage block, so the
+// duration has to come from what it transcribed. The last word's end time is
+// a floor, not the file's true length — trailing silence is not in the
+// transcript — but it is measured rather than assumed.
+function durationOf(words: TranscriptWord[]): number {
+  return words.length === 0 ? 0 : Math.max(...words.map((w) => w.end));
+}
 const MODEL = 'whisper-1';
 
 // Only used for languages whisper-1 mangles (see transcriptAlign.ts). It is
@@ -34,6 +44,14 @@ export interface TranscriptionResult {
   words: TranscriptWord[];
   language: string | null;
   text: string;
+  /**
+   * What this transcription cost, one entry per model.
+   *
+   * Optional because an injected test transcriber has nothing to report, and
+   * because a job recorded before this existed has none — absent means "not
+   * measured", which is different from "free".
+   */
+  usage?: UsageEntry[];
 }
 
 // The pipeline takes this as an injected function so tests can run the whole
@@ -113,7 +131,12 @@ export async function transcribeWithWhisper(audioPath: string): Promise<Transcri
     text: payload.text ?? '',
   };
 
-  if (!needsTextCorrection(result.language) || result.words.length === 0) return result;
+  // Billed by length of audio, not by token — the endpoint reports no usage
+  // at all, so the duration is the only honest unit here.
+  const whisperUsage = usageFromSeconds(MODEL, durationOf(result.words));
+  if (!needsTextCorrection(result.language) || result.words.length === 0) {
+    return { ...result, usage: [whisperUsage] };
+  }
 
   // Extra passes, for these languages only. A failure here is not fatal: the
   // cut itself only needs the timings we already have, so we fall back to
@@ -125,26 +148,34 @@ export async function transcribeWithWhisper(audioPath: string): Promise<Transcri
     // needs: where the passes agree the word is certain, where they diverge
     // it is not.
     const audioBase64 = (await fs.readFile(audioPath)).toString('base64');
+    const usage: UsageEntry[] = [whisperUsage];
     const others = await Promise.all(
-      Array.from({ length: AUDIO_PASSES }, async (_unused, i) => ({
-        engine: `audio-${i + 1}`,
-        text: await transcribeWithAudioModel(audioBase64, 'mp3', apiKey).catch(() => ''),
-      }))
+      Array.from({ length: AUDIO_PASSES }, async (_unused, i) => {
+        // A pass that throws still cost whatever it consumed before failing,
+        // but the response never arrived to say how much — so it contributes
+        // an empty transcript and no usage line, rather than a fabricated one.
+        const pass = await transcribeWithAudioModel(audioBase64, 'mp3', apiKey).catch(() => null);
+        if (pass) usage.push(pass.usage);
+        return { engine: `audio-${i + 1}`, text: pass?.text ?? '' };
+      })
     );
 
     const variants = [{ engine: MODEL, text: result.text }, ...others];
-    const repaired = await reconstructTranscript(variants, apiKey);
+    const reconstruction = await reconstructTranscript(variants, apiKey);
+    if (reconstruction.usage) usage.push(reconstruction.usage);
+    const repaired = reconstruction.text;
     if (repaired) {
-      return { ...result, words: alignTextToWordTimings(result.words, repaired), text: repaired };
+      return { ...result, usage, words: alignTextToWordTimings(result.words, repaired), text: repaired };
     }
 
     // No usable reconstruction — fall back to the single best-sounding
     // engine rather than to whisper's own output.
     const best = others.find((v) => v.text.trim().length > 0);
-    if (!best) return result;
-    return { ...result, words: alignTextToWordTimings(result.words, best.text), text: best.text };
+    if (!best) return { ...result, usage };
+    return { ...result, usage, words: alignTextToWordTimings(result.words, best.text), text: best.text };
   } catch (err) {
     console.warn(`[transcribe] repair skipped: ${err instanceof Error ? err.message : String(err)}`);
-    return result;
+    // The passes that did complete were billed, so what was measured is kept.
+    return { ...result, usage: [whisperUsage] };
   }
 }
