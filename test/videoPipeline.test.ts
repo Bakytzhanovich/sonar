@@ -36,7 +36,12 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
       language: 'ru',
       text: 'привет мир',
     }),
-    smartCutOptions: DEFAULT_SMART_CUT_OPTIONS,
+    // Padding pinned rather than inherited. The assertions below quote exact
+    // segment boundaries because they are checking that the plan reaches the
+    // renderer and the captions unchanged — how aggressively the pauses were
+    // cut is a product decision that gets retuned, and inheriting it meant a
+    // tuning change broke three tests that say nothing about tuning.
+    smartCutOptions: { ...DEFAULT_SMART_CUT_OPTIONS, maxPauseSec: 0.7, paddingSec: 0.12 },
     ffmpeg: {
       available: async () => true,
       probe: async () => ({ durationSec: 6, hasAudio: true, width: 1080, height: 1920 }),
