@@ -20,6 +20,7 @@ import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessio
 import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
 import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
 import { isAwaitingWorker } from './jobLease';
+import { SMART_CUT_WORKER, isWorkerOnline } from './workerHealth';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { analyzeReelMock, generateScriptMock } from './reelAnalysis';
@@ -1568,7 +1569,12 @@ export function createApp(db: Db): Express {
     // no business knowing how long a claim lasts, and a second copy of that
     // constant would drift from the one the worker actually uses.
     const now = new Date();
+    // Asked once per list, not per job: it is a fact about the fleet, and the
+    // screen needs it only to choose between "waiting its turn" and "waiting
+    // for a worker that is not running".
+    const workerOnline = await isWorkerOnline(db, SMART_CUT_WORKER, now);
     res.json({
+      worker_online: workerOnline,
       jobs: (
         jobs as Array<Record<string, unknown> & { id: string; status: string; claimed_at: string | null; output_url: string | null; output_object_key: string | null }>
       ).map(({ claimed_at, output_object_key, ...job }) => ({

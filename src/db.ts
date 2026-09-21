@@ -52,7 +52,37 @@ const SCHEMA_INIT_LOCK_ID = 847362910;
 // this replaced.
 export async function createDb(options: DbOptions = {}): Promise<Db> {
   const connectionString = options.connectionString ?? defaultConnectionString();
-  const pool = new Pool({ connectionString });
+  const pool = new Pool({
+    connectionString,
+    // Why a bare `new Pool` was not enough, and what each of these prevents.
+    //
+    // The worker holds one connection open across a poll every five seconds,
+    // over the public internet, to a managed database. That socket dies
+    // without telling anyone: a NAT table drops the idle mapping, a laptop
+    // suspends, the provider recycles the backend. No FIN arrives, so the
+    // kernel still believes the connection is fine, and a query written to it
+    // is simply never answered.
+    //
+    // With no timeout that await never settles. The worker's poll loop has a
+    // catch around it, but nothing to catch — it just stops, mid-await, while
+    // the process stays alive and idle. That is exactly what happened: a
+    // worker up for 22 hours, 16 seconds of CPU, claiming nothing, reporting
+    // nothing, with every client's render queued behind it.
+    //
+    // keepAlive makes the kernel probe the peer, so a dead socket surfaces as
+    // an error instead of silence. The timeouts are the backstop for
+    // everything keepAlive does not catch: a query that hangs now rejects, the
+    // existing catch logs it, backs off, and the next tick opens a fresh
+    // connection. A stall becomes a retry rather than a silent stop.
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+    connectionTimeoutMillis: 15_000,
+    // Generous on purpose: this also bounds the pg_advisory_lock wait below,
+    // where two instances booting against one fresh database queue behind each
+    // other. Schema init takes well under a second, so 30s is slack, not a
+    // budget.
+    query_timeout: 30_000,
+  });
 
   // Session-level advisory lock around the check+apply, so that starting
   // multiple server instances against the same fresh database at once (a
@@ -116,6 +146,20 @@ const MIGRATIONS: string[] = [
      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
   `CREATE INDEX IF NOT EXISTS idx_video_edit_jobs_pipeline ON video_edit_jobs(pipeline, status, claimed_at)`,
+  `CREATE TABLE IF NOT EXISTS worker_heartbeats (
+     worker_kind  TEXT PRIMARY KEY,
+     last_seen_at TIMESTAMPTZ NOT NULL
+   )`,
+  // The worker connects as a least-privilege role (src/worker-role.sql) that
+  // is granted table by table, so a table added here is unreachable to it
+  // until granted. Done at boot by the API, which owns the schema, because
+  // the alternative is a manual psql step that a deploy will forget — and the
+  // symptom would be a worker that renders fine but never reports itself.
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sonar_worker') THEN
+       GRANT SELECT, INSERT, UPDATE ON worker_heartbeats TO sonar_worker;
+     END IF;
+   END $$`,
 ];
 
 async function applyMigrations(client: PoolClient): Promise<void> {

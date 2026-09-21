@@ -542,7 +542,8 @@ export const api = {
     if (!res.ok) throw new Error(`Загрузка не удалась: ${res.status}`);
   },
 
-  listVideoJobs: (config: ApiConfig) => apiRequest(config, 'GET', '/api/video-edit-jobs') as Promise<{ jobs: VideoEditJob[] }>,
+  listVideoJobs: (config: ApiConfig) =>
+    apiRequest(config, 'GET', '/api/video-edit-jobs') as Promise<{ jobs: VideoEditJob[]; worker_online?: boolean }>,
 
   getVideoJob: (config: ApiConfig, id: string) => apiRequest(config, 'GET', `/api/video-edit-jobs/${id}`) as Promise<{ job: VideoEditJob }>,
 

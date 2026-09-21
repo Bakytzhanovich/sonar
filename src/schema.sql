@@ -460,6 +460,19 @@ CREATE TABLE transcript_cache (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Proof that a render worker is alive, so a queued job can say which of the
+-- two things is happening: waiting its turn, or waiting for a process that
+-- is not there. Without it both look identical — "в очереди" forever — and a
+-- stopped worker is discovered by a customer rather than by us.
+--
+-- One row per kind, not per process: the question a queued job asks is
+-- whether ANY worker is running, so several of them overwriting the same row
+-- is the correct answer, not a collision.
+CREATE TABLE worker_heartbeats (
+  worker_kind  TEXT PRIMARY KEY,
+  last_seen_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE users (
   id            TEXT PRIMARY KEY,
   tenant_id     TEXT NOT NULL REFERENCES tenants(id),

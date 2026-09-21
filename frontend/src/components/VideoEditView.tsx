@@ -138,6 +138,9 @@ export default function VideoEditView() {
   const [draft, setDraft] = useState<Record<string, string[]>>({});
   const [uploading, setUploading] = useState(false);
   const [jobs, setJobs] = useState<VideoEditJob[]>([]);
+  // Undefined until the first answer: "we have not asked yet" is not the same
+  // as "nobody is there", and only the second one is worth alarming about.
+  const [workerOnline, setWorkerOnline] = useState<boolean | undefined>(undefined);
   const [status, setStatus] = useState('');
 
   const load = useCallback(async () => {
@@ -145,6 +148,7 @@ export default function VideoEditView() {
     try {
       const res = await api.listVideoJobs(config);
       setJobs(res.jobs);
+      setWorkerOnline(res.worker_online);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
     }
@@ -472,9 +476,16 @@ export default function VideoEditView() {
                     </div>
                   )}
 
+                  {/* Two different waits, and they deserve different words.
+                      "Начнётся автоматически" is true only while a worker is
+                      actually running; said over a stopped one it is a promise
+                      the page cannot keep, and the job sits there for hours
+                      looking patient. */}
                   {j.awaiting_worker && (
                     <div className={styles.jobMeta}>
-                      Ждёт свободного обработчика — начнётся автоматически.
+                      {workerOnline === false
+                        ? 'Обработчик не на связи — рендер начнётся, когда он вернётся.'
+                        : 'Ждёт свободного обработчика — начнётся автоматически.'}
                     </div>
                   )}
 

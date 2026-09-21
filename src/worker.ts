@@ -4,6 +4,7 @@ import { defaultPipelineDeps, runSmartCutJobs } from './videoPipeline';
 import { storageConfigFromEnv } from './storage';
 import { localMediaConfigFromEnv } from './localMedia';
 import { deriveKey } from './auth';
+import { HEARTBEAT_INTERVAL_MS, recordHeartbeat } from './workerHealth';
 
 // Separate process entry point for Module 8's Level-3 renders. server.ts runs
 // the API and the two mock pollers; this runs ffmpeg. They are split because
@@ -57,6 +58,22 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void stop('SIGTERM'));
   process.on('SIGINT', () => void stop('SIGINT'));
 
+  // On its own timer rather than inside the poll below, because the poll
+  // awaits a whole render — minutes, on a long clip. A heartbeat written by
+  // the loop would go stale during exactly the work it is meant to report,
+  // and the queue would cry wolf on a worker that is busy doing its job.
+  //
+  // It shares the pool with the render, which is the point: if the connection
+  // has silently died, this write hangs or rejects too, and the heartbeat
+  // stops. Staleness then means what it claims to mean — this worker is not
+  // reaching the database — rather than merely that the process exited.
+  const beat = setInterval(() => {
+    void recordHeartbeat(db).catch((err) => console.error('[worker] heartbeat failed', err));
+  }, HEARTBEAT_INTERVAL_MS);
+  // Unref so a pending beat cannot hold the process open after the loop ends.
+  beat.unref();
+  await recordHeartbeat(db).catch((err) => console.error('[worker] heartbeat failed', err));
+
   while (!stopping) {
     try {
       const { processed } = await runSmartCutJobs(db, new Date(), deps, CONCURRENCY);
@@ -72,6 +89,7 @@ async function main(): Promise<void> {
     }
   }
 
+  clearInterval(beat);
   await closeDb(db);
   console.log('[worker] stopped');
 }

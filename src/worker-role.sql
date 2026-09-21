@@ -47,6 +47,10 @@ GRANT SELECT ON push_subscriptions TO sonar_worker;
 -- would break the promise the table exists to make.
 GRANT SELECT, INSERT ON transcript_cache TO sonar_worker;
 
+-- Says "a worker is alive" so a queued job can tell waiting-its-turn apart
+-- from waiting-for-nobody. One shared row, so UPDATE as well as INSERT.
+GRANT SELECT, INSERT, UPDATE ON worker_heartbeats TO sonar_worker;
+
 -- Sequences behind BIGSERIAL columns on the tables above.
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO sonar_worker;
 
