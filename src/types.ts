@@ -352,6 +352,7 @@ export interface VideoEditJob {
   headline_size: string;
   headline_color: string;
   remove_breaths: boolean;
+  aspect_ratio: string;
 }
 
 // ---- Push notifications (shared by Modules 5 and 8) ----------------------

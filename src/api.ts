@@ -20,6 +20,7 @@ import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessio
 import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
 import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
 import { DEFAULT_SUBTITLE_POSITION, isSubtitlePositionId, SUBTITLE_POSITIONS } from './subtitlePositions';
+import { ASPECT_RATIOS, DEFAULT_ASPECT_RATIO, isAspectRatioId } from './aspect';
 import { HEADLINE_MAX_CHARS, sanitizeHeadline } from './headline';
 import {
   DEFAULT_HEADLINE_COLOUR, DEFAULT_HEADLINE_FONT, DEFAULT_HEADLINE_SIZE,
@@ -449,6 +450,9 @@ export function createApp(db: Db): Express {
       headlineFonts: HEADLINE_FONTS.map(({ id, label, description }) => ({ id, label, description })),
       headlineSizes: HEADLINE_SIZES.map(({ id, label, description }) => ({ id, label, description })),
       headlineColors: HEADLINE_COLOURS.map(({ id, label, description }) => ({ id, label, description })),
+      // Same journey as the rest: the frame shapes the renderer can actually
+      // produce, rather than a list the browser keeps its own copy of.
+      aspectRatios: ASPECT_RATIOS.map(({ id, label, description }) => ({ id, label, description })),
     });
   });
 
@@ -1541,6 +1545,10 @@ export function createApp(db: Db): Express {
       // Opt-in: the most destructive pass in the pipeline, and on a noisy
       // recording it finds nothing anyway.
       const removeBreaths = req.body?.removeBreaths === true;
+      // Same fallback as the caption ids, and for the same reason: a stale
+      // client naming a format that no longer exists should get the vertical
+      // one the product was built around, not a 400.
+      const aspectRatio = isAspectRatioId(req.body?.aspectRatio) ? req.body.aspectRatio : DEFAULT_ASPECT_RATIO;
       // Stored already cleaned, so the renderer is not the last line of defence
       // against a brace that would break out of an ASS override block. Empty
       // becomes NULL rather than '': no headline and a headline of nothing are
@@ -1558,7 +1566,7 @@ export function createApp(db: Db): Express {
       const id = randomUUID();
       await exec(
         db,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, headline, headline_font, headline_size, headline_color, remove_breaths) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
@@ -1573,7 +1581,8 @@ export function createApp(db: Db): Express {
         headlineFontId,
         headlineSizeId,
         headlineColourId,
-        removeBreaths
+        removeBreaths,
+        aspectRatio
       );
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
     }

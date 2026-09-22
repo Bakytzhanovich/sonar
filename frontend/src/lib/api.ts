@@ -246,6 +246,14 @@ export interface HeadlineOption {
   description: string;
 }
 
+// Shape of the finished frame. Picks the canvas the render pads into — it
+// does not crop, so a horizontal source chosen as 9:16 still gets bars.
+export interface AspectRatioOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
 export interface VideoUploadTicket {
   objectKey: string;
   uploadUrl: string;
@@ -536,6 +544,7 @@ export const api = {
       headlineFonts?: HeadlineOption[];
       headlineSizes?: HeadlineOption[];
       headlineColors?: HeadlineOption[];
+      aspectRatios?: AspectRatioOption[];
     }>,
 
   createSmartCutJob: (
@@ -546,7 +555,8 @@ export const api = {
     removeBreaths: boolean,
     subtitlePosition: string,
     headline: string,
-    headlineStyle: { font: string; size: string; color: string }
+    headlineStyle: { font: string; size: string; color: string },
+    aspectRatio: string
   ) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', {
       template: 'ai_smart_cut',
@@ -559,6 +569,7 @@ export const api = {
       headlineSize: headlineStyle.size,
       headlineColor: headlineStyle.color,
       removeBreaths,
+      aspectRatio,
     }) as Promise<{ job: VideoEditJob }>,
 
   // Uploads straight to storage with the presigned URL — deliberately NOT

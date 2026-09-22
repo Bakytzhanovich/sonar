@@ -365,6 +365,51 @@ describe('video upload + smart cut API', () => {
     return res.body.apiKey as string;
   }
 
+  // A real object key under the calling tenant's own prefix, which is what
+  // job creation checks before it will accept one.
+  async function ownedObjectKey(apiKey: string): Promise<string> {
+    const res = await request(app)
+      .post('/api/video-uploads')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ contentType: 'video/mp4' });
+    return res.body.objectKey as string;
+  }
+
+  it('records the frame format the caller asked for', async () => {
+    const apiKey = await tenantKey('sc-aspect@example.com');
+    const res = await request(app)
+      .post('/api/video-edit-jobs')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({
+        template: 'ai_smart_cut',
+        sourceObjectKey: await ownedObjectKey(apiKey),
+        aspectRatio: '16_9',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.job.aspect_ratio).toBe('16_9');
+  });
+
+  it('defaults to vertical, and falls back to it rather than failing on an unknown format', async () => {
+    const apiKey = await tenantKey('sc-aspect2@example.com');
+    const send = (body: Record<string, unknown>) =>
+      request(app).post('/api/video-edit-jobs').set('Authorization', `Bearer ${apiKey}`).send(body);
+
+    const unasked = await send({ template: 'ai_smart_cut', sourceObjectKey: await ownedObjectKey(apiKey) });
+    expect(unasked.body.job.aspect_ratio).toBe('9_16');
+
+    // A stale client naming a format that no longer exists gets the vertical
+    // one, not a 400 — the shape of the frame is not worth refusing a render
+    // over, and every job before this column existed was vertical anyway.
+    const stale = await send({
+      template: 'ai_smart_cut',
+      sourceObjectKey: await ownedObjectKey(apiKey),
+      aspectRatio: '4_5',
+    });
+    expect(stale.status).toBe(201);
+    expect(stale.body.job.aspect_ratio).toBe('9_16');
+  });
+
   it('refuses an ai_smart_cut job without a source object key', async () => {
     const apiKey = await tenantKey('sc1@example.com');
     const res = await request(app)

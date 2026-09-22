@@ -152,6 +152,7 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS headline_font TEXT NOT NULL DEFAULT 'montserrat'`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS headline_size TEXT NOT NULL DEFAULT 'medium'`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS headline_color TEXT NOT NULL DEFAULT 'white'`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS aspect_ratio TEXT NOT NULL DEFAULT '9_16'`,
   `CREATE TABLE IF NOT EXISTS worker_heartbeats (
      worker_kind  TEXT PRIMARY KEY,
      last_seen_at TIMESTAMPTZ NOT NULL

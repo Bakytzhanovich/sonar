@@ -5,12 +5,13 @@ import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
 import { denoiseModelAvailable, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
 import { DEFAULT_SMART_CUT_OPTIONS, planSmartCut, type SmartCutOptions } from './smartCut';
-import { buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, type ChunkOptions, type SubtitleStyle } from './subtitles';
+import { buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, scaleStyleToFrame, type ChunkOptions, type SubtitleStyle } from './subtitles';
 import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
 import { applyPosition } from './subtitlePositions';
-import { buildHeadlineAss, clearOfHeadline, headlineStyleFor } from './headline';
+import { buildHeadlineAss, clearOfHeadline, headlineStyleFor, scaleHeadlineToFrame } from './headline';
+import { aspectRatioFor } from './aspect';
 import { runBreathPass } from './breathPass';
 import { cleanAudioTrack } from './deepFilter';
 import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './transcriptCache';
@@ -300,6 +301,11 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
 
   const sourcePath = path.join(workDir, 'source.mp4');
   const outputPath = path.join(workDir, 'output.mp4');
+  // Resolved once, here, because three separate things draw into this frame —
+  // the captions, the headline band and the filter graph — and every one of
+  // them sizes itself from it. Reading the column three times is how two of
+  // them end up agreeing and the third does not.
+  const frame = aspectRatioFor(job.aspect_ratio);
 
   // ---- Stage 1: probe ----------------------------------------------------
   await setStage(db, job, 'probe', now);
@@ -460,9 +466,17 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // captions measure their margin from the frame edge, which is where the
     // band now is — without this the two land on top of each other, and the
     // only place that is visible is the finished video.
-    const captionStyle = clearOfHeadline(
-      applyPosition(styleForPreset(job.subtitle_preset), job.subtitle_position),
-      job.headline
+    // ...and only then resized for the frame. The scale goes last because
+    // everything above it — preset sizes, the position's margin, the headline
+    // clearance — is written against the vertical reference frame, so scaling
+    // the finished style once is the only step that cannot leave one of those
+    // numbers behind in the wrong coordinate space.
+    const captionStyle = scaleStyleToFrame(
+      clearOfHeadline(
+        applyPosition(styleForPreset(job.subtitle_preset), job.subtitle_position),
+        job.headline
+      ),
+      frame
     );
     const { ass, chunks } = approved
       ? buildSubtitlesFromLines(approved, captionStyle)
@@ -503,7 +517,13 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   // headline shows whether or not captions were asked for.
   let headlinePath: string | undefined;
   const headlineAss = job.headline
-    ? buildHeadlineAss(job.headline, headlineStyleFor({ font: job.headline_font, size: job.headline_size, colour: job.headline_color }))
+    ? buildHeadlineAss(
+        job.headline,
+        scaleHeadlineToFrame(
+          headlineStyleFor({ font: job.headline_font, size: job.headline_size, colour: job.headline_color }),
+          frame
+        )
+      )
     : null;
   if (headlineAss) {
     headlinePath = path.join(workDir, 'headline.ass');
@@ -530,6 +550,10 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       subtitlePath,
       // Its presence is also what reserves the band in the filter graph.
       headlinePath,
+      // The same frame the two .ass files above were built for. libass sizes
+      // their contents against their own PlayRes, so padding to a different
+      // shape here would rescale the text with the picture.
+      frame,
       // A missing model file must not fail the render: the job still produces
       // a correct cut, just without the noise removal it asked for.
       // The recorded decision, not a re-evaluation: the card already told the

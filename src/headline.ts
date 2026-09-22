@@ -13,6 +13,7 @@
 // speaker's face. ffmpeg.ts shrinks the picture to make room whenever there is
 // a headline to place.
 
+import { REFERENCE_FRAME, type FrameSize } from './aspect';
 import { headlineColour, headlineFont, headlineSize } from './headlineStyles';
 
 /** How much of the 1920-high frame the band takes. */
@@ -63,6 +64,40 @@ export function headlineStyleFor(choice: {
     fontSize,
     fontSizeSmall: Math.round(fontSize * 0.78),
     primaryColour: headlineColour(choice.colour).colour,
+  };
+}
+
+/**
+ * The band's height in a frame of a given shape.
+ *
+ * Exported because two places need the same answer and they are in different
+ * files: this module draws the text inside the band, and ffmpeg.ts shrinks the
+ * picture to leave the band empty. Deriving it twice from the same formula is
+ * how they drift, and the symptom would be a headline over the speaker's face
+ * in one format only — visible nowhere except in a finished render.
+ */
+export function bandHeightForFrame(frame: FrameSize): number {
+  return Math.round(HEADLINE_BAND_HEIGHT * (frame.height / REFERENCE_FRAME.height));
+}
+
+/**
+ * The headline remapped onto another frame shape.
+ *
+ * Every number follows the HEIGHT here, unlike captions, where the text scales
+ * with the width. The band and its type are not independent choices: the words
+ * have to fit inside the strip, and the strip is a fraction of the height.
+ * Scaling the font by width would ask a 171px headline to fit a 236px band in
+ * a landscape frame, three lines at a time.
+ */
+export function scaleHeadlineToFrame(style: HeadlineStyle, frame: FrameSize): HeadlineStyle {
+  const scale = frame.height / REFERENCE_FRAME.height;
+  return {
+    ...style,
+    fontSize: Math.round(style.fontSize * scale),
+    fontSizeSmall: Math.round(style.fontSizeSmall * scale),
+    bandHeight: bandHeightForFrame(frame),
+    playResX: frame.width,
+    playResY: frame.height,
   };
 }
 

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { api, type HeadlineOption, type SubtitlePosition, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
+import { api, type AspectRatioOption, type HeadlineOption, type SubtitlePosition, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
 import { STAFF_BOOTSTRAP_AVAILABLE } from '@/lib/useApiAccess';
@@ -144,6 +144,10 @@ export default function VideoEditView() {
   const [headlineFont, setHeadlineFont] = useState('montserrat');
   const [headlineSize, setHeadlineSize] = useState('medium');
   const [headlineColor, setHeadlineColor] = useState('white');
+  const [aspectRatios, setAspectRatios] = useState<AspectRatioOption[]>([]);
+  // Vertical by default — it is what the pipeline produced before the format
+  // was a choice, and what Reels, TikTok and Shorts all want.
+  const [aspectRatio, setAspectRatio] = useState('9_16');
   const [removeBreaths, setRemoveBreaths] = useState(false);
   // Off by default: removing ambience is right for a street recording and
   // wrong for anything where the background is part of the shot.
@@ -186,6 +190,7 @@ export default function VideoEditView() {
         setHeadlineFonts(res.headlineFonts ?? []);
         setHeadlineSizes(res.headlineSizes ?? []);
         setHeadlineColors(res.headlineColors ?? []);
+        setAspectRatios(res.aspectRatios ?? []);
       })
       .catch(() => {
         setPresets([]);
@@ -193,6 +198,7 @@ export default function VideoEditView() {
         setHeadlineFonts([]);
         setHeadlineSizes([]);
         setHeadlineColors([]);
+        setAspectRatios([]);
       });
   }, [baseUrl]);
 
@@ -230,11 +236,17 @@ export default function VideoEditView() {
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);
 
-      await api.createSmartCutJob(config, ticket.objectKey, subtitles, subtitlePreset, removeBreaths, subtitlePosition, headline, {
-        font: headlineFont,
-        size: headlineSize,
-        color: headlineColor,
-      });
+      await api.createSmartCutJob(
+        config,
+        ticket.objectKey,
+        subtitles,
+        subtitlePreset,
+        removeBreaths,
+        subtitlePosition,
+        headline,
+        { font: headlineFont, size: headlineSize, color: headlineColor },
+        aspectRatio
+      );
       await load();
       setFile(null);
       setStatus(
@@ -363,7 +375,25 @@ export default function VideoEditView() {
                 )}
               </label>
               <div className={styles.controls}>
-                {/* First, because it is the one thing here nobody can generate
+                {/* First, because it is the canvas everything below is placed
+                    into: the band, the captions and their margins are all
+                    fractions of this frame. */}
+                {aspectRatios.length > 0 && (
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>Формат кадра</span>
+                    <Select
+                      value={aspectRatio}
+                      onChange={setAspectRatio}
+                      aria-label="Формат кадра"
+                      options={aspectRatios.map((ratio) => ({ value: ratio.id, label: ratio.label }))}
+                    />
+                    <span className={styles.fieldHint}>
+                      {aspectRatios.find((ratio) => ratio.id === aspectRatio)?.description}
+                    </span>
+                  </label>
+                )}
+
+                {/* Then the headline — the one thing here nobody can generate
                     for you — and the limit is shown while typing rather than
                     enforced by a renderer that silently drops the overflow. */}
                 <label className={styles.field}>

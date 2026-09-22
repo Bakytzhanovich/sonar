@@ -402,6 +402,11 @@ CREATE TABLE video_edit_jobs (
   -- default: it is the most destructive pass in the pipeline, and on a
   -- recording with a high noise floor it finds nothing anyway.
   remove_breaths    BOOLEAN NOT NULL DEFAULT false,
+  -- Shape of the finished frame (aspect.ts): '9_16', '1_1' or '16_9'. Vertical
+  -- by default, which is what the renderer produced before the format was a
+  -- choice. It decides padding, not framing — a horizontal source in a 9:16
+  -- frame still gets bars, because nothing here crops.
+  aspect_ratio      TEXT NOT NULL DEFAULT '9_16',
   -- Worker lease. Unlike the preset path, a smart_cut job legitimately sits
   -- in 'processing' for minutes, so a timestamped claim is the only way to
   -- tell "another worker is on it" from "a worker died holding it".

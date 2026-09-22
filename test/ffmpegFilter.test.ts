@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildConcatFilter, buildDenoiseChain, escapeFilterPath, OUTPUT_HEIGHT, OUTPUT_WIDTH, OUTPUT_FPS } from '../src/ffmpeg';
+import { aspectRatioFor } from '../src/aspect';
+import { bandHeightForFrame } from '../src/headline';
 
 // Pure string construction — no binary involved, which is the point: the
 // filter graph is the part of the render that fails silently (a wrong label
@@ -43,6 +45,28 @@ describe('buildConcatFilter', () => {
   it('handles a single-segment plan (nothing was cut)', () => {
     const filter = buildConcatFilter([{ start: 0, end: 10 }]);
     expect(filter).toContain('concat=n=1:v=1:a=1[vcat][aout]');
+  });
+
+  it('pads to whichever frame it is given, still without cropping', () => {
+    const landscape = aspectRatioFor('16_9');
+    const filter = buildConcatFilter(segments, undefined, undefined, false, undefined, landscape);
+    expect(filter).toContain('scale=1920:1080:force_original_aspect_ratio=decrease');
+    expect(filter).toContain('pad=1920:1080');
+    // The choice of frame must never turn into a crop: a vertical source in a
+    // landscape frame gets bars at the sides, not its top and bottom removed.
+    expect(filter).not.toContain('crop=');
+  });
+
+  it('reserves a band proportional to the frame, not a fixed 420px', () => {
+    // 420 of 1920 is 22% of the height. Carried into a 1080-high frame as a
+    // literal 420 it would be 39% of it — the picture would lose a third of
+    // the frame to a headline, and only a finished render would show it.
+    const landscape = aspectRatioFor('16_9');
+    const filter = buildConcatFilter(segments, undefined, undefined, false, '/tmp/headline.ass', landscape);
+    const band = bandHeightForFrame(landscape);
+    expect(band).toBe(236);
+    expect(filter).toContain(`scale=1920:${1080 - band}:force_original_aspect_ratio=decrease`);
+    expect(filter).toContain(`pad=1920:1080:(ow-iw)/2:${band}+`);
   });
 });
 

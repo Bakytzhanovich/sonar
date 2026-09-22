@@ -1,3 +1,4 @@
+import { REFERENCE_FRAME, type FrameSize } from './aspect';
 import type { KeepSegment, TranscriptWord } from './smartCut';
 
 // Module 8, Level 3 — burned-in "Hormozi style" captions: two to four words on
@@ -57,6 +58,44 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   playResX: 1080,
   playResY: 1920,
 };
+
+/**
+ * Rewrites a style written against REFERENCE_FRAME for a frame of another
+ * shape.
+ *
+ * Two scales rather than one, because the numbers answer to different things.
+ *
+ * Text sizes follow the WIDTH. A feed hands every video the same width
+ * whatever its shape, so captions holding the same fraction of it come out the
+ * same size on the viewer's screen. Scaling them by height instead would make
+ * a square's captions half the size of a vertical one's at an identical
+ * display width — the frames are equally wide and the text would not be.
+ *
+ * Vertical margins follow the HEIGHT, because that is the dimension they are a
+ * distance in. The 340 that clears the Reels controls means "the lower fifth
+ * of the frame"; scaled by width it would put the captions near the middle of
+ * a landscape one.
+ */
+export function scaleStyleToFrame(style: SubtitleStyle, frame: FrameSize): SubtitleStyle {
+  const textScale = frame.width / REFERENCE_FRAME.width;
+  const verticalScale = frame.height / REFERENCE_FRAME.height;
+  // Outline and shadow are the text's own geometry, so they scale with it —
+  // an outline left at 3px under a font scaled up stops separating the letters
+  // from a bright frame, which is the one thing it is there for.
+  const tenths = (value: number): number => Math.round(value * textScale * 10) / 10;
+  return {
+    ...style,
+    fontSize: Math.round(style.fontSize * textScale),
+    outline: tenths(style.outline),
+    shadow: tenths(style.shadow),
+    marginV: Math.round(style.marginV * verticalScale),
+    // libass reads every number above relative to PlayRes, so it has to be the
+    // real output size — the note on DEFAULT_SUBTITLE_STYLE spells out what a
+    // mismatch silently does.
+    playResX: frame.width,
+    playResY: frame.height,
+  };
+}
 
 export interface ChunkOptions {
   minWords: number;
