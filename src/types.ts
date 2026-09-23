@@ -308,6 +308,11 @@ export interface VideoJobArtifacts {
   // asked for breaths to go and otherwise has no way to tell whether any
   // were found.
   breaths?: { count: number; removedSec: number };
+  // How much word span was found to be covering silence rather than speech
+  // (speechTiming.ts). Worth recording: it is the difference between "this
+  // recording had no pauses" and "the pauses were invisible to the planner",
+  // and without it the two look identical from the outside.
+  speechTiming?: { tightenedCount: number; reclaimedSec: number };
   // What the job cost, in the units the bills are written in. Absent means
   // "not measured" — a job from before this was recorded, or one served
   // entirely from the transcript cache — which is not the same as free.

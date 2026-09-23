@@ -13,6 +13,7 @@ import { applyPosition } from './subtitlePositions';
 import { buildHeadlineAss, clearOfHeadline, headlineStyleFor, scaleHeadlineToFrame } from './headline';
 import { aspectRatioFor } from './aspect';
 import { runBreathPass } from './breathPass';
+import { runSpeechTimingPass } from './speechTimingPass';
 import { cleanAudioTrack } from './deepFilter';
 import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './transcriptCache';
 import { summarizeUsage } from './usage';
@@ -113,6 +114,7 @@ export interface PipelineDeps {
     measureNoise: typeof measureNoise;
   };
   findBreaths: typeof runBreathPass;
+  tightenTimings: typeof runSpeechTimingPass;
   // Speech separation outside the render graph. Returns null when the tool is
   // not installed, and the graph falls back to its own denoiser — a worker
   // without it still produces correct cuts and captions.
@@ -141,6 +143,7 @@ export function defaultPipelineDeps(): PipelineDeps {
     chunkOptions: DEFAULT_CHUNK_OPTIONS,
     ffmpeg: { available: ffmpegAvailable, probe, extractAudio, render: renderSegments, poster: extractPosterFrame, denoiseAvailable: denoiseModelAvailable, measureNoise },
     findBreaths: runBreathPass,
+    tightenTimings: runSpeechTimingPass,
     cleanAudio: cleanAudioTrack,
   };
 }
@@ -450,7 +453,27 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     }
   }
 
-  const plan = planSmartCut(transcript.words, probeResult.durationSec, deps.smartCutOptions, breaths);
+  // Whisper does not leave a gap where a speaker stops — it stretches the last
+  // word over the silence — so the planner below would look for pauses in a
+  // transcript that has none and find nothing to cut. This measures the
+  // waveform and pulls each word's end back to where its sound actually stops,
+  // which is what turns those silences into gaps the planner can see. See
+  // speechTiming.ts for the recording this was diagnosed on.
+  let words = transcript.words;
+  try {
+    const tightened = await deps.tightenTimings(sourcePath, words);
+    words = tightened.words;
+    await saveArtifact(db, job, 'speechTiming', {
+      tightenedCount: tightened.tightenedCount,
+      reclaimedSec: tightened.reclaimedSec,
+    });
+  } catch (err) {
+    // Never fatal, for the same reason as the breath pass: a job that cannot
+    // measure its audio is a job that cuts less well, not a failed render.
+    console.warn(`[video-pipeline] job ${job.id}: speech timing pass skipped: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const plan = planSmartCut(words, probeResult.durationSec, deps.smartCutOptions, breaths);
   if (plan.segments.length === 0) throw new PipelineError('nothing_to_cut');
   await saveArtifact(db, job, 'plan', {
     segments: plan.segments,

@@ -52,6 +52,11 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
       measureNoise: async () => ({ rmsDb: -20, noiseFloorDb: -80, headroomDb: 60 }),
     },
     findBreaths: async () => [],
+    // Pass-through by default: the tests below pin exact segment boundaries
+    // against the fake transcript above, and a stub that moved timings would
+    // be re-deciding the cut inside the fixture. The pass has its own tests —
+    // the decision itself in speechTiming.test.ts, the wiring below.
+    tightenTimings: async (_sourcePath, words) => ({ words, reclaimedSec: 0, tightenedCount: 0 }),
     ...overrides,
   };
 }
@@ -88,6 +93,47 @@ describe('smart cut pipeline', () => {
     expect(job!.output_object_key).toBe(`tenants/${TENANT}/renders/job-1.mp4`);
     expect(job!.output_url).toBe(`https://cdn.test/tenants/${TENANT}/renders/job-1.mp4`);
     expect(job!.claimed_at).toBeNull();
+  });
+
+  it('plans the cut from the corrected timings, not the transcript it was handed', async () => {
+    // The wiring, not the decision. Whisper stretches the last word before a
+    // pause over the whole silence, so a planner fed the raw transcript sees
+    // no gap and cuts nothing — which is what a client reported as "ИИ ничего
+    // не вырезал". This asserts the corrected words are what reaches it.
+    await seedJob(db);
+    await runSmartCutJobs(db, new Date(), deps({
+      // The first word claims to run until the second starts; the pass says
+      // its sound stopped after a fifth of a second.
+      tightenTimings: async (_path, words) => ({
+        words: words.map((w, i) => (i === 0 ? { ...w, end: w.start + 0.2 } : w)),
+        reclaimedSec: 0.8,
+        tightenedCount: 1,
+      }),
+    }));
+
+    const job = await readJob(db, 'job-1');
+    // The gap the correction opened is now a cut: the first kept segment ends
+    // just after the shortened word rather than running on to the second.
+    expect(job!.artifacts.plan!.segments[0].end).toBeLessThan(1);
+    expect(job!.artifacts.speechTiming).toMatchObject({ tightenedCount: 1, reclaimedSec: 0.8 });
+  });
+
+  it('still renders when the audio cannot be measured', async () => {
+    // A job that cannot measure its own audio cuts less well; it does not
+    // fail. The words it was given stand.
+    await seedJob(db);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await runSmartCutJobs(db, new Date(), deps({
+        tightenTimings: async () => { throw new Error('ffmpeg speech-timing pass failed'); },
+      }));
+    } finally {
+      warn.mockRestore();
+    }
+
+    const job = await readJob(db, 'job-1');
+    expect(job!.status).toBe('completed');
+    expect(job!.artifacts.speechTiming).toBeUndefined();
   });
 
   it('says so when it cannot remove its scratch directory, and still completes', async () => {
