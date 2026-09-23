@@ -589,6 +589,12 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       // their contents against their own PlayRes, so padding to a different
       // shape here would rescale the text with the picture.
       frame,
+      // How much black the letterboxing already leaves is what decides whether
+      // the headline needs room taken from the picture at all.
+      sourceSize:
+        probeResult.width && probeResult.height
+          ? { width: probeResult.width, height: probeResult.height }
+          : null,
       // A missing model file must not fail the render: the job still produces
       // a correct cut, just without the noise removal it asked for.
       // The recorded decision, not a re-evaluation: the card already told the

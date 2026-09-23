@@ -81,6 +81,34 @@ export function bandHeightForFrame(frame: FrameSize): number {
 }
 
 /**
+ * How much height the picture has to give up so the band has somewhere to go.
+ *
+ * Not the whole band, which is what this used to take. A source that does not
+ * share the frame's shape is already letterboxed, and that black is room the
+ * headline can simply use — taking the band on top of it counts the same
+ * emptiness twice, shrinking the picture for space it already had and pushing
+ * it down away from the headline. That is what a client saw and described as
+ * the title flying to the top while the video sank: a 16:9 clip in a vertical
+ * frame carries 656px of black above it, the band needed 420 of them, and the
+ * render reserved a further 420 anyway, leaving 446px of nothing in between.
+ *
+ * The picture sits centred in whatever is left, so its top edge ends up at
+ * (frameHeight + reserve - pictureHeight) / 2. Requiring that to clear the
+ * band, and solving for the smallest reserve that does, gives the expression
+ * below — zero whenever the letterboxing is already generous enough, the full
+ * band for a source that fills the frame edge to edge, and the part in between
+ * for everything else.
+ */
+export function bandReserveFor(frame: FrameSize, source: FrameSize | null, bandHeight: number): number {
+  if (bandHeight <= 0) return 0;
+  // Without the source's shape there is no letterbox to measure, so the band
+  // takes its own room — the behaviour every render had before this.
+  if (!source || !source.width || !source.height) return bandHeight;
+  const fittedToWidth = (frame.width * source.height) / source.width;
+  return Math.round(Math.min(bandHeight, Math.max(0, 2 * bandHeight - frame.height + fittedToWidth)));
+}
+
+/**
  * The headline remapped onto another frame shape.
  *
  * Every number follows the HEIGHT here, unlike captions, where the text scales

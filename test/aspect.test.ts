@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { aspectRatioFor, ASPECT_RATIOS, isAspectRatioId, REFERENCE_FRAME } from '../src/aspect';
 import { DEFAULT_SUBTITLE_STYLE, scaleStyleToFrame } from '../src/subtitles';
-import { bandHeightForFrame, DEFAULT_HEADLINE_STYLE, scaleHeadlineToFrame } from '../src/headline';
+import { bandHeightForFrame, bandReserveFor, DEFAULT_HEADLINE_STYLE, scaleHeadlineToFrame } from '../src/headline';
 import { styleForPreset } from '../src/subtitlePresets';
 import { applyPosition } from '../src/subtitlePositions';
 
@@ -99,6 +99,59 @@ describe('scaleHeadlineToFrame', () => {
     expect(landscape.fontSize * 3).toBeLessThan(landscape.bandHeight);
     expect(landscape.playResX).toBe(1920);
     expect(landscape.playResY).toBe(1080);
+  });
+
+  it('takes no room from a picture the letterboxing already left space above', () => {
+    // The client's case: a 3840x2160 clip in a vertical frame sits 1080x607,
+    // so 656px of black is already there and the 420px band fits inside it.
+    // Reserving the band regardless shrank nothing but pushed the picture
+    // 210px further down, which is the gap they saw under the headline.
+    const frame = aspectRatioFor('9_16');
+    const band = bandHeightForFrame(frame);
+    expect(bandReserveFor(frame, { width: 3840, height: 2160 }, band)).toBe(0);
+  });
+
+  it('takes the whole band from a picture that fills the frame', () => {
+    // Shot vertically on a phone: no bars anywhere, so every pixel the
+    // headline occupies has to come out of the picture.
+    const frame = aspectRatioFor('9_16');
+    const band = bandHeightForFrame(frame);
+    expect(bandReserveFor(frame, { width: 1080, height: 1920 }, band)).toBe(band);
+  });
+
+  it('keeps the headline off the picture whatever shape the source is', () => {
+    // The property that matters, checked rather than reasoned about: after
+    // reserving, the picture's top edge must still clear the band. A headline
+    // over a speaker's forehead is invisible from here and obvious in the
+    // finished video.
+    for (const ratio of ASPECT_RATIOS) {
+      const band = bandHeightForFrame(ratio);
+      for (const source of [
+        { width: 3840, height: 2160 },
+        { width: 1080, height: 1920 },
+        { width: 1440, height: 1080 },
+        { width: 1080, height: 1080 },
+        { width: 1080, height: 1520 },
+        { width: 2160, height: 3840 },
+      ]) {
+        const reserve = bandReserveFor(ratio, source, band);
+        const fitted = Math.min(
+          ratio.height - reserve,
+          (ratio.width * source.height) / source.width
+        );
+        const top = (ratio.height + reserve - fitted) / 2;
+        expect(top).toBeGreaterThanOrEqual(band - 1);
+      }
+    }
+  });
+
+  it('falls back to the whole band when the source shape is unknown', () => {
+    // A probe that could not read the dimensions must not be answered with a
+    // guess that puts the headline on someone's face.
+    const frame = aspectRatioFor('9_16');
+    const band = bandHeightForFrame(frame);
+    expect(bandReserveFor(frame, null, band)).toBe(band);
+    expect(bandReserveFor(frame, { width: 0, height: 0 }, band)).toBe(band);
   });
 
   it('agrees with the band the filter graph reserves', () => {

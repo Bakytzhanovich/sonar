@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { KeepSegment } from './smartCut';
-import { bandHeightForFrame } from './headline';
+import { bandHeightForFrame, bandReserveFor } from './headline';
 import type { FrameSize } from './aspect';
 
 // Thin wrapper around the ffmpeg/ffprobe binaries. Deliberately not a library
@@ -370,7 +370,10 @@ export function buildConcatFilter(
   denoiseModelPath?: string,
   cleanedAudio = false,
   headlinePath?: string,
-  frame: FrameSize = DEFAULT_FRAME
+  frame: FrameSize = DEFAULT_FRAME,
+  // The source's own shape, which decides how much black the letterboxing
+  // already leaves for the headline. Absent: the band takes its own room.
+  sourceSize?: FrameSize | null
 ): string {
   const parts: string[] = [];
   const labels: string[] = [];
@@ -413,18 +416,18 @@ export function buildConcatFilter(
   // and re-encoding the whole video twice.
   const fontsDir = `:fontsdir=${escapeFilterPath(FONTS_DIR)}`;
   const subtitleFilter = subtitlePath ? `,ass=filename=${escapeFilterPath(subtitlePath)}${fontsDir}` : '';
-  // A headline needs room of its own. Fitting the picture into the frame
-  // minus the band, then offsetting it down by exactly that band, leaves a
-  // strip no part of the video reaches — which is the difference between a
-  // headline over black and a headline over the speaker's forehead. A source
-  // already letterboxed would have had space, but one shot vertically on a
-  // phone fills the frame edge to edge and has none.
+  // A headline needs room of its own, and the picture gives up only the part
+  // of it the letterboxing has not already left empty — see bandReserveFor.
+  // Reserving the whole band regardless is what put 446px of black between a
+  // client's headline and their video.
   const band = headlinePath ? bandHeightForFrame(frame) : 0;
-  const videoHeight = frame.height - band;
-  // Centred within the region BELOW the band, hence the literal height rather
-  // than pad's own `oh` — oh is the full frame, and using it would push the
-  // picture half a band too low.
-  const offsetY = band ? `${band}+(${videoHeight}-ih)/2` : '(oh-ih)/2';
+  const reserve = headlinePath ? bandReserveFor(frame, sourceSize ?? null, band) : 0;
+  const videoHeight = frame.height - reserve;
+  // Centred in what is left, which is the whole frame when nothing had to be
+  // reserved. The literal height rather than pad's own `oh`: they differ by
+  // exactly the reserve, and using `oh` would drop the picture half of it too
+  // low.
+  const offsetY = reserve ? `${reserve}+(${videoHeight}-ih)/2` : '(oh-ih)/2';
   // After the captions, so the band is drawn over anything that overlaps it.
   const headlineFilter = headlinePath ? `,ass=filename=${escapeFilterPath(headlinePath)}${fontsDir}` : '';
   parts.push(
@@ -458,11 +461,15 @@ export interface RenderOptions {
   // libass sizes everything relative to their PlayRes, so a mismatch here
   // renders captions at the wrong size and says nothing about it.
   frame?: FrameSize;
+  // The source's shape, from the probe. Decides how much of the headline band
+  // has to be taken out of the picture and how much the letterboxing already
+  // provides.
+  sourceSize?: FrameSize | null;
   onProgress?: (fraction: number) => void;
 }
 
 export async function renderSegments(options: RenderOptions): Promise<void> {
-  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, headlinePath, frame = DEFAULT_FRAME, onProgress } = options;
+  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, headlinePath, frame = DEFAULT_FRAME, sourceSize, onProgress } = options;
   if (segments.length === 0) throw new FfmpegError('no segments to render', '');
 
   // The graph is written to a file rather than passed as an argument: at a
@@ -471,7 +478,7 @@ export async function renderSegments(options: RenderOptions): Promise<void> {
   const filterPath = path.join(workDir, 'filter.txt');
   await fs.writeFile(
     filterPath,
-    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath), headlinePath, frame),
+    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath), headlinePath, frame, sourceSize),
     'utf-8'
   );
 
