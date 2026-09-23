@@ -90,6 +90,32 @@ describe('smart cut pipeline', () => {
     expect(job!.claimed_at).toBeNull();
   });
 
+  it('says so when it cannot remove its scratch directory, and still completes', async () => {
+    // Both halves matter. A finished render whose output is already in storage
+    // must not be failed over its leftovers — but staying silent is how a full
+    // disk hides: the delete fails because there is no room, that leaks another
+    // few hundred megabytes, and the next job has even less room. It happened:
+    // two completed jobs left 618MB behind on a volume with 59MB free, and the
+    // only visible symptom was renders failing for unrelated-looking reasons.
+    await seedJob(db);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const rm = vi.spyOn(fs, 'rm').mockRejectedValue(new Error('ENOSPC: no space left on device'));
+    let logged = '';
+    try {
+      await runSmartCutJobs(db, new Date(), deps());
+      // Read before restoring: mockRestore also clears the call history, so
+      // asserting afterwards checks an empty array and passes for the wrong
+      // reason — or, as here, fails for one.
+      logged = warn.mock.calls.flat().join(' ');
+    } finally {
+      rm.mockRestore();
+      warn.mockRestore();
+    }
+
+    expect((await readJob(db, 'job-1'))!.status).toBe('completed');
+    expect(logged).toContain('ENOSPC');
+  });
+
   it('checkpoints each stage into artifacts', async () => {
     await seedJob(db);
     await runSmartCutJobs(db, new Date(), deps());

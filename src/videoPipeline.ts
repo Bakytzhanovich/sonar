@@ -284,7 +284,19 @@ export async function processSmartCutJob(
     // Sources and renders are tens of megabytes each; a worker that leaks one
     // temp directory per job fills its disk within a day, and a full disk
     // fails every subsequent job for an unrelated-looking reason.
-    await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    //
+    // Which is why the failure is logged rather than swallowed. It still must
+    // not throw — the render is finished and uploaded by now, and failing a
+    // completed job over its scratch directory would be the worse outcome. But
+    // silence here is how the paragraph above comes true without anyone
+    // noticing: a full disk makes the delete itself fail, that leaks another
+    // directory, and the disk fills further. It has already happened once —
+    // two finished jobs left 618MB behind on a volume with 59MB free, and
+    // nothing anywhere said so.
+    await fs.rm(workDir, { recursive: true, force: true }).catch((err: unknown) => {
+      const reason = err instanceof Error ? err.message : String(err);
+      console.warn(`[video-pipeline] job ${job.id} could not remove ${workDir}: ${reason}`);
+    });
   }
 }
 
