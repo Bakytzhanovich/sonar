@@ -84,6 +84,32 @@ export async function createDb(options: DbOptions = {}): Promise<Db> {
     query_timeout: 30_000,
   });
 
+  // The other half of the paragraph above, and the half whose absence undid
+  // it.
+  //
+  // A socket that dies while its client sits IDLE in the pool has no query to
+  // reject — pg reports it by emitting 'error' on the pool instead. That is an
+  // EventEmitter 'error' event, so with nothing listening Node does not log it,
+  // it throws, and the process is gone. keepAlive is what makes this the
+  // common case rather than a rare one: probing the peer is precisely what
+  // turns a quietly dead socket into this event.
+  //
+  // So the laptop-suspends case swapped one failure for another. Before, the
+  // worker hung forever holding the queue; after, it exited on the first sleep
+  // and nothing restarted it — measured at 13 hours dead, which is how long it
+  // took someone to look.
+  //
+  // Swallowing is the whole fix. pg has already discarded the broken client by
+  // the time this runs, so the next tick asks the pool for a connection and
+  // gets a new one. There is nothing to reconnect and nothing to clean up —
+  // only a process to keep alive long enough to do it.
+  pool.on('error', (err) => {
+    // Not console.error: this is the expected sound of a laptop waking up, and
+    // dressing it as a failure teaches whoever reads the log to ignore the
+    // word "error" here.
+    console.warn('[db] idle connection dropped, will reconnect on next query:', err.message);
+  });
+
   // Session-level advisory lock around the check+apply, so that starting
   // multiple server instances against the same fresh database at once (a
   // multi-replica deploy, or several tests racing to init the same schema)
