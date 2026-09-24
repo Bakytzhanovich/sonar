@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { KeepSegment } from './smartCut';
-import { bandHeightForFrame, bandReserveFor } from './headline';
+import { bandHeightForFrame, bandLayoutFor } from './headline';
 import type { FrameSize } from './aspect';
 
 // Thin wrapper around the ffmpeg/ffprobe binaries. Deliberately not a library
@@ -417,11 +417,11 @@ export function buildConcatFilter(
   const fontsDir = `:fontsdir=${escapeFilterPath(FONTS_DIR)}`;
   const subtitleFilter = subtitlePath ? `,ass=filename=${escapeFilterPath(subtitlePath)}${fontsDir}` : '';
   // A headline needs room of its own, and the picture gives up only the part
-  // of it the letterboxing has not already left empty — see bandReserveFor.
+  // of it the letterboxing has not already left empty — see bandLayoutFor.
   // Reserving the whole band regardless is what put 446px of black between a
   // client's headline and their video.
   const band = headlinePath ? bandHeightForFrame(frame) : 0;
-  const reserve = headlinePath ? bandReserveFor(frame, sourceSize ?? null, band) : 0;
+  const reserve = headlinePath ? bandLayoutFor(frame, sourceSize ?? null, band).reserve : 0;
   const videoHeight = frame.height - reserve;
   // Centred in what is left, which is the whole frame when nothing had to be
   // reserved. The literal height rather than pad's own `oh`: they differ by

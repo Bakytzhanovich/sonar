@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { aspectRatioFor, ASPECT_RATIOS, isAspectRatioId, REFERENCE_FRAME } from '../src/aspect';
 import { DEFAULT_SUBTITLE_STYLE, scaleStyleToFrame } from '../src/subtitles';
-import { bandHeightForFrame, bandReserveFor, DEFAULT_HEADLINE_STYLE, scaleHeadlineToFrame } from '../src/headline';
+import { bandHeightForFrame, bandLayoutFor, clearOfHeadline, DEFAULT_HEADLINE_STYLE, scaleHeadlineToFrame } from '../src/headline';
 import { styleForPreset } from '../src/subtitlePresets';
 import { applyPosition } from '../src/subtitlePositions';
 
@@ -108,7 +108,7 @@ describe('scaleHeadlineToFrame', () => {
     // 210px further down, which is the gap they saw under the headline.
     const frame = aspectRatioFor('9_16');
     const band = bandHeightForFrame(frame);
-    expect(bandReserveFor(frame, { width: 3840, height: 2160 }, band)).toBe(0);
+    expect(bandLayoutFor(frame, { width: 3840, height: 2160 }, band).reserve).toBe(0);
   });
 
   it('takes the whole band from a picture that fills the frame', () => {
@@ -116,7 +116,7 @@ describe('scaleHeadlineToFrame', () => {
     // headline occupies has to come out of the picture.
     const frame = aspectRatioFor('9_16');
     const band = bandHeightForFrame(frame);
-    expect(bandReserveFor(frame, { width: 1080, height: 1920 }, band)).toBe(band);
+    expect(bandLayoutFor(frame, { width: 1080, height: 1920 }, band).reserve).toBe(band);
   });
 
   it('keeps the headline off the picture whatever shape the source is', () => {
@@ -134,7 +134,7 @@ describe('scaleHeadlineToFrame', () => {
         { width: 1080, height: 1520 },
         { width: 2160, height: 3840 },
       ]) {
-        const reserve = bandReserveFor(ratio, source, band);
+        const reserve = bandLayoutFor(ratio, source, band).reserve;
         const fitted = Math.min(
           ratio.height - reserve,
           (ratio.width * source.height) / source.width
@@ -145,13 +145,66 @@ describe('scaleHeadlineToFrame', () => {
     }
   });
 
+  it('sits the band against the picture, not against the frame', () => {
+    // The second half of the same complaint. Reserving nothing leaves a
+    // letterboxed picture floating in the middle of the frame; a band still
+    // pinned to the top edge then has nothing under it, and the gap simply
+    // moves from below the headline to above it.
+    const frame = aspectRatioFor('9_16');
+    const band = bandHeightForFrame(frame);
+    const layout = bandLayoutFor(frame, { width: 3840, height: 2160 }, band);
+
+    expect(layout.bandTop).toBeGreaterThan(0);
+    // Directly above: the band's bottom edge is the picture's top edge.
+    expect(layout.bandTop + band).toBe(layout.pictureTop);
+  });
+
+  it('keeps the band at the top of the frame when the picture fills it', () => {
+    // A phone-shot vertical source has no black to sit in, so the band is at
+    // the frame's edge exactly as it always was.
+    const frame = aspectRatioFor('9_16');
+    const band = bandHeightForFrame(frame);
+    const layout = bandLayoutFor(frame, { width: 1080, height: 1920 }, band);
+    expect(layout.bandTop).toBe(0);
+    expect(layout.pictureTop).toBe(band);
+  });
+
+  it('never lets the band start above the frame', () => {
+    for (const ratio of ASPECT_RATIOS) {
+      const band = bandHeightForFrame(ratio);
+      for (const source of [
+        { width: 3840, height: 2160 },
+        { width: 1080, height: 1920 },
+        { width: 1440, height: 1080 },
+        { width: 2160, height: 3840 },
+      ]) {
+        const layout = bandLayoutFor(ratio, source, band);
+        expect(layout.bandTop).toBeGreaterThanOrEqual(0);
+        expect(layout.bandTop + band).toBeLessThanOrEqual(layout.pictureTop + 1);
+      }
+    }
+  });
+
+  it('pushes top-aligned captions past where the band ends, not past its height', () => {
+    // Those are the same number only while the band starts at the frame's top
+    // edge. For a letterboxed source the band sits lower, and measuring by
+    // height would put the captions back inside it.
+    const frame = aspectRatioFor('9_16');
+    const band = bandHeightForFrame(frame);
+    const layout = bandLayoutFor(frame, { width: 3840, height: 2160 }, band);
+    const top = applyPosition(styleForPreset('classic'), 'top');
+
+    const cleared = clearOfHeadline(top, 'ЗАГОЛОВОК', layout.bandTop + band);
+    expect(cleared.marginV).toBeGreaterThan(layout.bandTop + band);
+  });
+
   it('falls back to the whole band when the source shape is unknown', () => {
     // A probe that could not read the dimensions must not be answered with a
     // guess that puts the headline on someone's face.
     const frame = aspectRatioFor('9_16');
     const band = bandHeightForFrame(frame);
-    expect(bandReserveFor(frame, null, band)).toBe(band);
-    expect(bandReserveFor(frame, { width: 0, height: 0 }, band)).toBe(band);
+    expect(bandLayoutFor(frame, null, band).reserve).toBe(band);
+    expect(bandLayoutFor(frame, { width: 0, height: 0 }, band).reserve).toBe(band);
   });
 
   it('agrees with the band the filter graph reserves', () => {

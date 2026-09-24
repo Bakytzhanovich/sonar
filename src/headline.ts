@@ -30,6 +30,13 @@ export interface HeadlineStyle {
   playResX: number;
   playResY: number;
   bandHeight: number;
+  /**
+   * Where the band starts. Zero — the top of the frame — whenever the picture
+   * fills everything below it, which is every vertical source. A letterboxed
+   * one floats in the middle of the frame, and the band follows it down rather
+   * than staying at the edge with nothing underneath.
+   */
+  bandTop: number;
 }
 
 export const DEFAULT_HEADLINE_STYLE: HeadlineStyle = {
@@ -43,6 +50,7 @@ export const DEFAULT_HEADLINE_STYLE: HeadlineStyle = {
   playResX: 1080,
   playResY: 1920,
   bandHeight: HEADLINE_BAND_HEIGHT,
+  bandTop: 0,
 };
 
 /**
@@ -80,32 +88,58 @@ export function bandHeightForFrame(frame: FrameSize): number {
   return Math.round(HEADLINE_BAND_HEIGHT * (frame.height / REFERENCE_FRAME.height));
 }
 
+export interface BandLayout {
+  /** Height the picture gives up so the band has somewhere to go. */
+  reserve: number;
+  /** Where the picture's top edge lands in the finished frame. */
+  pictureTop: number;
+  /** Where the band starts — directly above the picture, wherever that is. */
+  bandTop: number;
+}
+
 /**
- * How much height the picture has to give up so the band has somewhere to go.
+ * Where the headline band goes, and what the picture pays for it.
  *
- * Not the whole band, which is what this used to take. A source that does not
- * share the frame's shape is already letterboxed, and that black is room the
- * headline can simply use — taking the band on top of it counts the same
- * emptiness twice, shrinking the picture for space it already had and pushing
- * it down away from the headline. That is what a client saw and described as
- * the title flying to the top while the video sank: a 16:9 clip in a vertical
- * frame carries 656px of black above it, the band needed 420 of them, and the
- * render reserved a further 420 anyway, leaving 446px of nothing in between.
+ * Two things a client got wrong in turn, both of which look the same from the
+ * outside — a title stranded at the top of the frame with the video far below
+ * it — and neither of which is visible anywhere but in a finished render.
  *
- * The picture sits centred in whatever is left, so its top edge ends up at
- * (frameHeight + reserve - pictureHeight) / 2. Requiring that to clear the
- * band, and solving for the smallest reserve that does, gives the expression
- * below — zero whenever the letterboxing is already generous enough, the full
- * band for a source that fills the frame edge to edge, and the part in between
- * for everything else.
+ * The first is how much room to take. A source that does not share the frame's
+ * shape is letterboxed already, and that black is room the headline can simply
+ * use; taking the band on top of it counts the same emptiness twice. Their clip
+ * was 3840x2160 in a vertical frame: 656px of black above it, a band wanting
+ * 420, and 420 more reserved anyway. The reserve here is only the shortfall,
+ * derived rather than tuned — the picture ends up centred in what remains, so
+ * its top edge lands at (frameHeight + reserve - pictureHeight) / 2, and this
+ * is the smallest reserve that keeps that clear of the band.
+ *
+ * The second is where to put it. Reserving nothing leaves the picture floating
+ * in the middle of the frame, and a band still pinned to the top edge has
+ * nothing underneath it — the gap moves from below the headline to above it and
+ * the complaint survives the fix. So the band sits against the picture. For a
+ * source that fills the frame that is the top edge anyway, which is why this
+ * changes nothing for anything shot on a phone.
  */
-export function bandReserveFor(frame: FrameSize, source: FrameSize | null, bandHeight: number): number {
-  if (bandHeight <= 0) return 0;
+export function bandLayoutFor(frame: FrameSize, source: FrameSize | null, bandHeight: number): BandLayout {
+  if (bandHeight <= 0) return { reserve: 0, pictureTop: 0, bandTop: 0 };
   // Without the source's shape there is no letterbox to measure, so the band
-  // takes its own room — the behaviour every render had before this.
-  if (!source || !source.width || !source.height) return bandHeight;
+  // takes its own room at the top of the frame — what every render did before
+  // this, and the safe answer when the probe could not read the dimensions.
+  if (!source || !source.width || !source.height) {
+    return { reserve: bandHeight, pictureTop: bandHeight, bandTop: 0 };
+  }
+
   const fittedToWidth = (frame.width * source.height) / source.width;
-  return Math.round(Math.min(bandHeight, Math.max(0, 2 * bandHeight - frame.height + fittedToWidth)));
+  const reserve = Math.round(
+    Math.min(bandHeight, Math.max(0, 2 * bandHeight - frame.height + fittedToWidth))
+  );
+  const fitted = Math.min(frame.height - reserve, fittedToWidth);
+  const pictureTop = Math.round((frame.height + reserve - fitted) / 2);
+  // The band sits against the picture rather than against the frame. Pinning
+  // it to the top instead is what left a client's title stranded at the very
+  // edge with the video floating in the middle of the frame — the gap the
+  // reserve fix took out from under the headline simply reappeared above it.
+  return { reserve, pictureTop, bandTop: Math.max(0, pictureTop - bandHeight) };
 }
 
 /**
@@ -230,12 +264,16 @@ function event(text: string): string {
 export function clearOfHeadline<T extends { alignment: number; marginV: number }>(
   style: T,
   headline: string | null | undefined,
-  bandHeight: number = HEADLINE_BAND_HEIGHT
+  bandBottom: number = HEADLINE_BAND_HEIGHT
 ): T {
   if (!headline || !sanitizeHeadline(headline)) return style;
   // 7, 8 and 9 are the top row of the numpad layout.
   if (style.alignment < 7 || style.alignment > 9) return style;
-  const clearance = bandHeight + 60;
+  // Measured from where the band ENDS, not from how tall it is. Those are the
+  // same number only while the band starts at the frame's top edge, which is
+  // no longer true of a letterboxed source — and using the height there would
+  // put the captions back inside the band.
+  const clearance = bandBottom + 60;
   return style.marginV >= clearance ? style : { ...style, marginV: clearance };
 }
 
@@ -274,7 +312,7 @@ export function buildHeadlineAss(rawText: string, style: HeadlineStyle = DEFAULT
 
   // \an5 centres on \pos, which is the middle of the band — so one line and
   // three lines are both centred in it rather than growing downwards.
-  const textEvent = event(`{\\an5\\pos(${Math.round(style.playResX / 2)},${Math.round(style.bandHeight / 2)})}${lines.join('\\N')}`);
+  const textEvent = event(`{\\an5\\pos(${Math.round(style.playResX / 2)},${Math.round(style.bandTop + style.bandHeight / 2)})}${lines.join('\\N')}`);
 
   const events = [
     '[Events]',
