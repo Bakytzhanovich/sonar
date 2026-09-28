@@ -1,4 +1,5 @@
 import { REFERENCE_FRAME, type FrameSize } from './aspect';
+import { pickEmphasis } from './emphasis';
 import type { KeepSegment, TranscriptWord } from './smartCut';
 
 // Module 8, Level 3 — burned-in "Hormozi style" captions: two to four words on
@@ -282,7 +283,14 @@ function styleBlock(style: SubtitleStyle): string {
   ].join('\n');
 }
 
-export function buildAssFile(chunks: SubtitleChunk[], style: SubtitleStyle = DEFAULT_SUBTITLE_STYLE): string {
+// `eventsFor` decides how one caption becomes Dialogue lines: word-by-word
+// karaoke by default, or the poster layout below. Injected rather than
+// branched on a style id so this function never learns the catalogue.
+export function buildAssFile(
+  chunks: SubtitleChunk[],
+  style: SubtitleStyle = DEFAULT_SUBTITLE_STYLE,
+  eventsFor: (chunk: SubtitleChunk, style: SubtitleStyle) => string[] = buildChunkEvents
+): string {
   const header = [
     '[Script Info]',
     'ScriptType: v4.00+',
@@ -298,7 +306,7 @@ export function buildAssFile(chunks: SubtitleChunk[], style: SubtitleStyle = DEF
   const events = [
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-    ...chunks.flatMap((chunk) => buildChunkEvents(chunk, style)),
+    ...chunks.flatMap((chunk) => eventsFor(chunk, style)),
   ].join('\n');
 
   return `${header}\n\n${styleBlock(style)}\n\n${events}\n`;
@@ -347,7 +355,8 @@ function buildChunkEvents(chunk: SubtitleChunk, style: SubtitleStyle): string[] 
 // reads as following the voice.
 export function buildSubtitlesFromLines(
   lines: Array<{ start: number; end: number; text: string }>,
-  style: SubtitleStyle = DEFAULT_SUBTITLE_STYLE
+  style: SubtitleStyle = DEFAULT_SUBTITLE_STYLE,
+  eventsFor?: (chunk: SubtitleChunk, style: SubtitleStyle) => string[]
 ): { ass: string; chunks: SubtitleChunk[] } {
   const chunks: SubtitleChunk[] = [];
 
@@ -369,15 +378,155 @@ export function buildSubtitlesFromLines(
     chunks.push({ words: timed, start: line.start, end: line.end });
   }
 
-  return { ass: buildAssFile(chunks, style), chunks };
+  return { ass: buildAssFile(chunks, style, eventsFor), chunks };
 }
 
 export function buildSubtitlesForPlan(
   words: TranscriptWord[],
   segments: KeepSegment[],
   style: SubtitleStyle = DEFAULT_SUBTITLE_STYLE,
-  chunkOptions: ChunkOptions = DEFAULT_CHUNK_OPTIONS
+  chunkOptions: ChunkOptions = DEFAULT_CHUNK_OPTIONS,
+  eventsFor?: (chunk: SubtitleChunk, style: SubtitleStyle) => string[]
 ): { ass: string; chunks: SubtitleChunk[] } {
   const chunks = chunkWords(remapWordsToOutputTimeline(words, segments), chunkOptions, joinBoundaries(segments));
-  return { ass: buildAssFile(chunks, style), chunks };
+  return { ass: buildAssFile(chunks, style, eventsFor), chunks };
+}
+
+// ---- The poster style ----------------------------------------------------
+//
+// One word of each caption set two or three times larger than its neighbours
+// and in colour, the lines stacked so tightly they overlap. It is what the
+// category looks like now — Submagic, Captions and the app a client showed us
+// all do some version of it — and it is the difference between captions that
+// read as a product and captions that read as a subtitle track.
+//
+// Built as explicitly positioned lines rather than one event with \N, because
+// the overlap is the effect: ASS line spacing cannot go negative, so the only
+// way to have a big word bite into the lines above and below it is to place
+// each line yourself.
+//
+// No karaoke here, unlike the classic styles. The emphasis is the design, and
+// a highlight crawling across it as well would be two things competing to say
+// the same thing.
+
+/** Measures text at a size, in the frame's pixels. Supplied by the caller so
+ *  this module stays free of the filesystem — see fontMetrics.ts. */
+export type MeasureText = (text: string, fontSizePx: number) => number;
+
+export interface PosterOptions {
+  /** Share of the frame width a line may use before it is scaled down. */
+  maxWidthRatio: number;
+  /** How much larger the emphasised word is than the rest, before fitting. */
+  emphasisScale: number;
+  /** Share of a line's height that neighbouring lines bite into. */
+  overlap: number;
+  /** Shout it in capitals, which is what the look does. */
+  uppercaseEmphasis: boolean;
+  /** Smallest the emphasised word may be scaled to before it stops being an
+   *  emphasis at all. Below this the line renders flat instead. */
+  minEmphasisSize: number;
+}
+
+export const DEFAULT_POSTER_OPTIONS: PosterOptions = {
+  // Not 1.0: a line touching both edges reads as overflowing even when it
+  // does not, and feeds crop a few pixels of their own on some devices.
+  maxWidthRatio: 0.86,
+  emphasisScale: 2.4,
+  overlap: 0.26,
+  uppercaseEmphasis: true,
+  minEmphasisSize: 48,
+};
+
+// Ascender to descender is roughly 1.2 em for the families we ship; the exact
+// figure does not matter because it only decides how far apart the lines sit,
+// and `overlap` is tuned against it.
+const LINE_HEIGHT_RATIO = 1.2;
+
+interface PosterLine {
+  text: string;
+  size: number;
+  colour: string;
+}
+
+export function buildPosterEvents(
+  chunk: SubtitleChunk,
+  style: SubtitleStyle,
+  measure: MeasureText,
+  options: PosterOptions = DEFAULT_POSTER_OPTIONS
+): string[] {
+  const words = chunk.words.map((w) => w.word);
+  const index = pickEmphasis(words);
+  // Nothing in this line earns being shouted — a line of grammar words, or
+  // of words too short to survive the gesture. Rendering it flat is the whole
+  // reason pickEmphasis is allowed to answer null.
+  if (index === null) return buildChunkEvents(chunk, style);
+
+  const maxWidth = style.playResX * options.maxWidthRatio;
+  const before = words.slice(0, index).join(' ');
+  const after = words.slice(index + 1).join(' ');
+  const emphasised = options.uppercaseEmphasis ? words[index].toLocaleUpperCase('ru') : words[index];
+
+  // Fitted, not assumed. A character count cannot predict this once two sizes
+  // share a caption, and libass answers an overlong line by drawing it off
+  // the edge of the frame without a word in any log.
+  const emphasisSize = fitTo(emphasised, measure, maxWidth, Math.round(style.fontSize * options.emphasisScale));
+  if (emphasisSize < options.minEmphasisSize) return buildChunkEvents(chunk, style);
+
+  // The quiet lines share one size so the caption reads as a block rather
+  // than as two unrelated fragments: whichever of them is wider decides.
+  const smallSize = Math.min(
+    before ? fitTo(before, measure, maxWidth, style.fontSize) : style.fontSize,
+    after ? fitTo(after, measure, maxWidth, style.fontSize) : style.fontSize
+  );
+
+  const lines: PosterLine[] = [];
+  if (before) lines.push({ text: before, size: smallSize, colour: style.primaryColour });
+  lines.push({ text: emphasised, size: emphasisSize, colour: style.highlightColour });
+  if (after) lines.push({ text: after, size: smallSize, colour: style.primaryColour });
+
+  // Lay the block out around its own centre, then move the whole thing to
+  // where the style asks for it. Done in this order because the overlap makes
+  // the block's height something to be computed rather than known.
+  const heights = lines.map((line) => line.size * LINE_HEIGHT_RATIO);
+  const bite = options.overlap;
+  let total = 0;
+  const offsets: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) total -= ((heights[i - 1] + heights[i]) / 2) * bite;
+    offsets.push(total + heights[i] / 2);
+    total += heights[i];
+  }
+  const blockHeight = total;
+
+  const centreX = Math.round(style.playResX / 2);
+  const blockCentreY = posterBlockCentre(style, blockHeight);
+
+  return lines.map((line, i) => {
+    const y = Math.round(blockCentreY - blockHeight / 2 + offsets[i]);
+    // \an5 anchors on the line's own centre, which is what makes \pos mean
+    // "put the middle of this text here" and keeps the stack aligned whatever
+    // the sizes turn out to be.
+    const tags = `{\\an5\\pos(${centreX},${y})\\fs${Math.round(line.size)}\\c${line.colour}}`;
+    return `Dialogue: 0,${formatAssTime(chunk.start)},${formatAssTime(chunk.end)},Caption,,0,0,0,,${tags}${escapeAssText(line.text)}`;
+  });
+}
+
+// Where the middle of the stack sits. The style's alignment still decides
+// top, middle or bottom — a caption style that ignored the position the user
+// picked would be a new way to surprise them — but \pos needs a number, so
+// the alignment is resolved into one here.
+function posterBlockCentre(style: SubtitleStyle, blockHeight: number): number {
+  const row = Math.ceil(style.alignment / 3); // 1 bottom, 2 middle, 3 top
+  if (row === 3) return style.marginV + blockHeight / 2;
+  if (row === 1) return style.playResY - style.marginV - blockHeight / 2;
+  return style.playResY / 2;
+}
+
+// Largest size at or below `preferred` at which the text still fits. Mirrors
+// fitFontSize in fontMetrics.ts, but expressed against the injected measurer
+// so this file never opens a font itself.
+function fitTo(text: string, measure: MeasureText, maxWidth: number, preferred: number): number {
+  const width = measure(text, preferred);
+  if (width <= maxWidth || width <= 0) return preferred;
+  return Math.max(1, Math.floor((preferred * maxWidth) / width));
 }

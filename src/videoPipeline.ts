@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
+import { fontFileFor, loadFontMetrics, measureText } from './fontMetrics';
 import { denoiseModelAvailable, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
 import {
   DEFAULT_SMART_CUT_OPTIONS,
@@ -11,7 +12,7 @@ import {
   planSmartCut,
   type SmartCutOptions,
 } from './smartCut';
-import { buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, scaleStyleToFrame, type ChunkOptions, type SubtitleStyle } from './subtitles';
+import { buildPosterEvents, buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, scaleStyleToFrame, type ChunkOptions, type SubtitleChunk, type SubtitleStyle } from './subtitles';
 import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
@@ -552,9 +553,28 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       job.headline,
       bandLayout.bandTop + bandHeightForFrame(frame)
     );
+    // The poster look lays each caption out itself rather than emitting one
+    // karaoke line, and to do that it has to know how wide the words come out
+    // — which only the font file knows. Measuring is injected so subtitles.ts
+    // never opens one; a family with no file behind it falls back to the
+    // karaoke layout rather than failing, since libass would substitute a
+    // typeface there anyway and a wrong-font poster is worse than a caption.
+    let eventsFor: ((chunk: SubtitleChunk, s: SubtitleStyle) => string[]) | undefined;
+    if (job.subtitle_preset === 'poster') {
+      try {
+        const metrics = loadFontMetrics(fontFileFor(captionStyle.fontName));
+        eventsFor = (chunk, s) =>
+          buildPosterEvents(chunk, s, (text, size) => measureText(text, metrics, size));
+      } catch (err) {
+        console.warn(
+          `[video-pipeline] job ${job.id}: poster captions need font metrics for ${captionStyle.fontName}, falling back: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+
     const { ass, chunks } = approved
-      ? buildSubtitlesFromLines(approved, captionStyle)
-      : buildSubtitlesForPlan(plan.words, plan.segments, captionStyle, deps.chunkOptions);
+      ? buildSubtitlesFromLines(approved, captionStyle, eventsFor)
+      : buildSubtitlesForPlan(plan.words, plan.segments, captionStyle, deps.chunkOptions, eventsFor);
     // A transcript that survives the cut as zero chunks (all filler, or a
     // plan that kept only silence) is not a failure — render without them
     // rather than burning an empty subtitle track.

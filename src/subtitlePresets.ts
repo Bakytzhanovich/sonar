@@ -10,7 +10,7 @@ import { DEFAULT_SUBTITLE_STYLE, type SubtitleStyle } from './subtitles';
 // Colours are ASS &HAABBGGRR — alpha, then BLUE-GREEN-RED. Writing them in
 // the RRGGBB order everyone expects produces the wrong colour silently.
 
-export type SubtitlePresetId = 'classic' | 'bold' | 'lower' | 'minimal' | 'accent';
+export type SubtitlePresetId = 'classic' | 'bold' | 'lower' | 'minimal' | 'accent' | 'poster';
 
 export interface SubtitlePreset {
   id: SubtitlePresetId;
@@ -78,6 +78,28 @@ export const SUBTITLE_PRESETS: SubtitlePreset[] = [
       // rose-700 (#be123c) as BGR: 3C12BE.
       highlightColour: '&H003C12BE',
       outline: 4,
+    },
+  },
+  {
+    id: 'poster',
+    label: 'Плакат',
+    description: 'Ключевое слово крупно и цветом, строки внахлёст',
+    style: {
+      ...DEFAULT_SUBTITLE_STYLE,
+      // The quiet lines. The shouted word is derived from this by
+      // emphasisScale, so this is the size of the words AROUND it, not of
+      // the caption — which is why it is smaller than the classic 64.
+      fontSize: 52,
+      // No outline, which is what separates this look from a subtitle track.
+      // The shadow does the separating instead: an outline traces every
+      // letter and reads as a caption, a shadow sits behind the block and
+      // reads as type set on the picture.
+      outline: 0,
+      shadow: 4,
+      // Dead centre. The look puts the block over the speaker rather than
+      // under them; a user who wants it elsewhere still has the position
+      // control, which this style honours.
+      alignment: 5,
     },
   },
 ];
