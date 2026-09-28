@@ -195,6 +195,12 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitle_font TEXT NOT NULL DEFAULT 'auto'`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitle_color TEXT NOT NULL DEFAULT 'auto'`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitle_size TEXT NOT NULL DEFAULT 'medium'`,
+  // A few seconds of the same source, rendered to show what a caption style
+  // will actually look like before committing to the whole video. Set to the
+  // job being previewed, which is also what keeps these out of the queue the
+  // user reads — they are a question being answered, not work they ordered.
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS preview_of TEXT REFERENCES video_edit_jobs(id)`,
+  `CREATE INDEX IF NOT EXISTS idx_video_edit_jobs_preview ON video_edit_jobs(preview_of)`,
   `CREATE TABLE IF NOT EXISTS worker_heartbeats (
      worker_kind  TEXT PRIMARY KEY,
      last_seen_at TIMESTAMPTZ NOT NULL

@@ -117,6 +117,11 @@ export default function CutEditor({
   const [style, setStyle] = useState<CutStyle | null>(null);
   const [words, setWords] = useState<string[]>([]);
   const [editingWord, setEditingWord] = useState<number | null>(null);
+  // The rendered sample of this very video with the look currently chosen.
+  // Asked for by a button rather than on every pill tap: each one is a job
+  // for the worker, and someone comparing seven colours would queue seven
+  // renders without meaning to.
+  const [sample, setSample] = useState<{ state: 'rendering' | 'ready' | 'failed'; url?: string; reason?: string } | null>(null);
   const [catalogue, setCatalogue] = useState<{
     presets: SubtitlePreset[];
     positions: SubtitlePosition[];
@@ -269,6 +274,45 @@ export default function CutEditor({
       return current.filter((_, i) => i !== index);
     });
     setSelected(null);
+  }
+
+  // Renders four seconds of this video with the look on screen. Polled
+  // rather than awaited: it is a worker job, and the API answers as soon as
+  // the row exists, not when ffmpeg is done.
+  async function renderSample() {
+    setSample({ state: 'rendering' });
+    try {
+      const { job } = await api.previewCut(config, jobId, segments, {
+        ...(style ?? {}),
+      });
+
+      // Roughly a minute of patience. A four-second render is seconds of
+      // ffmpeg; past this the worker is not running, and saying so beats a
+      // spinner that never stops.
+      for (let i = 0; i < 30; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const latest = await api.getVideoJob(config, job.id);
+        if (latest.job.status === 'completed' && latest.job.output_url) {
+          setSample({ state: 'ready', url: latest.job.output_url });
+          return;
+        }
+        if (latest.job.status === 'failed') {
+          setSample({ state: 'failed', reason: latest.job.failure_reason ?? undefined });
+          return;
+        }
+      }
+      setSample({ state: 'failed', reason: 'обработчик не ответил' });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setSample({
+        state: 'failed',
+        // The one refusal worth explaining rather than reporting: it is not a
+        // fault, it is that this cut kept no speech to put captions on.
+        reason: message.includes('no_speech_to_preview')
+          ? 'в этой нарезке нет речи — показывать субтитры не на чем'
+          : message,
+      });
+    }
   }
 
   async function save() {
@@ -640,6 +684,41 @@ export default function CutEditor({
                     </label>
                   </>
                 ) : null}
+
+                {/* The only way to see a caption style before committing
+                    to the whole video. Drawing them in the browser would mean
+                    a second implementation of ASS in CSS, and two
+                    implementations drift — a preview showing something the
+                    renderer does not produce is worse than no preview. This
+                    is the renderer itself, on four seconds. */}
+                <div className={styles.sampleRow}>
+                  <button
+                    type="button"
+                    className={styles.sampleButton}
+                    onClick={renderSample}
+                    disabled={sample?.state === 'rendering'}
+                  >
+                    {sample?.state === 'rendering' ? 'Собираю образец…' : 'Показать, как будет'}
+                  </button>
+                  <span className={styles.sampleHint}>
+                    {sample?.state === 'rendering'
+                      ? 'Несколько секунд — это настоящий рендер, а не рисунок'
+                      : 'Четыре секунды этого видео с выбранным оформлением'}
+                  </span>
+                </div>
+
+                {sample?.state === 'failed' && (
+                  <p className={styles.sampleError}>Образец не собрался: {sample.reason ?? 'неизвестно'}</p>
+                )}
+
+                {sample?.state === 'ready' && sample.url && (
+                  <div className={styles.sampleStage}>
+                    <video className={styles.sampleVideo} src={sample.url} controls autoPlay loop playsInline />
+                    <p className={styles.sampleNote}>
+                      Так будут выглядеть субтитры. Нажми «Пересобрать», чтобы применить ко всему ролику.
+                    </p>
+                  </div>
+                )}
 
                 <label className={`${styles.field} ${styles.fieldCheck}`}>
                   <input

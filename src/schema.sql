@@ -422,6 +422,11 @@ CREATE TABLE video_edit_jobs (
   -- an edit that turns out worse, or fails, must not cost them the render
   -- they already had in hand.
   parent_job_id     TEXT REFERENCES video_edit_jobs(id),
+  -- A few seconds of the same source, rendered to answer "what will this
+  -- caption style look like" without paying for the whole video. Costs no
+  -- transcription — the parent's is inherited — and is hidden from the queue,
+  -- because it is a question being answered rather than work anyone ordered.
+  preview_of        TEXT REFERENCES video_edit_jobs(id),
   -- Those hand-drawn keep-segments, in the SOURCE timeline (the same timeline
   -- Whisper's word timings live in, which is what lets the captions be
   -- re-projected onto whatever the new cut produces). NULL on every job the

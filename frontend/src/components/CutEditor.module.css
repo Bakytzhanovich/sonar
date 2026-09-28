@@ -270,3 +270,28 @@
 /* The pickers stack; each is one line tall because its own row scrolls, so
    six of them still leave the video the biggest thing on screen. */
 .pickers { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 14px; }
+
+/* "Show me what this looks like" — a real render of four seconds, which is
+   the only honest way to preview captions that are burned into pixels. */
+.sampleRow { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.sampleButton {
+  padding: 8px 16px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+.sampleButton:hover:not(:disabled) { background: var(--accent); color: var(--background); }
+.sampleButton:disabled { opacity: .5; cursor: progress; }
+
+.sampleHint { color: var(--foreground-muted); font-size: var(--text-xs); }
+.sampleError { grid-column: 1 / -1; margin: 0; color: var(--status-failed); font-size: var(--text-sm); }
+
+.sampleStage { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.sampleVideo { width: 100%; max-width: 260px; max-height: 44vh; border-radius: var(--radius-md); background: #000; }
+.sampleNote { margin: 0; color: var(--foreground-muted); font-size: var(--text-xs); text-align: center; }

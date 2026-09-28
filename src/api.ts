@@ -48,6 +48,7 @@ import { generateCarouselSlides } from './carouselGeneration';
 import { publishDuePosts } from './publisher';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
+import { pickPreviewWindow } from './previewWindow';
 import { normalizeManualSegments } from './smartCut';
 import { downloadUrlFor, presign, storageConfigFromEnv } from './storage';
 import { localMediaConfigFromEnv, resolveKeyPath, signLocalUrl, verifyLocalUrl } from './localMedia';
@@ -81,6 +82,9 @@ const UPLOAD_URL_TTL_SEC = 30 * 60;
 // element dying mid-scrub, which is how an expired source URL shows up: the
 // player simply stops seeking and nothing says why.
 const EDITOR_SOURCE_TTL_SEC = 2 * 60 * 60;
+// Long enough to read two or three captions, short enough that the render is
+// over before anyone gives up waiting for it.
+const PREVIEW_SECONDS = 4;
 // Ceiling for a single upload through the local dev store. A reel is a few
 // hundred megabytes at most; without a cap one request can exhaust the
 // process's memory, since express.raw buffers the whole body.
@@ -1653,7 +1657,12 @@ export function createApp(db: Db): Express {
               pipeline, stage, subtitles, denoise_mode, review_mode, claimed_at,
               output_object_key, parent_job_id,
               artifacts - 'transcript' AS artifacts
-       FROM video_edit_jobs WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`,
+       FROM video_edit_jobs
+       -- Previews are a question being answered, not work anyone ordered:
+       -- four seconds each, one per style someone tries. Left in, they would
+       -- bury the renders the queue exists to show.
+       WHERE tenant_id = ? AND preview_of IS NULL
+       ORDER BY created_at DESC, seq DESC`,
       res.locals.tenantId
     );
 
@@ -1796,6 +1805,84 @@ export function createApp(db: Db): Express {
     });
   }));
 
+  // A few seconds of this video, rendered with a caption look, so choosing a
+  // style stops being a guess. The alternative — drawing the captions in the
+  // browser — would mean a second implementation of ASS in CSS, and two
+  // implementations drift: the preview would eventually show something the
+  // renderer does not produce, which is worse than showing nothing.
+  //
+  // Costs no transcription. The parent's is inherited, so this is a few
+  // seconds of ffmpeg and nothing else.
+  app.post('/api/video-edit-jobs/:id/preview', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const parent = await queryOne<VideoEditJob>(
+      db,
+      `SELECT * FROM video_edit_jobs WHERE id = ? AND tenant_id = ?`,
+      req.params.id,
+      tenantId
+    );
+    if (!parent) return res.status(404).json({ error: 'not_found' });
+    if (parent.pipeline !== 'smart_cut') return res.status(409).json({ error: 'not_a_smart_cut_job' });
+
+    const { probe, transcript, noise } = parent.artifacts;
+    if (!probe || !transcript) return res.status(409).json({ error: 'nothing_to_revise_from' });
+    if (!parent.source_object_key) return res.status(409).json({ error: 'source_gone' });
+
+    // Previewed against the cut currently on screen, not the one that was
+    // rendered: the person may have redrawn it, and a preview of the old
+    // boundaries would answer a question nobody asked.
+    const drawn = Array.isArray(req.body?.segments) ? req.body.segments : null;
+    const segments = drawn
+      ? normalizeManualSegments(drawn, probe.durationSec)
+      : (parent.manual_segments ?? parent.artifacts.plan?.segments ?? [{ start: 0, end: probe.durationSec }]);
+    if (!segments) return res.status(400).json({ error: 'segments_invalid' });
+
+    const window = pickPreviewWindow(segments, transcript.words, PREVIEW_SECONDS);
+    // Nothing worth showing: the cut kept no speech at all. Rendering four
+    // silent seconds would look like the captions are broken rather than like
+    // there is nothing to caption.
+    if (!window) return res.status(409).json({ error: 'no_speech_to_preview' });
+
+    const look = captionLookFrom(req.body ?? {}, parent);
+    const id = randomUUID();
+    await exec(
+      db,
+      `INSERT INTO video_edit_jobs (
+         id, tenant_id, source_video_url, template, pipeline, source_object_key,
+         subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position,
+         subtitle_font, subtitle_color, subtitle_size,
+         headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio,
+         preview_of, manual_segments, artifacts
+       ) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, 'never', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)`,
+      id,
+      tenantId,
+      parent.source_video_url,
+      parent.template,
+      parent.source_object_key,
+      look.subtitles,
+      parent.denoise_mode,
+      look.subtitlePreset,
+      look.subtitlePosition,
+      look.subtitleFont,
+      look.subtitleColor,
+      look.subtitleSize,
+      look.headline,
+      look.headlineFont,
+      look.headlineSize,
+      look.headlineColor,
+      // Never: the breath pass decodes the whole audio track a second time,
+      // which is minutes of work to shave hundredths off four seconds nobody
+      // is going to publish.
+      false,
+      look.aspectRatio,
+      parent.id,
+      JSON.stringify([window]),
+      JSON.stringify({ probe, transcript, ...(noise ? { noise } : {}) })
+    );
+
+    res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
+  }));
+
   // Re-edit: the automatic cut was wrong, and this is the person saying where
   // the cuts actually go. Creates a NEW job rather than re-running this one —
   // the render they are looking at stays downloadable while the revision
@@ -1839,27 +1926,17 @@ export function createApp(db: Db): Express {
     // quietly reset the caption style to Классика because the editor did not
     // mention it would be a worse bug than the one it came to fix.
     const body = req.body ?? {};
-    const subtitles = typeof body.subtitles === 'boolean' ? body.subtitles : parent.subtitles;
-    const subtitlePreset = isSubtitlePresetId(body.subtitlePreset) ? body.subtitlePreset : parent.subtitle_preset;
-    const subtitlePosition = isSubtitlePositionId(body.subtitlePosition)
-      ? body.subtitlePosition
-      : parent.subtitle_position;
-    const aspectRatio = isAspectRatioId(body.aspectRatio) ? body.aspectRatio : parent.aspect_ratio;
-    const subtitleFont = isSubtitleFontId(body.subtitleFont) ? body.subtitleFont : parent.subtitle_font;
-    const subtitleColor = isSubtitleColourId(body.subtitleColor) ? body.subtitleColor : parent.subtitle_color;
-    const subtitleSize = isSubtitleSizeId(body.subtitleSize) ? body.subtitleSize : parent.subtitle_size;
-    // Distinguished from "not mentioned" by the key being present at all: an
-    // empty string is how someone removes a headline they no longer want, and
-    // falling back to the parent there would make it unremovable.
-    const headline =
-      body.headline === undefined
-        ? parent.headline
-        : typeof body.headline === 'string'
-          ? sanitizeHeadline(body.headline) || null
-          : null;
-    const headlineFont = isHeadlineFontId(body.headlineFont) ? body.headlineFont : parent.headline_font;
-    const headlineSize = isHeadlineSizeId(body.headlineSize) ? body.headlineSize : parent.headline_size;
-    const headlineColor = isHeadlineColourId(body.headlineColor) ? body.headlineColor : parent.headline_color;
+    const look = captionLookFrom(body, parent);
+    const {
+      subtitles,
+      subtitlePreset,
+      subtitlePosition,
+      aspectRatio,
+      subtitleFont,
+      subtitleColor,
+      subtitleSize,
+    } = look;
+    const { headline, headlineFont, headlineSize, headlineColor } = look;
 
     // Corrected words — how a misheard name gets fixed. Only the text is
     // taken; the timings stay the pipeline's, exactly as the caption review
@@ -2320,6 +2397,43 @@ function getScheduledPostForTenant(db: Db, id: string, tenantId: string): Promis
 // implementation detail.
 function toPublicScheduledPost(post: ScheduledPost): ScheduledPost {
   return post.status === 'publishing' ? { ...post, status: 'scheduled' } : post;
+}
+
+// How a caption should look, resolved from what a request asked for against
+// what the job being edited already had.
+//
+// Shared by the revision and the preview so the two cannot drift: a preview
+// that resolved a missing field differently from the render it is previewing
+// would be showing the wrong thing, which is the one failure a preview must
+// not have.
+//
+// Absent means "same as before" throughout, never "system default". A
+// revision that reset the caption style to Классика because the editor did
+// not mention it would be a worse bug than the one it came to fix.
+function captionLookFrom(body: Record<string, unknown>, parent: VideoEditJob) {
+  return {
+    subtitles: typeof body.subtitles === 'boolean' ? body.subtitles : parent.subtitles,
+    subtitlePreset: isSubtitlePresetId(body.subtitlePreset) ? body.subtitlePreset : parent.subtitle_preset,
+    subtitlePosition: isSubtitlePositionId(body.subtitlePosition)
+      ? body.subtitlePosition
+      : parent.subtitle_position,
+    aspectRatio: isAspectRatioId(body.aspectRatio) ? body.aspectRatio : parent.aspect_ratio,
+    subtitleFont: isSubtitleFontId(body.subtitleFont) ? body.subtitleFont : parent.subtitle_font,
+    subtitleColor: isSubtitleColourId(body.subtitleColor) ? body.subtitleColor : parent.subtitle_color,
+    subtitleSize: isSubtitleSizeId(body.subtitleSize) ? body.subtitleSize : parent.subtitle_size,
+    // Present-but-empty is how a headline is removed, which is different from
+    // not mentioning it at all — so this one cannot use the same shape as the
+    // rest.
+    headline:
+      body.headline === undefined
+        ? parent.headline
+        : typeof body.headline === 'string'
+          ? sanitizeHeadline(body.headline) || null
+          : null,
+    headlineFont: isHeadlineFontId(body.headlineFont) ? body.headlineFont : parent.headline_font,
+    headlineSize: isHeadlineSizeId(body.headlineSize) ? body.headlineSize : parent.headline_size,
+    headlineColor: isHeadlineColourId(body.headlineColor) ? body.headlineColor : parent.headline_color,
+  };
 }
 
 function getVideoJobForTenant(db: Db, id: string, tenantId: string): Promise<VideoEditJob | undefined> {

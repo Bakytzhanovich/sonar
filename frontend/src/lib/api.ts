@@ -651,6 +651,18 @@ export const api = {
       job: VideoEditJob;
     }>,
 
+  // A few seconds of the same source with the look being tried. Returns the
+  // preview job; poll getVideoJob until it completes, then play output_url.
+  previewCut: (
+    config: ApiConfig,
+    jobId: string,
+    segments: Array<{ start: number; end: number }>,
+    look: Partial<CutStyle> = {}
+  ) =>
+    apiRequest(config, 'POST', `/api/video-edit-jobs/${jobId}/preview`, { segments, ...look }) as Promise<{
+      job: VideoEditJob;
+    }>,
+
   processVideoTick: (config: ApiConfig) => apiRequest(config, 'POST', '/api/video-edit-jobs/process-tick') as Promise<{ advanced: number }>,
 
   // ---- Push notifications (shared by Modules 5 and 8) ---------------------

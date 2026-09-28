@@ -972,6 +972,114 @@ describe('POST /api/video-edit-jobs/:id/revise', () => {
   });
 });
 
+describe('POST /api/video-edit-jobs/:id/preview', () => {
+  let app: Express;
+  let db: Db;
+
+  beforeEach(async () => { db = await createTestDb(); app = createApp(db); });
+  afterEach(async () => { if (db) await dropTestDb(db); });
+
+  async function setup(id: string, words: Array<{ word: string; start: number; end: number }>): Promise<string> {
+    const keyRes = await request(app).post('/api/tenants').send({ name: 'B', email: `${id}@example.com` });
+    const tenantId = (await queryOne<{ id: string }>(db, `SELECT id FROM tenants ORDER BY created_at DESC LIMIT 1`))!.id;
+    await exec(
+      db,
+      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, status, artifacts, subtitle_preset, remove_breaths)
+       VALUES (?, ?, ?, 'ai_smart_cut', 'smart_cut', ?, 'completed', ?::jsonb, 'classic', true)`,
+      id,
+      tenantId,
+      `tenants/${tenantId}/sources/raw.mp4`,
+      `tenants/${tenantId}/sources/raw.mp4`,
+      JSON.stringify({
+        probe: { durationSec: 60, hasAudio: true, width: 1080, height: 1920 },
+        transcript: { words, language: 'ru' },
+        plan: { segments: [{ start: 0, end: 30 }], keptDurationSec: 30, removedDurationSec: 30, droppedFillerCount: 0, degraded: false },
+      })
+    );
+    return keyRes.body.apiKey as string;
+  }
+
+  const speech = [
+    { word: 'дают', start: 2, end: 2.5 },
+    { word: 'большой', start: 2.6, end: 3.2 },
+    { word: 'результат', start: 3.3, end: 4 },
+  ];
+
+  it('renders a few seconds with the look the editor is trying', async () => {
+    const key = await setup('pv-1', speech);
+    const res = await request(app)
+      .post('/api/video-edit-jobs/pv-1/preview')
+      .set('Authorization', `Bearer ${key}`)
+      .send({ subtitlePreset: 'poster', subtitleColor: 'turquoise' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.job.preview_of).toBe('pv-1');
+    expect(res.body.job.subtitle_preset).toBe('poster');
+    expect(res.body.job.subtitle_color).toBe('turquoise');
+    // A window around the speech, not the whole video.
+    const [window] = res.body.job.manual_segments;
+    expect(window.end - window.start).toBeLessThanOrEqual(5);
+    expect(window.start).toBeGreaterThan(1);
+  });
+
+  // The expensive stage is the one a preview must never pay for.
+  it('inherits the transcript rather than paying for it again', async () => {
+    const key = await setup('pv-2', speech);
+    const res = await request(app)
+      .post('/api/video-edit-jobs/pv-2/preview')
+      .set('Authorization', `Bearer ${key}`)
+      .send({});
+
+    expect(res.body.job.artifacts.transcript.words).toHaveLength(3);
+    expect(res.body.job.artifacts.plan).toBeUndefined();
+  });
+
+  // Minutes of work to shave hundredths off four seconds nobody publishes.
+  it('skips the breath pass the parent asked for', async () => {
+    const key = await setup('pv-3', speech);
+    const res = await request(app)
+      .post('/api/video-edit-jobs/pv-3/preview')
+      .set('Authorization', `Bearer ${key}`)
+      .send({});
+
+    expect(res.body.job.remove_breaths).toBe(false);
+  });
+
+  // The person may have redrawn the cut; previewing the rendered one would
+  // answer a question nobody asked.
+  it('previews the cut the editor is holding, not the one already rendered', async () => {
+    const key = await setup('pv-4', speech);
+    const res = await request(app)
+      .post('/api/video-edit-jobs/pv-4/preview')
+      .set('Authorization', `Bearer ${key}`)
+      .send({ segments: [{ start: 40, end: 50 }] });
+
+    // No speech in 40-50, so there is nothing honest to show.
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('no_speech_to_preview');
+  });
+
+  it('refuses rather than rendering four silent seconds', async () => {
+    const key = await setup('pv-5', []);
+    const res = await request(app)
+      .post('/api/video-edit-jobs/pv-5/preview')
+      .set('Authorization', `Bearer ${key}`)
+      .send({});
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('no_speech_to_preview');
+  });
+
+  // Four seconds per style tried would bury the renders the queue exists for.
+  it('keeps previews out of the queue', async () => {
+    const key = await setup('pv-6', speech);
+    await request(app).post('/api/video-edit-jobs/pv-6/preview').set('Authorization', `Bearer ${key}`).send({});
+
+    const list = await request(app).get('/api/video-edit-jobs').set('Authorization', `Bearer ${key}`);
+    expect(list.body.jobs.map((j: { id: string }) => j.id)).toEqual(['pv-6']);
+  });
+});
+
 describe('GET /api/video-edit-jobs/:id/editor', () => {
   let app: Express;
   let db: Db;

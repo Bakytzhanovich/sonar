@@ -365,6 +365,9 @@ export interface VideoEditJob {
   // Set on a job created by editing an earlier one. The parent keeps its own
   // finished render — revisions accumulate beside it, they do not replace it.
   parent_job_id: string | null;
+  // Set when this job is a few seconds rendered to preview a caption style.
+  // Previews are hidden from the queue and never become anyone's deliverable.
+  preview_of: string | null;
   // Hand-drawn keep-segments in the source timeline. Non-null means the
   // planner is bypassed and these are used verbatim.
   manual_segments: Array<{ start: number; end: number }> | null;
