@@ -367,3 +367,27 @@
 }
 
 .jobSecondaryButton:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Local preview of the chosen file, in the frame that is actually selected.
+   Sized against the viewport height rather than a fixed pixel height: this
+   sits above the controls, and a preview tall enough to push every one of
+   them below the fold makes the screen look like it has nothing in it. */
+.previewStage { margin-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+
+.previewFrame {
+  width: 100%;
+  max-width: 280px;
+  max-height: 46vh;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  /* Black, not the page background: this stands in for the rendered frame,
+     and the bars a vertical source gets in a 16:9 output are black there. */
+  background: #000;
+}
+
+/* contain, never cover: nothing in the renderer crops, and a preview that
+   cropped would promise a framing the output will not have. */
+.previewVideo { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+.previewNote { margin: 0; color: var(--foreground-muted); font-size: var(--text-xs); text-align: center; }

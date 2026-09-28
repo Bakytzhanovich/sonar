@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type AspectRatioOption, type HeadlineOption, type SubtitlePosition, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
@@ -127,6 +127,11 @@ export default function VideoEditView() {
   const [sourceVideoUrl, setSourceVideoUrl] = useState('https://example.com/my-video.mp4');
   const [template, setTemplate] = useState<VideoTemplate>('ai_smart_cut');
   const [file, setFile] = useState<File | null>(null);
+  // A local preview of the chosen file. The browser already holds the bytes,
+  // so this costs no upload, no render and no request — and without it every
+  // choice below (the frame, the caption style, the headline) is made against
+  // a video the person cannot see.
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [subtitles, setSubtitles] = useState(true);
   // The catalogue comes from the server rather than a copy kept here: the
   // styles are defined in the renderer's terms, and two lists drift.
@@ -162,6 +167,30 @@ export default function VideoEditView() {
   const [status, setStatus] = useState('');
   // The job whose cut is open in the editor, or null when it is closed.
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
+
+  // The live object URL, kept in a ref so unmount can revoke whatever is
+  // current without the cleanup depending on it — and so revoking never
+  // happens inside a state updater, which React may run twice.
+  const previewUrlRef = useRef<string | null>(null);
+
+  // Everything that sets the file goes through here. An object URL holds the
+  // whole file in memory until revoked, so picking five videos in a row
+  // without this keeps all five — on a phone, with half-gigabyte recordings,
+  // that is the tab being killed.
+  function chooseFile(next: File | null) {
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    const url = next ? URL.createObjectURL(next) : null;
+    previewUrlRef.current = url;
+    setFilePreviewUrl(url);
+    setFile(next);
+  }
+
+  useEffect(
+    () => () => {
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    },
+    []
+  );
 
   const load = useCallback(async () => {
     if (!hasAccess) return;
@@ -251,7 +280,7 @@ export default function VideoEditView() {
         aspectRatio
       );
       await load();
-      setFile(null);
+      chooseFile(null);
       setStatus(
         ticket.storage === 'local'
           ? 'Готово. Рендер выполняет воркер — запусти его: npm run worker'
@@ -359,7 +388,7 @@ export default function VideoEditView() {
                   className={styles.hiddenFileInput}
                   type="file"
                   accept="video/mp4,video/quicktime,video/webm"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => chooseFile(e.target.files?.[0] ?? null)}
                 />
                 {file ? (
                   <>
@@ -377,6 +406,26 @@ export default function VideoEditView() {
                   </>
                 )}
               </label>
+
+              {/* Shown in the frame that is actually selected, so choosing
+                  1:1 over 9:16 is a thing you see rather than a thing you
+                  imagine. The source keeps its own proportions inside it —
+                  nothing here crops, and a preview that cropped would promise
+                  a framing the renderer does not do. */}
+              {filePreviewUrl && (
+                <div className={styles.previewStage}>
+                  <div
+                    className={styles.previewFrame}
+                    style={{ aspectRatio: (aspectRatio ?? '9_16').replace('_', ' / ') }}
+                  >
+                    <video className={styles.previewVideo} src={filePreviewUrl} controls playsInline preload="metadata" />
+                  </div>
+                  <p className={styles.previewNote}>
+                    Так встанет кадр. Субтитры и заголовок появятся после монтажа.
+                  </p>
+                </div>
+              )}
+
               <div className={styles.controls}>
                 {/* First, because it is the canvas everything below is placed
                     into: the band, the captions and their margins are all
