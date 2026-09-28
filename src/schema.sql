@@ -407,6 +407,19 @@ CREATE TABLE video_edit_jobs (
   -- choice. It decides padding, not framing — a horizontal source in a 9:16
   -- frame still gets bars, because nothing here crops.
   aspect_ratio      TEXT NOT NULL DEFAULT '9_16',
+  -- ---- Manual re-edit -----------------------------------------------------
+  -- The automatic cut is a guess, and sometimes a wrong one. A person who
+  -- dislikes it draws their own segments and the video is rendered again.
+  -- That re-render is a NEW row pointing back here rather than an overwrite:
+  -- an edit that turns out worse, or fails, must not cost them the render
+  -- they already had in hand.
+  parent_job_id     TEXT REFERENCES video_edit_jobs(id),
+  -- Those hand-drawn keep-segments, in the SOURCE timeline (the same timeline
+  -- Whisper's word timings live in, which is what lets the captions be
+  -- re-projected onto whatever the new cut produces). NULL on every job the
+  -- planner decided for itself; non-NULL is precisely what tells the pipeline
+  -- not to plan at all.
+  manual_segments   JSONB,
   -- Worker lease. Unlike the preset path, a smart_cut job legitimately sits
   -- in 'processing' for minutes, so a timestamped claim is the only way to
   -- tell "another worker is on it" from "a worker died holding it".

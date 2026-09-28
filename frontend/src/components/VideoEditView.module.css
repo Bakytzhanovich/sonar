@@ -349,3 +349,21 @@
 .switchInput:checked + .switchTrack { background: var(--accent); border-color: var(--accent); }
 .switchInput:checked + .switchTrack .switchThumb { transform: translateX(18px); background: #fff; }
 .switchInput:focus-visible + .switchTrack { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Secondary action on a finished job — "edit this cut". Outlined rather than
+   filled: downloading is what most people came for, and two equally loud
+   buttons make neither one the obvious next step. */
+.jobSecondaryButton {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-muted);
+  font-size: var(--text-sm);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.jobSecondaryButton:hover { border-color: var(--accent); color: var(--accent); }

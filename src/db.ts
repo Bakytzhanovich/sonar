@@ -179,6 +179,16 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS headline_size TEXT NOT NULL DEFAULT 'medium'`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS headline_color TEXT NOT NULL DEFAULT 'white'`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS aspect_ratio TEXT NOT NULL DEFAULT '9_16'`,
+  // Manual re-edits (Module 8, level 3). A person who dislikes the automatic
+  // cut draws their own segments and the job is rendered again — as a new row
+  // pointing back at the one it came from, never in place, so the render they
+  // already have survives an edit that turns out worse or fails outright.
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS parent_job_id TEXT REFERENCES video_edit_jobs(id)`,
+  // The segments that person drew, in the SOURCE timeline. Present only on a
+  // revision, and its presence is what tells the pipeline to skip the planner
+  // entirely rather than re-derive cuts it was explicitly told.
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS manual_segments JSONB`,
+  `CREATE INDEX IF NOT EXISTS idx_video_edit_jobs_parent ON video_edit_jobs(parent_job_id)`,
   `CREATE TABLE IF NOT EXISTS worker_heartbeats (
      worker_kind  TEXT PRIMARY KEY,
      last_seen_at TIMESTAMPTZ NOT NULL

@@ -4,7 +4,13 @@ import path from 'node:path';
 import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
 import { denoiseModelAvailable, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
-import { DEFAULT_SMART_CUT_OPTIONS, planSmartCut, type SmartCutOptions } from './smartCut';
+import {
+  DEFAULT_SMART_CUT_OPTIONS,
+  normalizeManualSegments,
+  planFromManualSegments,
+  planSmartCut,
+  type SmartCutOptions,
+} from './smartCut';
 import { buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, scaleStyleToFrame, type ChunkOptions, type SubtitleStyle } from './subtitles';
 import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
@@ -428,6 +434,23 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
 
   // ---- Stage 3: plan cuts (pure) ----------------------------------------
   await setStage(db, job, 'plan_cuts', now);
+
+  // A re-edit brings its own segments, and everything the planner does to
+  // arrive at some — hunting breaths, measuring where words really stop,
+  // weighing pauses — exists only to guess what this person has now said
+  // outright. Running any of it would be work whose result is discarded, and
+  // the breath pass alone is a second decode of the whole audio track.
+  const manual = job.manual_segments
+    ? normalizeManualSegments(job.manual_segments, probeResult.durationSec)
+    : null;
+  if (job.manual_segments && !manual) {
+    // Validated when the edit was accepted, so reaching here means the source
+    // is not the one those segments were drawn against — a different duration
+    // for the same job. Failing is honest; rendering the automatic cut instead
+    // would hand back a video the person never asked for.
+    throw new PipelineError('nothing_to_cut', 'manual segments do not fit the source');
+  }
+
   // Breaths are found in the signal, not the transcript — and only when the
   // recording has room for them to stand out. Measured on real footage: with
   // a street-level noise floor the band between "room" and "voice" is about
@@ -435,7 +458,7 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   // opens it to 35dB. So the search runs on denoised audio when denoising is
   // happening, and is skipped when the floor leaves no band at all.
   let breaths: Array<{ start: number; end: number }> = [];
-  if (job.remove_breaths) {
+  if (job.remove_breaths && !manual) {
     try {
       breaths = await deps.findBreaths(
         sourcePath,
@@ -460,20 +483,24 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   // which is what turns those silences into gaps the planner can see. See
   // speechTiming.ts for the recording this was diagnosed on.
   let words = transcript.words;
-  try {
-    const tightened = await deps.tightenTimings(sourcePath, words);
-    words = tightened.words;
-    await saveArtifact(db, job, 'speechTiming', {
-      tightenedCount: tightened.tightenedCount,
-      reclaimedSec: tightened.reclaimedSec,
-    });
-  } catch (err) {
-    // Never fatal, for the same reason as the breath pass: a job that cannot
-    // measure its audio is a job that cuts less well, not a failed render.
-    console.warn(`[video-pipeline] job ${job.id}: speech timing pass skipped: ${err instanceof Error ? err.message : String(err)}`);
+  if (!manual) {
+    try {
+      const tightened = await deps.tightenTimings(sourcePath, words);
+      words = tightened.words;
+      await saveArtifact(db, job, 'speechTiming', {
+        tightenedCount: tightened.tightenedCount,
+        reclaimedSec: tightened.reclaimedSec,
+      });
+    } catch (err) {
+      // Never fatal, for the same reason as the breath pass: a job that cannot
+      // measure its audio is a job that cuts less well, not a failed render.
+      console.warn(`[video-pipeline] job ${job.id}: speech timing pass skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
-  const plan = planSmartCut(words, probeResult.durationSec, deps.smartCutOptions, breaths);
+  const plan = manual
+    ? planFromManualSegments(words, probeResult.durationSec, manual)
+    : planSmartCut(words, probeResult.durationSec, deps.smartCutOptions, breaths);
   if (plan.segments.length === 0) throw new PipelineError('nothing_to_cut');
   await saveArtifact(db, job, 'plan', {
     segments: plan.segments,

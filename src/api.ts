@@ -37,6 +37,7 @@ import { generateCarouselSlides } from './carouselGeneration';
 import { publishDuePosts } from './publisher';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
+import { normalizeManualSegments } from './smartCut';
 import { downloadUrlFor, presign, storageConfigFromEnv } from './storage';
 import { localMediaConfigFromEnv, resolveKeyPath, signLocalUrl, verifyLocalUrl } from './localMedia';
 import { notify, listNotifications } from './notifications';
@@ -65,6 +66,10 @@ const UPLOAD_EXTENSIONS: Record<string, string> = { 'video/mp4': 'mp4', 'video/q
 // Long enough to upload a large clip on a phone connection, short enough that
 // a leaked URL is not a lasting write grant on our bucket.
 const UPLOAD_URL_TTL_SEC = 30 * 60;
+// Long enough to watch a clip through and redraw its cuts without the video
+// element dying mid-scrub, which is how an expired source URL shows up: the
+// player simply stops seeking and nothing says why.
+const EDITOR_SOURCE_TTL_SEC = 2 * 60 * 60;
 // Ceiling for a single upload through the local dev store. A reel is a few
 // hundred megabytes at most; without a cap one request can exhaust the
 // process's memory, since express.raw buffers the whole body.
@@ -1617,7 +1622,7 @@ export function createApp(db: Db): Express {
       `SELECT id, seq, tenant_id, source_video_url, template, status, progress_percent,
               output_url, poster_url, failure_reason, created_at, completed_at,
               pipeline, stage, subtitles, denoise_mode, review_mode, claimed_at,
-              output_object_key,
+              output_object_key, parent_job_id,
               artifacts - 'transcript' AS artifacts
        FROM video_edit_jobs WHERE tenant_id = ? ORDER BY created_at DESC, seq DESC`,
       res.locals.tenantId
@@ -1705,6 +1710,121 @@ export function createApp(db: Db): Express {
     );
 
     res.json({ job: await getVideoJobForTenant(db, req.params.id, tenantId) });
+  }));
+
+  // Everything the cut editor needs, in one request. Separate from the job
+  // GET above because that one is polled every couple of seconds while a
+  // render runs, and signing a source URL on each of those polls would be
+  // work for a screen that is not open.
+  app.get('/api/video-edit-jobs/:id/editor', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const job = await getVideoJobForTenant(db, req.params.id, tenantId);
+    if (!job) return res.status(404).json({ error: 'not_found' });
+    const { probe, transcript, plan } = job.artifacts;
+    if (!probe || !transcript) return res.status(409).json({ error: 'nothing_to_revise_from' });
+
+    const storage = storageConfigFromEnv();
+    // The source, not the render: the editor has to show the footage the cuts
+    // were made FROM, including the parts the planner threw away — those are
+    // exactly the ones a person reaches for when the automatic cut took out
+    // something it should have kept.
+    const sourceUrl =
+      storage && job.source_object_key
+        ? presign(storage, { method: 'GET', key: job.source_object_key, expiresInSec: EDITOR_SOURCE_TTL_SEC })
+        : job.source_video_url;
+
+    res.json({
+      duration_sec: probe.durationSec,
+      // What is on screen now — the automatic plan, or the segments the last
+      // edit drew. Either way it is where the editor's handles start.
+      segments: job.manual_segments ?? plan?.segments ?? [{ start: 0, end: probe.durationSec }],
+      // Timed words, so the editor can show what is being said under the
+      // playhead instead of asking someone to find a sentence boundary by ear.
+      words: transcript.words,
+      source_url: sourceUrl,
+      manual: job.manual_segments !== null,
+    });
+  }));
+
+  // Re-edit: the automatic cut was wrong, and this is the person saying where
+  // the cuts actually go. Creates a NEW job rather than re-running this one —
+  // the render they are looking at stays downloadable while the revision
+  // works, and survives one that comes out worse or fails.
+  app.post('/api/video-edit-jobs/:id/revise', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const parent = await queryOne<VideoEditJob>(
+      db,
+      `SELECT * FROM video_edit_jobs WHERE id = ? AND tenant_id = ?`,
+      req.params.id,
+      tenantId
+    );
+    if (!parent) return res.status(404).json({ error: 'not_found' });
+    if (parent.pipeline !== 'smart_cut') return res.status(409).json({ error: 'not_a_smart_cut_job' });
+    // A job still working has no result to disagree with yet, and letting a
+    // second render start from the same source would have two workers holding
+    // leases on the same edit.
+    if (parent.status === 'processing' || parent.status === 'awaiting_review') {
+      return res.status(409).json({ error: 'job_still_running' });
+    }
+
+    // The whole saving of a revision is that these two are already paid for:
+    // the probe gives the duration the segments are measured against, and the
+    // transcript is the only stage that costs money. Without them there is
+    // nothing to revise from — the original never got far enough.
+    const { probe, transcript, noise } = parent.artifacts;
+    if (!probe || !transcript) return res.status(409).json({ error: 'nothing_to_revise_from' });
+    if (!parent.source_object_key) return res.status(409).json({ error: 'source_gone' });
+
+    const incoming = Array.isArray(req.body?.segments) ? req.body.segments : null;
+    if (!incoming) return res.status(400).json({ error: 'segments_required' });
+    const segments = normalizeManualSegments(incoming, probe.durationSec);
+    // Refused rather than repaired: an empty or oversized list means the
+    // editor sent something that does not describe a video, and guessing what
+    // was meant is how a person ends up with a render they did not draw.
+    if (!segments) return res.status(400).json({ error: 'segments_invalid' });
+
+    const id = randomUUID();
+    await exec(
+      db,
+      `INSERT INTO video_edit_jobs (
+         id, tenant_id, source_video_url, template, pipeline, source_object_key,
+         subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position,
+         headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio,
+         parent_job_id, manual_segments, artifacts
+       ) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)`,
+      id,
+      tenantId,
+      parent.source_video_url,
+      parent.template,
+      parent.source_object_key,
+      parent.subtitles,
+      parent.denoise_mode,
+      // Never 'auto' or 'always', whatever the parent said: the pause exists
+      // to ask a person to check the machine's work, and a person is what
+      // just produced this edit. Stopping to ask them again would be asking
+      // them to approve their own typing.
+      'never',
+      parent.subtitle_preset,
+      parent.subtitle_position,
+      parent.headline,
+      parent.headline_font,
+      parent.headline_size,
+      parent.headline_color,
+      parent.remove_breaths,
+      parent.aspect_ratio,
+      parent.id,
+      JSON.stringify(segments),
+      // Exactly the three checkpoints that describe the SOURCE rather than the
+      // cut. The plan, the captions and the subtitle counts all belong to the
+      // edit being replaced. `breaths` and `speechTiming` are dropped too:
+      // both are inputs to a planner this job will not run, and carrying them
+      // over would have the card claim passes that never happened. `usage` is
+      // dropped because this render genuinely spends nothing on transcription
+      // and copying it would bill the same audio twice.
+      JSON.stringify({ probe, transcript, ...(noise ? { noise } : {}) })
+    );
+
+    res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
   }));
 
   app.post('/api/video-edit-jobs/process-tick', asyncHandler(async (_req, res) => {

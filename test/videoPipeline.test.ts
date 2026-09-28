@@ -733,3 +733,293 @@ describe('deciding without asking the user', () => {
     expect(shouldReview('never', 'kazakh')).toBe(false);
   });
 });
+
+// ---- Manual re-edit -------------------------------------------------------
+//
+// The automatic cut is a guess. These cover the path a person takes when it
+// guessed wrong: draw the segments yourself, render again, and keep the
+// render you already had while that happens.
+describe('re-editing a finished cut by hand', () => {
+  let db: Db;
+
+  beforeEach(async () => { db = await createTestDb(); });
+  afterEach(async () => { if (db) await dropTestDb(db); });
+
+  async function seedWithManualSegments(
+    segments: Array<{ start: number; end: number }>,
+    id = 'job-manual'
+  ): Promise<void> {
+    await seedJob(db, id);
+    await exec(db, `UPDATE video_edit_jobs SET manual_segments = ?::jsonb WHERE id = ?`, JSON.stringify(segments), id);
+  }
+
+  it('cuts where the person said, not where the planner would have', async () => {
+    // The fixture transcript has a pause the planner always cuts; these
+    // segments keep it and throw away the end instead — the opposite edit,
+    // so a plan that came from the planner cannot pass this by coincidence.
+    await seedWithManualSegments([{ start: 0, end: 4 }]);
+    await runSmartCutJobs(db, new Date(), deps());
+
+    const job = await readJob(db, 'job-manual');
+    expect(job!.status).toBe('completed');
+    expect(job!.artifacts.plan!.segments).toEqual([{ start: 0, end: 4 }]);
+    expect(job!.artifacts.plan!.removedDurationSec).toBe(2);
+  });
+
+  // Both passes exist to guess where the cuts go, and the guessing is over by
+  // the time someone has drawn them. The breath pass in particular decodes
+  // the whole audio track a second time.
+  it('skips the analysis passes that only feed the planner', async () => {
+    await seedWithManualSegments([{ start: 0, end: 4 }]);
+    await exec(db, `UPDATE video_edit_jobs SET remove_breaths = true WHERE id = 'job-manual'`);
+    const findBreaths = vi.fn(async () => []);
+    const tightenTimings = vi.fn(async (_p: string, words: Array<{ word: string; start: number; end: number }>) => ({
+      words,
+      reclaimedSec: 0,
+      tightenedCount: 0,
+    }));
+
+    await runSmartCutJobs(db, new Date(), deps({ findBreaths, tightenTimings }));
+
+    expect(findBreaths).not.toHaveBeenCalled();
+    expect(tightenTimings).not.toHaveBeenCalled();
+    const job = await readJob(db, 'job-manual');
+    // And says nothing about passes that never ran, rather than reporting
+    // zeroes the card would show as "no breaths found".
+    expect(job!.artifacts.breaths).toBeUndefined();
+    expect(job!.artifacts.speechTiming).toBeUndefined();
+  });
+
+  // Captions live in the output timeline and the cut just moved. A revision
+  // that burned the parent's caption timings would drift them by exactly the
+  // footage this edit removed.
+  it('rebuilds the captions against the new cut', async () => {
+    await seedWithManualSegments([{ start: 4.5, end: 6 }]);
+    const render = vi.fn(async ({ outputPath }: { outputPath: string }) => { await fs.writeFile(outputPath, 'rendered'); });
+    await runSmartCutJobs(db, new Date(), deps({ ffmpeg: { ...deps().ffmpeg, render } }));
+
+    const job = await readJob(db, 'job-manual');
+    expect(job!.status).toBe('completed');
+    // Only the second word survives this cut, so the caption track holds one
+    // word rather than the two the parent's did.
+    expect(job!.artifacts.subtitles!.wordCount).toBe(1);
+  });
+
+  it('fails rather than falling back to the automatic cut when the segments do not fit', async () => {
+    // Segments drawn against a different source than the one the probe finds.
+    await seedWithManualSegments([{ start: 90, end: 120 }]);
+    await runSmartCutJobs(db, new Date(), deps());
+
+    const job = await readJob(db, 'job-manual');
+    expect(job!.status).toBe('failed');
+    expect(job!.failure_reason).toBe('nothing_to_cut');
+  });
+});
+
+describe('POST /api/video-edit-jobs/:id/revise', () => {
+  let app: Express;
+  let db: Db;
+
+  beforeEach(async () => { db = await createTestDb(); app = createApp(db); });
+  afterEach(async () => { if (db) await dropTestDb(db); });
+
+  async function tenantKey(email: string): Promise<string> {
+    const res = await request(app).post('/api/tenants').send({ name: 'Blogger', email });
+    return res.body.apiKey as string;
+  }
+
+  // A finished job with the two checkpoints a revision is built from.
+  async function finishedJob(id: string, tenantId: string): Promise<void> {
+    await exec(
+      db,
+      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, status, artifacts, subtitle_preset, aspect_ratio)
+       VALUES (?, ?, ?, 'ai_smart_cut', 'smart_cut', ?, 'completed', ?::jsonb, 'bold', '1_1')`,
+      id,
+      tenantId,
+      `tenants/${tenantId}/sources/raw.mp4`,
+      `tenants/${tenantId}/sources/raw.mp4`,
+      JSON.stringify({
+        probe: { durationSec: 10, hasAudio: true, width: 1080, height: 1920 },
+        transcript: { words: [{ word: 'раз', start: 0, end: 1 }], language: 'ru' },
+        noise: { headroomDb: 40, denoised: true },
+        plan: { segments: [{ start: 0, end: 10 }], keptDurationSec: 10, removedDurationSec: 0, droppedFillerCount: 0, degraded: false },
+        usage: { totalCostUsd: 0.42 },
+      })
+    );
+  }
+
+  // The tenant the key was just issued to. Each test creates exactly one, so
+  // the most recent row is it.
+  async function newestTenantId(): Promise<string> {
+    return (await queryOne<{ id: string }>(db, `SELECT id FROM tenants ORDER BY created_at DESC LIMIT 1`))!.id;
+  }
+
+  it('creates a revision beside the original rather than replacing it', async () => {
+    const apiKey = await tenantKey('revise@example.com');
+    const tenantId = await newestTenantId();
+    await finishedJob('parent-1', tenantId);
+
+    const res = await request(app)
+      .post('/api/video-edit-jobs/parent-1/revise')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ segments: [{ start: 2, end: 6 }] });
+
+    expect(res.status).toBe(201);
+    expect(res.body.job.parent_job_id).toBe('parent-1');
+    expect(res.body.job.manual_segments).toEqual([{ start: 2, end: 6 }]);
+    expect(res.body.job.status).toBe('processing');
+
+    // The render the person is looking at is untouched and still downloadable.
+    const parent = await queryOne<VideoEditJob>(db, `SELECT * FROM video_edit_jobs WHERE id = 'parent-1'`);
+    expect(parent!.status).toBe('completed');
+  });
+
+  it('carries over the look of the original', async () => {
+    const apiKey = await tenantKey('revise-look@example.com');
+    const tenantId = await newestTenantId();
+    await finishedJob('parent-2', tenantId);
+
+    const res = await request(app)
+      .post('/api/video-edit-jobs/parent-2/revise')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ segments: [{ start: 0, end: 5 }] });
+
+    expect(res.body.job.subtitle_preset).toBe('bold');
+    expect(res.body.job.aspect_ratio).toBe('1_1');
+  });
+
+  // The whole point of a revision: the expensive stage is already paid for.
+  it('inherits the source checkpoints so nothing is transcribed twice', async () => {
+    const apiKey = await tenantKey('revise-cheap@example.com');
+    const tenantId = await newestTenantId();
+    await finishedJob('parent-3', tenantId);
+
+    const res = await request(app)
+      .post('/api/video-edit-jobs/parent-3/revise')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ segments: [{ start: 0, end: 5 }] });
+
+    const artifacts = res.body.job.artifacts;
+    expect(artifacts.transcript.words).toHaveLength(1);
+    expect(artifacts.probe.durationSec).toBe(10);
+    // Measured only inside the transcribe stage, which this job will skip —
+    // dropping it would silently stop the denoising the parent had.
+    expect(artifacts.noise).toEqual({ headroomDb: 40, denoised: true });
+    // The parent's cut and what it cost belong to the edit being replaced.
+    expect(artifacts.plan).toBeUndefined();
+    expect(artifacts.usage).toBeUndefined();
+  });
+
+  // A person just made this edit; pausing to ask them to approve it would be
+  // asking them to check their own typing.
+  it('never pauses the revision for review', async () => {
+    const apiKey = await tenantKey('revise-review@example.com');
+    const tenantId = await newestTenantId();
+    await finishedJob('parent-4', tenantId);
+    await exec(db, `UPDATE video_edit_jobs SET review_mode = 'always' WHERE id = 'parent-4'`);
+
+    const res = await request(app)
+      .post('/api/video-edit-jobs/parent-4/revise')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ segments: [{ start: 0, end: 5 }] });
+
+    expect(res.body.job.review_mode).toBe('never');
+  });
+
+  it('refuses segments that describe no video', async () => {
+    const apiKey = await tenantKey('revise-bad@example.com');
+    const tenantId = await newestTenantId();
+    await finishedJob('parent-5', tenantId);
+
+    const send = (body: unknown) =>
+      request(app).post('/api/video-edit-jobs/parent-5/revise').set('Authorization', `Bearer ${apiKey}`).send(body);
+
+    expect((await send({ segments: [] })).status).toBe(400);
+    expect((await send({ segments: [{ start: 4, end: 4 }] })).status).toBe(400);
+    expect((await send({})).status).toBe(400);
+  });
+
+  it('refuses to revise a job that is still working', async () => {
+    const apiKey = await tenantKey('revise-busy@example.com');
+    const tenantId = await newestTenantId();
+    await finishedJob('parent-6', tenantId);
+    await exec(db, `UPDATE video_edit_jobs SET status = 'processing' WHERE id = 'parent-6'`);
+
+    const res = await request(app)
+      .post('/api/video-edit-jobs/parent-6/revise')
+      .set('Authorization', `Bearer ${apiKey}`)
+      .send({ segments: [{ start: 0, end: 5 }] });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('job_still_running');
+  });
+
+  // Multi-tenancy isolation (CLAUDE.md): one client's footage must never be
+  // reachable from another's key.
+  it('will not revise another tenant\'s job', async () => {
+    const mine = await tenantKey('revise-mine@example.com');
+    const theirs = await tenantKey('revise-theirs@example.com');
+    const theirTenant = (await queryOne<{ id: string }>(db, `SELECT id FROM tenants ORDER BY created_at DESC LIMIT 1`))!.id;
+    await finishedJob('parent-7', theirTenant);
+
+    const res = await request(app)
+      .post('/api/video-edit-jobs/parent-7/revise')
+      .set('Authorization', `Bearer ${mine}`)
+      .send({ segments: [{ start: 0, end: 5 }] });
+
+    expect(res.status).toBe(404);
+    expect(theirs).toBeTruthy();
+  });
+});
+
+describe('GET /api/video-edit-jobs/:id/editor', () => {
+  let app: Express;
+  let db: Db;
+
+  beforeEach(async () => { db = await createTestDb(); app = createApp(db); });
+  afterEach(async () => { if (db) await dropTestDb(db); });
+
+  it('hands the editor the source, the current cut and the words', async () => {
+    const keyRes = await request(app).post('/api/tenants').send({ name: 'B', email: 'editor@example.com' });
+    const apiKey = keyRes.body.apiKey as string;
+    const tenantId = (await queryOne<{ id: string }>(db, `SELECT id FROM tenants ORDER BY created_at DESC LIMIT 1`))!.id;
+    await exec(
+      db,
+      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, status, artifacts)
+       VALUES ('ed-1', ?, 'https://cdn.test/raw.mp4', 'ai_smart_cut', 'smart_cut', ?, 'completed', ?::jsonb)`,
+      tenantId,
+      `tenants/${tenantId}/sources/raw.mp4`,
+      JSON.stringify({
+        probe: { durationSec: 12, hasAudio: true, width: 1080, height: 1920 },
+        transcript: { words: [{ word: 'раз', start: 0, end: 1 }], language: 'ru' },
+        plan: { segments: [{ start: 0, end: 4 }], keptDurationSec: 4, removedDurationSec: 8, droppedFillerCount: 0, degraded: false },
+      })
+    );
+
+    const res = await request(app).get('/api/video-edit-jobs/ed-1/editor').set('Authorization', `Bearer ${apiKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.duration_sec).toBe(12);
+    // Where the handles start: the cut that is on screen now.
+    expect(res.body.segments).toEqual([{ start: 0, end: 4 }]);
+    expect(res.body.words).toHaveLength(1);
+    expect(res.body.manual).toBe(false);
+    expect(res.body.source_url).toBeTruthy();
+  });
+
+  it('says so when there is nothing to revise from', async () => {
+    const keyRes = await request(app).post('/api/tenants').send({ name: 'B', email: 'editor2@example.com' });
+    const apiKey = keyRes.body.apiKey as string;
+    const tenantId = (await queryOne<{ id: string }>(db, `SELECT id FROM tenants ORDER BY created_at DESC LIMIT 1`))!.id;
+    await exec(
+      db,
+      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, status)
+       VALUES ('ed-2', ?, 'https://cdn.test/raw.mp4', 'ai_smart_cut', 'smart_cut', 'failed')`,
+      tenantId
+    );
+
+    const res = await request(app).get('/api/video-edit-jobs/ed-2/editor').set('Authorization', `Bearer ${apiKey}`);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('nothing_to_revise_from');
+  });
+});

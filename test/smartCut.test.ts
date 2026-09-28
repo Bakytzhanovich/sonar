@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_SMART_CUT_OPTIONS, planSmartCut, type TranscriptWord } from '../src/smartCut';
+import {
+  DEFAULT_SMART_CUT_OPTIONS,
+  normalizeManualSegments,
+  planFromManualSegments,
+  planSmartCut,
+  type TranscriptWord,
+} from '../src/smartCut';
 
 // Builds a transcript from [word, start, end] triples so each test reads as
 // the timeline it is actually describing.
@@ -120,5 +126,86 @@ describe('planSmartCut', () => {
   it('reports kept and removed durations that add up to the source', () => {
     const plan = planSmartCut(words(['раз', 0, 1], ['два', 6, 7]), 7);
     expect(plan.keptDurationSec + plan.removedDurationSec).toBeCloseTo(7, 5);
+  });
+});
+
+describe('normalizeManualSegments', () => {
+  it('keeps segments a person drew cleanly', () => {
+    expect(normalizeManualSegments([{ start: 1, end: 3 }, { start: 5, end: 8 }], 10)).toEqual([
+      { start: 1, end: 3 },
+      { start: 5, end: 8 },
+    ]);
+  });
+
+  it('sorts segments dragged out of order', () => {
+    expect(normalizeManualSegments([{ start: 5, end: 8 }, { start: 1, end: 3 }], 10)).toEqual([
+      { start: 1, end: 3 },
+      { start: 5, end: 8 },
+    ]);
+  });
+
+  // Two handles dragged into each other meant one piece, not the same footage
+  // played twice.
+  it('merges overlapping segments into one', () => {
+    expect(normalizeManualSegments([{ start: 1, end: 5 }, { start: 4, end: 8 }], 10)).toEqual([
+      { start: 1, end: 8 },
+    ]);
+  });
+
+  it('clamps a segment that runs off the end of the media', () => {
+    expect(normalizeManualSegments([{ start: 8, end: 999 }], 10)).toEqual([{ start: 8, end: 10 }]);
+  });
+
+  it('drops reversed and empty segments', () => {
+    expect(normalizeManualSegments([{ start: 5, end: 5 }, { start: 8, end: 2 }, { start: 1, end: 3 }], 10)).toEqual([
+      { start: 1, end: 3 },
+    ]);
+  });
+
+  // Rendering nothing is the one outcome worse than refusing.
+  it('refuses a list with nothing usable left in it', () => {
+    expect(normalizeManualSegments([{ start: 5, end: 5 }], 10)).toBeNull();
+    expect(normalizeManualSegments([], 10)).toBeNull();
+    expect(normalizeManualSegments([{ start: Number.NaN, end: 3 }], 10)).toBeNull();
+  });
+
+  // The automatic planner degrades here instead; a hand-drawn list must not,
+  // because dropping someone's cuts silently hands back a different video.
+  it('refuses more segments than the filter graph will take', () => {
+    const many = Array.from({ length: 5 }, (_, i) => ({ start: i * 2, end: i * 2 + 1 }));
+    expect(normalizeManualSegments(many, 100, 4)).toBeNull();
+    expect(normalizeManualSegments(many, 100, 5)).toHaveLength(5);
+  });
+});
+
+describe('planFromManualSegments', () => {
+  it('uses the segments verbatim and reports what they removed', () => {
+    const plan = planFromManualSegments(
+      words(['раз', 0, 1], ['два', 4, 5], ['три', 8, 9]),
+      10,
+      [{ start: 0, end: 2 }, { start: 8, end: 10 }]
+    );
+
+    expect(plan.segments).toEqual([{ start: 0, end: 2 }, { start: 8, end: 10 }]);
+    expect(plan.keptDurationSec).toBe(4);
+    expect(plan.removedDurationSec).toBe(6);
+  });
+
+  // Both are claims about a planner that did not run, and the card repeats
+  // them to the user.
+  it('reports no filler dropped and no degrading', () => {
+    const plan = planFromManualSegments(words(['ну', 0, 1], ['вот', 1, 2]), 2, [{ start: 0, end: 2 }]);
+
+    expect(plan.droppedFillerCount).toBe(0);
+    expect(plan.degraded).toBe(false);
+  });
+
+  // Captions are built from plan.words, and one out-of-order word is enough
+  // to drop a line — the manual path has to repair the list like the
+  // automatic one does.
+  it('still repairs an out-of-order transcript', () => {
+    const plan = planFromManualSegments(words(['два', 5, 6], ['раз', 0, 1]), 10, [{ start: 0, end: 10 }]);
+
+    expect(plan.words.map((w) => w.word)).toEqual(['раз', 'два']);
   });
 });

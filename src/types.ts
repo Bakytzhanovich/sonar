@@ -358,6 +358,12 @@ export interface VideoEditJob {
   headline_color: string;
   remove_breaths: boolean;
   aspect_ratio: string;
+  // Set on a job created by editing an earlier one. The parent keeps its own
+  // finished render — revisions accumulate beside it, they do not replace it.
+  parent_job_id: string | null;
+  // Hand-drawn keep-segments in the source timeline. Non-null means the
+  // planner is bypassed and these are used verbatim.
+  manual_segments: Array<{ start: number; end: number }> | null;
 }
 
 // ---- Push notifications (shared by Modules 5 and 8) ----------------------

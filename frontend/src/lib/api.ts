@@ -223,6 +223,22 @@ export interface VideoEditJob {
    * the only thing that distinguishes "in the queue" from "being rendered".
    */
   awaiting_worker?: boolean;
+  /**
+   * Set when this job is a hand-made re-edit of an earlier one. The original
+   * keeps its own render — revisions sit beside it, they do not replace it.
+   */
+  parent_job_id?: string | null;
+}
+
+/** Everything the cut editor needs to draw a timeline over the source. */
+export interface CutEditorData {
+  duration_sec: number;
+  /** The cut on screen now: the planner's, or what the last edit drew. */
+  segments: Array<{ start: number; end: number }>;
+  /** Timed words, so a boundary can be found by reading instead of by ear. */
+  words: Array<{ word: string; start: number; end: number }>;
+  source_url: string;
+  manual: boolean;
 }
 
 export interface SubtitlePreset {
@@ -593,6 +609,14 @@ export const api = {
 
   approveCaptions: (config: ApiConfig, jobId: string, lines: Array<{ text: string }>) =>
     apiRequest(config, 'PUT', `/api/video-edit-jobs/${jobId}/captions`, { lines }),
+
+  getCutEditor: (config: ApiConfig, jobId: string) =>
+    apiRequest(config, 'GET', `/api/video-edit-jobs/${jobId}/editor`) as Promise<CutEditorData>,
+
+  // Returns the NEW job, not the one that was edited: the original keeps its
+  // render, and this is what the queue should now be watching.
+  reviseCut: (config: ApiConfig, jobId: string, segments: Array<{ start: number; end: number }>) =>
+    apiRequest(config, 'POST', `/api/video-edit-jobs/${jobId}/revise`, { segments }) as Promise<{ job: VideoEditJob }>,
 
   processVideoTick: (config: ApiConfig) => apiRequest(config, 'POST', '/api/video-edit-jobs/process-tick') as Promise<{ advanced: number }>,
 

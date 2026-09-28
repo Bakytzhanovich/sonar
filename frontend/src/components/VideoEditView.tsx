@@ -11,6 +11,7 @@ import Switch from './Switch';
 import Select from './Select';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
+import CutEditor from './CutEditor';
 import StatusMessage from './StatusMessage';
 import controls from './Controls.module.css';
 import layout from './Layout.module.css';
@@ -159,6 +160,8 @@ export default function VideoEditView() {
   // as "nobody is there", and only the second one is worth alarming about.
   const [workerOnline, setWorkerOnline] = useState<boolean | undefined>(undefined);
   const [status, setStatus] = useState('');
+  // The job whose cut is open in the editor, or null when it is closed.
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!hasAccess) return;
@@ -749,6 +752,24 @@ export default function VideoEditView() {
                           real server) until a real Shotstack/Creatomate integration
                           replaces videoRender.ts — flagging that here so clicking
                           "Скачать" and hitting a DNS error isn't a surprise. */}
+                      {/* The ИИ guessed where the cuts go, and a guess can be
+                          wrong in ways only the person who filmed it sees.
+                          Offered next to the download rather than hidden in a
+                          menu: disagreeing with the edit is a normal outcome,
+                          not an advanced one. */}
+                      {/* Gated on the plan, not the transcript: the list
+                          strips transcripts out (they are tens of kilobytes
+                          per job and nothing here shows them), and a job that
+                          reached a plan necessarily has one. */}
+                      {j.pipeline === 'smart_cut' && j.artifacts?.plan && (
+                        <button
+                          type="button"
+                          className={styles.jobSecondaryButton}
+                          onClick={() => setEditingJobId(j.id)}
+                        >
+                          Редактировать нарезку
+                        </button>
+                      )}
                       {j.pipeline !== 'smart_cut' && (
                         <span className={styles.jobOutputHint}>мок-ссылка, реального файла ещё нет</span>
                       )}
@@ -770,6 +791,20 @@ export default function VideoEditView() {
           )}
         </section>
       </main>
+
+      {editingJobId && (
+        <CutEditor
+          config={config}
+          jobId={editingJobId}
+          onClose={() => setEditingJobId(null)}
+          onRevised={() => {
+            setEditingJobId(null);
+            setStatus('Пересборка запущена — новый вариант появится в очереди.');
+            load();
+          }}
+        />
+      )}
+
       <TabBar current="/video" />
     </div>
   );

@@ -244,3 +244,75 @@ export function planSmartCut(
     degraded,
   };
 }
+
+// ---- The manual counterpart ----------------------------------------------
+//
+// Everything above decides where to cut. This decides nothing: it takes the
+// segments a person drew in the editor and turns them into the same plan
+// shape, so every stage downstream — subtitles, the filter graph, the
+// progress bar — stays exactly as it was and never learns that a human, not
+// the planner, chose these boundaries.
+//
+// Kept here rather than in the pipeline because it is the same kind of thing
+// as planSmartCut: a pure function over words and numbers, testable without a
+// video file or a network.
+
+// Segments arrive from a browser, so nothing about them can be trusted: they
+// may be reversed, overlapping, out of order, off the end of the media, or
+// NaN. Returns null when nothing usable survives — the caller answers that
+// with a 400 rather than rendering an empty file, which is what an empty
+// segment list would otherwise produce.
+export function normalizeManualSegments(
+  segments: Array<{ start: number; end: number }>,
+  durationSec: number,
+  maxSegments: number = DEFAULT_SMART_CUT_OPTIONS.maxSegments
+): KeepSegment[] | null {
+  const clamped = segments
+    .filter((s) => Number.isFinite(s.start) && Number.isFinite(s.end))
+    .map((s) => ({
+      start: Math.min(Math.max(s.start, 0), durationSec),
+      end: Math.min(Math.max(s.end, 0), durationSec),
+    }))
+    .filter((s) => s.end > s.start)
+    .sort((a, b) => a.start - b.start);
+
+  // Overlapping keeps would put the same footage on screen twice, which is
+  // never what dragging two handles into each other meant. Merging is the
+  // reading closest to the intent: one continuous piece.
+  const merged: KeepSegment[] = [];
+  for (const segment of clamped) {
+    const last = merged[merged.length - 1];
+    if (last && segment.start <= last.end) last.end = Math.max(last.end, segment.end);
+    else merged.push({ ...segment });
+  }
+
+  if (merged.length === 0) return null;
+  // The automatic planner degrades past this limit — it drops the shortest
+  // cuts and renders a looser edit. That trade is wrong here: these cuts were
+  // typed by a person, and quietly ignoring some of them would hand back a
+  // video that does not match what they drew. Refusing says so out loud.
+  if (merged.length > maxSegments) return null;
+  return merged;
+}
+
+export function planFromManualSegments(
+  words: TranscriptWord[],
+  durationSec: number,
+  segments: KeepSegment[]
+): SmartCutPlan {
+  const keptDurationSec = totalLength(segments);
+  return {
+    segments,
+    // Sanitised for the same reason the automatic path sanitises: captions are
+    // built from this list, and one out-of-order word from the model is enough
+    // to drop a caption line.
+    words: sanitizeWords(words, durationSec),
+    sourceDurationSec: durationSec,
+    keptDurationSec,
+    removedDurationSec: Math.max(0, durationSec - keptDurationSec),
+    // Both are statements about what the planner did, and the planner did not
+    // run: no filler was dropped, and nothing was degraded to fit a limit.
+    droppedFillerCount: 0,
+    degraded: false,
+  };
+}
