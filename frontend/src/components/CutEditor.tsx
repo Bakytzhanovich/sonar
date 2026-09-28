@@ -128,7 +128,7 @@ export default function CutEditor({
     aspectRatios: AspectRatioOption[];
     headlineFonts: HeadlineOption[];
     headlineSizes: HeadlineOption[];
-    headlineColors: HeadlineOption[];
+    headlineColors: Array<HeadlineOption & { hex: string }>;
     headlineMaxChars: number;
     subtitleFonts: HeadlineOption[];
     subtitleColors: Array<HeadlineOption & { hex: string }>;
@@ -648,41 +648,26 @@ export default function CutEditor({
 
                 {/* Only worth the room when there is a headline to style. */}
                 {style.headline ? (
-                  <>
-                    <label className={styles.field}>
-                      <span>Шрифт заголовка</span>
-                      <select
-                        value={style.headlineFont}
-                        onChange={(e) => setStyle({ ...style, headlineFont: e.target.value })}
-                      >
-                        {catalogue.headlineFonts.map((f) => (
-                          <option key={f.id} value={f.id}>{f.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className={styles.field}>
-                      <span>Размер заголовка</span>
-                      <select
-                        value={style.headlineSize}
-                        onChange={(e) => setStyle({ ...style, headlineSize: e.target.value })}
-                      >
-                        {catalogue.headlineSizes.map((s) => (
-                          <option key={s.id} value={s.id}>{s.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className={styles.field}>
-                      <span>Цвет заголовка</span>
-                      <select
-                        value={style.headlineColor}
-                        onChange={(e) => setStyle({ ...style, headlineColor: e.target.value })}
-                      >
-                        {catalogue.headlineColors.map((c) => (
-                          <option key={c.id} value={c.id}>{c.label}</option>
-                        ))}
-                      </select>
-                    </label>
-                  </>
+                  <div className={styles.pickers}>
+                    <PillPicker
+                      label="Шрифт заголовка"
+                      options={catalogue.headlineFonts}
+                      value={style.headlineFont}
+                      onChange={(id) => setStyle({ ...style, headlineFont: id })}
+                    />
+                    <PillPicker
+                      label="Размер заголовка"
+                      options={catalogue.headlineSizes}
+                      value={style.headlineSize}
+                      onChange={(id) => setStyle({ ...style, headlineSize: id })}
+                    />
+                    <PillPicker
+                      label="Цвет заголовка"
+                      options={catalogue.headlineColors}
+                      value={style.headlineColor}
+                      onChange={(id) => setStyle({ ...style, headlineColor: id })}
+                    />
+                  </div>
                 ) : null}
 
                 {/* The only way to see a caption style before committing

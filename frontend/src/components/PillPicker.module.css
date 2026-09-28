@@ -54,3 +54,15 @@
 
 .disabled { opacity: .45; }
 .pill:disabled { cursor: not-allowed; }
+
+/* Flags something new. Readable on both the plain pill and the selected one,
+   which are opposite colours — hence currentColor rather than the accent. */
+.badge {
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-full);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  opacity: .75;
+}

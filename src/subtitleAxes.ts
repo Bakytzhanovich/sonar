@@ -1,5 +1,8 @@
+import { rgbToAss } from './assColour';
 import { HEADLINE_FONTS } from './headlineStyles';
 import type { SubtitleStyle } from './subtitles';
+
+export { rgbToAss };
 
 // The three things about a caption that people want to change independently
 // of its look: the typeface, the colour of the word being emphasised, and how
@@ -14,24 +17,6 @@ import type { SubtitleStyle } from './subtitles';
 // 'auto' throughout means "whatever the preset already said", which is what
 // keeps every job rendered before today looking exactly as it did. Same
 // convention as subtitlePositions.ts, for the same reason.
-
-/**
- * #RRGGBB to the &HAABBGGRR that ASS wants — alpha first, then BLUE, GREEN,
- * RED, which is the reverse of what everyone expects.
- *
- * A function rather than six hand-written constants precisely because the
- * mistake is silent: a colour written backwards is still a valid colour, the
- * render succeeds, and the captions simply come out blue when they were meant
- * to be amber. Written once, it can be tested once.
- */
-export function rgbToAss(hex: string): string {
-  const clean = hex.replace('#', '');
-  if (!/^[0-9a-fA-F]{6}$/.test(clean)) throw new Error(`не цвет: ${hex}`);
-  const rr = clean.slice(0, 2);
-  const gg = clean.slice(2, 4);
-  const bb = clean.slice(4, 6);
-  return `&H00${bb}${gg}${rr}`.toUpperCase();
-}
 
 export interface SubtitleColour {
   id: string;

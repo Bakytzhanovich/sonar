@@ -19,8 +19,11 @@ export interface PillOption {
   id: string;
   label: string;
   description?: string;
-  /** Painted as a dot before the label. Used by the colour picker. */
+  /** Painted as a dot before the label. Used by the colour pickers. */
   hex?: string;
+  /** A word after the label — "NEW" on something genuinely new. A list where
+   *  everything is flagged flags nothing, so this stays rare. */
+  badge?: string;
 }
 
 export default function PillPicker({
@@ -65,6 +68,7 @@ export default function PillPicker({
               <span className={styles.dot} style={{ background: option.hex }} aria-hidden="true" />
             ) : null}
             {option.label}
+            {option.badge ? <span className={styles.badge}>{option.badge}</span> : null}
           </button>
         ))}
       </div>

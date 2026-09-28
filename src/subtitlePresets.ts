@@ -16,6 +16,9 @@ export interface SubtitlePreset {
   id: SubtitlePresetId;
   label: string;
   description: string;
+  /** A word shown on the chip. Only worth setting on something genuinely new
+   *  — a list where everything is flagged flags nothing. */
+  badge?: string;
   style: SubtitleStyle;
 }
 
@@ -84,6 +87,7 @@ export const SUBTITLE_PRESETS: SubtitlePreset[] = [
     id: 'poster',
     label: 'Плакат',
     description: 'Ключевое слово крупно и цветом, строки внахлёст',
+    badge: 'NEW',
     style: {
       ...DEFAULT_SUBTITLE_STYLE,
       // The quiet lines. The shouted word is derived from this by

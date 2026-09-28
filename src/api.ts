@@ -458,7 +458,7 @@ export function createApp(db: Db): Express {
   // terms (ASS colour order), not the browser's.
   app.get('/api/subtitle-presets', (_req, res) => {
     res.json({
-      presets: SUBTITLE_PRESETS.map(({ id, label, description }) => ({ id, label, description })),
+      presets: SUBTITLE_PRESETS.map(({ id, label, description, badge }) => ({ id, label, description, badge })),
       // Shipped alongside the looks rather than from a second endpoint: the
       // picker shows both, and one request means the two can never arrive out
       // of step with each other.
@@ -477,7 +477,9 @@ export function createApp(db: Db): Express {
       // reason: the picker renders what the renderer actually has.
       headlineFonts: HEADLINE_FONTS.map(({ id, label, description }) => ({ id, label, description })),
       headlineSizes: HEADLINE_SIZES.map(({ id, label, description }) => ({ id, label, description })),
-      headlineColors: HEADLINE_COLOURS.map(({ id, label, description }) => ({ id, label, description })),
+      // The hex travels so the picker can paint a dot; the ASS form stays
+      // server-side, where the renderer is.
+      headlineColors: HEADLINE_COLOURS.map(({ id, label, description, hex }) => ({ id, label, description, hex })),
       // Same journey as the rest: the frame shapes the renderer can actually
       // produce, rather than a list the browser keeps its own copy of.
       aspectRatios: ASPECT_RATIOS.map(({ id, label, description }) => ({ id, label, description })),

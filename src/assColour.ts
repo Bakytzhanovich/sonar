@@ -1,0 +1,21 @@
+/**
+ * #RRGGBB to the &HAABBGGRR that ASS wants — alpha first, then BLUE, GREEN,
+ * RED, which is the reverse of what everyone expects.
+ *
+ * A function rather than hand-written constants precisely because the mistake
+ * is silent: a colour written backwards is still a valid colour, the render
+ * succeeds, and the text simply comes out blue when it was meant to be amber.
+ * Written once, it can be tested once.
+ *
+ * Its own module so both the caption palette and the headline one can use it
+ * without importing each other — subtitleAxes.ts already takes the typeface
+ * list from headlineStyles.ts, and the reverse edge would close a cycle.
+ */
+export function rgbToAss(hex: string): string {
+  const clean = hex.replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) throw new Error(`не цвет: ${hex}`);
+  const rr = clean.slice(0, 2);
+  const gg = clean.slice(2, 4);
+  const bb = clean.slice(4, 6);
+  return `&H00${bb}${gg}${rr}`.toUpperCase();
+}

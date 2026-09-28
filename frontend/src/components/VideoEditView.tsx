@@ -8,7 +8,6 @@ import { STAFF_BOOTSTRAP_AVAILABLE } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
 import Switch from './Switch';
-import Select from './Select';
 import PillPicker from './PillPicker';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
@@ -147,7 +146,7 @@ export default function VideoEditView() {
   const [headlineMaxChars, setHeadlineMaxChars] = useState(48);
   const [headlineFonts, setHeadlineFonts] = useState<HeadlineOption[]>([]);
   const [headlineSizes, setHeadlineSizes] = useState<HeadlineOption[]>([]);
-  const [headlineColors, setHeadlineColors] = useState<HeadlineOption[]>([]);
+  const [headlineColors, setHeadlineColors] = useState<Array<HeadlineOption & { hex: string }>>([]);
   const [headlineFont, setHeadlineFont] = useState('montserrat');
   const [headlineSize, setHeadlineSize] = useState('medium');
   const [headlineColor, setHeadlineColor] = useState('white');
@@ -450,20 +449,12 @@ export default function VideoEditView() {
                 {/* First, because it is the canvas everything below is placed
                     into: the band, the captions and their margins are all
                     fractions of this frame. */}
-                {aspectRatios.length > 0 && (
-                  <label className={styles.field}>
-                    <span className={styles.fieldLabel}>Формат кадра</span>
-                    <Select
-                      value={aspectRatio}
-                      onChange={setAspectRatio}
-                      aria-label="Формат кадра"
-                      options={aspectRatios.map((ratio) => ({ value: ratio.id, label: ratio.label }))}
-                    />
-                    <span className={styles.fieldHint}>
-                      {aspectRatios.find((ratio) => ratio.id === aspectRatio)?.description}
-                    </span>
-                  </label>
-                )}
+                <PillPicker
+                  label="Формат кадра"
+                  options={aspectRatios}
+                  value={aspectRatio}
+                  onChange={setAspectRatio}
+                />
 
                 {/* Then the headline — the one thing here nobody can generate
                     for you — and the limit is shown while typing rather than
@@ -489,46 +480,26 @@ export default function VideoEditView() {
                     field they are three controls for something that will not
                     be rendered. */}
                 {headline.trim() !== '' && headlineFonts.length > 0 && (
-                  <>
-                    <label className={styles.field}>
-                      <span className={styles.fieldLabel}>Шрифт заголовка</span>
-                      <Select
-                        value={headlineFont}
-                        onChange={setHeadlineFont}
-                        aria-label="Шрифт заголовка"
-                        options={headlineFonts.map((f) => ({ value: f.id, label: f.label }))}
-                      />
-                      <span className={styles.fieldHint}>
-                        {headlineFonts.find((f) => f.id === headlineFont)?.description}
-                      </span>
-                    </label>
-
-                    <label className={styles.field}>
-                      <span className={styles.fieldLabel}>Размер заголовка</span>
-                      <Select
-                        value={headlineSize}
-                        onChange={setHeadlineSize}
-                        aria-label="Размер заголовка"
-                        options={headlineSizes.map((x) => ({ value: x.id, label: x.label }))}
-                      />
-                      <span className={styles.fieldHint}>
-                        {headlineSizes.find((x) => x.id === headlineSize)?.description}
-                      </span>
-                    </label>
-
-                    <label className={styles.field}>
-                      <span className={styles.fieldLabel}>Цвет заголовка</span>
-                      <Select
-                        value={headlineColor}
-                        onChange={setHeadlineColor}
-                        aria-label="Цвет заголовка"
-                        options={headlineColors.map((c) => ({ value: c.id, label: c.label }))}
-                      />
-                      <span className={styles.fieldHint}>
-                        {headlineColors.find((c) => c.id === headlineColor)?.description}
-                      </span>
-                    </label>
-                  </>
+                  <div className={styles.pickers}>
+                    <PillPicker
+                      label="Шрифт заголовка"
+                      options={headlineFonts}
+                      value={headlineFont}
+                      onChange={setHeadlineFont}
+                    />
+                    <PillPicker
+                      label="Размер заголовка"
+                      options={headlineSizes}
+                      value={headlineSize}
+                      onChange={setHeadlineSize}
+                    />
+                    <PillPicker
+                      label="Цвет заголовка"
+                      options={headlineColors}
+                      value={headlineColor}
+                      onChange={setHeadlineColor}
+                    />
+                  </div>
                 )}
 
                 <Switch

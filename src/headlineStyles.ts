@@ -1,3 +1,4 @@
+import { rgbToAss } from './assColour';
 // The three things a person gets to choose about a headline: typeface, size
 // and colour.
 //
@@ -57,6 +58,8 @@ export const HEADLINE_SIZES: HeadlineSize[] = [
 export const DEFAULT_HEADLINE_SIZE: HeadlineSizeId = 'medium';
 
 export interface HeadlineColour {
+  /** The colour as written; `colour` below is this converted for ASS. */
+  hex: string;
   id: HeadlineColourId;
   label: string;
   description: string;
@@ -64,15 +67,16 @@ export interface HeadlineColour {
   colour: string;
 }
 
+// Written as the hex everybody reads and converted once, rather than as the
+// BGR strings that used to sit here with a comment above each explaining what
+// colour it really was. The comments were the tell: a value nobody can read
+// without a note is a value nobody can check.
 export const HEADLINE_COLOURS: HeadlineColour[] = [
-  { id: 'white', label: 'Белый', description: 'Максимальный контраст на чёрном', colour: '&H00FFFFFF' },
-  // #facc15 (amber-400) as BGR: 15CCFA.
-  { id: 'yellow', label: 'Жёлтый', description: 'Тот самый цвет кликбейта', colour: '&H0015CCFA' },
-  // #34d399 (emerald-400) as BGR: 99D334.
-  { id: 'mint', label: 'Мятный', description: 'Спокойный акцент', colour: '&H0099D334' },
-  // #ef4444 (red-500) as BGR: 4444EF.
-  { id: 'red', label: 'Красный', description: 'Тревога, срочность', colour: '&H004444EF' },
-];
+  { id: 'white' as const, label: 'Белый', description: 'Максимальный контраст на чёрном', hex: '#FFFFFF' },
+  { id: 'yellow' as const, label: 'Жёлтый', description: 'Тот самый цвет кликбейта', hex: '#FACC15' },
+  { id: 'mint' as const, label: 'Мятный', description: 'Спокойный акцент', hex: '#34D399' },
+  { id: 'red' as const, label: 'Красный', description: 'Тревога, срочность', hex: '#EF4444' },
+].map((colour) => ({ ...colour, colour: rgbToAss(colour.hex) }));
 
 export const DEFAULT_HEADLINE_COLOUR: HeadlineColourId = 'white';
 

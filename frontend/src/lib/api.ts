@@ -279,6 +279,8 @@ export interface SubtitlePreset {
   id: string;
   label: string;
   description: string;
+  /** Shown on the chip — 'NEW' on something genuinely new. */
+  badge?: string;
 }
 
 // Where the captions sit — a separate axis from how they look.
@@ -593,7 +595,7 @@ export const api = {
       headlineMaxChars?: number;
       headlineFonts?: HeadlineOption[];
       headlineSizes?: HeadlineOption[];
-      headlineColors?: HeadlineOption[];
+      headlineColors?: Array<HeadlineOption & { hex: string }>;
       aspectRatios?: AspectRatioOption[];
       subtitleFonts?: HeadlineOption[];
       /** The palette, hex included: the picker paints a dot in each colour
