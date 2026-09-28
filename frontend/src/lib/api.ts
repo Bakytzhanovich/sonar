@@ -245,10 +245,29 @@ export interface CutEditorData {
   style: CutStyle;
 }
 
+export interface SmartCutRequest {
+  sourceObjectKey: string;
+  subtitles: boolean;
+  subtitlePreset: string;
+  subtitlePosition: string;
+  subtitleFont: string;
+  subtitleColor: string;
+  subtitleSize: string;
+  removeBreaths: boolean;
+  headline: string;
+  headlineFont: string;
+  headlineSize: string;
+  headlineColor: string;
+  aspectRatio: string;
+}
+
 export interface CutStyle {
   subtitles: boolean;
   subtitlePreset: string;
   subtitlePosition: string;
+  subtitleFont: string;
+  subtitleColor: string;
+  subtitleSize: string;
   aspectRatio: string;
   headline: string | null;
   headlineFont: string;
@@ -576,31 +595,21 @@ export const api = {
       headlineSizes?: HeadlineOption[];
       headlineColors?: HeadlineOption[];
       aspectRatios?: AspectRatioOption[];
+      subtitleFonts?: HeadlineOption[];
+      /** The palette, hex included: the picker paints a dot in each colour
+       *  and deriving it here would be a second place the palette lives. */
+      subtitleColors?: Array<HeadlineOption & { hex: string }>;
+      subtitleSizes?: HeadlineOption[];
     }>,
 
-  createSmartCutJob: (
-    config: ApiConfig,
-    sourceObjectKey: string,
-    subtitles: boolean,
-    subtitlePreset: string,
-    removeBreaths: boolean,
-    subtitlePosition: string,
-    headline: string,
-    headlineStyle: { font: string; size: string; color: string },
-    aspectRatio: string
-  ) =>
+  // An object, not nine positional arguments. There are a dozen of these
+  // now, most of them strings, and two adjacent ones swapped at a call site
+  // would typecheck and render the wrong thing — the caption style and the
+  // caption position are both just strings to the compiler.
+  createSmartCutJob: (config: ApiConfig, job: SmartCutRequest) =>
     apiRequest(config, 'POST', '/api/video-edit-jobs', {
       template: 'ai_smart_cut',
-      sourceObjectKey,
-      subtitles,
-      subtitlePreset,
-      subtitlePosition,
-      headline,
-      headlineFont: headlineStyle.font,
-      headlineSize: headlineStyle.size,
-      headlineColor: headlineStyle.color,
-      removeBreaths,
-      aspectRatio,
+      ...job,
     }) as Promise<{ job: VideoEditJob }>,
 
   // Uploads straight to storage with the presigned URL — deliberately NOT

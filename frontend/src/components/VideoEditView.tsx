@@ -9,6 +9,7 @@ import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
 import Switch from './Switch';
 import Select from './Select';
+import PillPicker from './PillPicker';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
 import CutEditor from './CutEditor';
@@ -151,6 +152,15 @@ export default function VideoEditView() {
   const [headlineSize, setHeadlineSize] = useState('medium');
   const [headlineColor, setHeadlineColor] = useState('white');
   const [aspectRatios, setAspectRatios] = useState<AspectRatioOption[]>([]);
+  // The three axes that used to be baked into the preset. 'auto' and the
+  // neutral 'medium' mean "leave the style alone", which is why they are the
+  // defaults: choosing a style must not silently repaint it.
+  const [subtitleFonts, setSubtitleFonts] = useState<HeadlineOption[]>([]);
+  const [subtitleColors, setSubtitleColors] = useState<Array<HeadlineOption & { hex: string }>>([]);
+  const [subtitleSizes, setSubtitleSizes] = useState<HeadlineOption[]>([]);
+  const [subtitleFont, setSubtitleFont] = useState('auto');
+  const [subtitleColor, setSubtitleColor] = useState('auto');
+  const [subtitleSize, setSubtitleSize] = useState('medium');
   // Vertical by default — it is what the pipeline produced before the format
   // was a choice, and what Reels, TikTok and Shorts all want.
   const [aspectRatio, setAspectRatio] = useState('9_16');
@@ -223,6 +233,9 @@ export default function VideoEditView() {
         setHeadlineSizes(res.headlineSizes ?? []);
         setHeadlineColors(res.headlineColors ?? []);
         setAspectRatios(res.aspectRatios ?? []);
+        setSubtitleFonts(res.subtitleFonts ?? []);
+        setSubtitleColors(res.subtitleColors ?? []);
+        setSubtitleSizes(res.subtitleSizes ?? []);
       })
       .catch(() => {
         setPresets([]);
@@ -231,6 +244,9 @@ export default function VideoEditView() {
         setHeadlineSizes([]);
         setHeadlineColors([]);
         setAspectRatios([]);
+        setSubtitleFonts([]);
+        setSubtitleColors([]);
+        setSubtitleSizes([]);
       });
   }, [baseUrl]);
 
@@ -268,17 +284,21 @@ export default function VideoEditView() {
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);
 
-      await api.createSmartCutJob(
-        config,
-        ticket.objectKey,
+      await api.createSmartCutJob(config, {
+        sourceObjectKey: ticket.objectKey,
         subtitles,
         subtitlePreset,
-        removeBreaths,
         subtitlePosition,
+        subtitleFont,
+        subtitleColor,
+        subtitleSize,
+        removeBreaths,
         headline,
-        { font: headlineFont, size: headlineSize, color: headlineColor },
-        aspectRatio
-      );
+        headlineFont,
+        headlineSize,
+        headlineColor,
+        aspectRatio,
+      });
       await load();
       chooseFile(null);
       setStatus(
@@ -525,41 +545,48 @@ export default function VideoEditView() {
                 />
 
                 {/* Only shown when there is something to style. */}
-                {subtitles && presets.length > 0 && (
-                  <label className={styles.field}>
-                    <span className={styles.fieldLabel}>Стиль субтитров</span>
-                    {/* The name alone in the option: a phone-width select
-                        truncates anything longer, and "жёлтая подсветка сл"
-                        reads as a bug rather than as an abbreviation. The
-                        description goes underneath, where it fits. */}
-                    <Select
+                {/* Rows rather than dropdowns. These are chosen by
+                    comparing, and a select shows one option at a time — most
+                    obvious on the colours, where a list of words becomes a
+                    palette the moment each one carries its own dot. The
+                    chosen option's description sits in the row's header, so
+                    the explanation costs no extra line per pill. */}
+                {subtitles && (
+                  <div className={styles.pickers}>
+                    <PillPicker
+                      label="Стиль субтитров"
+                      options={presets}
                       value={subtitlePreset}
                       onChange={setSubtitlePreset}
-                      aria-label="Стиль субтитров"
-                      options={presets.map((preset) => ({ value: preset.id, label: preset.label }))}
                     />
-                    <span className={styles.fieldHint}>
-                      {presets.find((preset) => preset.id === subtitlePreset)?.description}
-                    </span>
-                  </label>
-                )}
-
-                {/* Placement is its own control, not a style: the same
-                    typography belongs over the face on one clip and under it
-                    on the next. */}
-                {subtitles && positions.length > 0 && (
-                  <label className={styles.field}>
-                    <span className={styles.fieldLabel}>Положение субтитров</span>
-                    <Select
+                    <PillPicker
+                      label="Шрифт"
+                      options={subtitleFonts}
+                      value={subtitleFont}
+                      onChange={setSubtitleFont}
+                    />
+                    <PillPicker
+                      label="Цвет"
+                      options={subtitleColors}
+                      value={subtitleColor}
+                      onChange={setSubtitleColor}
+                    />
+                    <PillPicker
+                      label="Размер"
+                      options={subtitleSizes}
+                      value={subtitleSize}
+                      onChange={setSubtitleSize}
+                    />
+                    {/* Placement is its own axis, not part of a style: the
+                        same typography belongs over the face on one clip and
+                        under it on the next. */}
+                    <PillPicker
+                      label="Положение"
+                      options={positions}
                       value={subtitlePosition}
                       onChange={setSubtitlePosition}
-                      aria-label="Положение субтитров"
-                      options={positions.map((position) => ({ value: position.id, label: position.label }))}
                     />
-                    <span className={styles.fieldHint}>
-                      {positions.find((position) => position.id === subtitlePosition)?.description}
-                    </span>
-                  </label>
+                  </div>
                 )}
               </div>
             </>

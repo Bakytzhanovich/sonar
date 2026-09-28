@@ -20,6 +20,17 @@ import { clearSessionCookie, isAllowedOrigin, sessionTokenFromRequest, setSessio
 import { isLocked, nextFailureState, secondsUntilUnlock } from './loginThrottle';
 import { DEFAULT_SUBTITLE_PRESET, isSubtitlePresetId, SUBTITLE_PRESETS } from './subtitlePresets';
 import { DEFAULT_SUBTITLE_POSITION, isSubtitlePositionId, SUBTITLE_POSITIONS } from './subtitlePositions';
+import {
+  DEFAULT_SUBTITLE_COLOUR,
+  DEFAULT_SUBTITLE_FONT,
+  DEFAULT_SUBTITLE_SIZE,
+  isSubtitleColourId,
+  isSubtitleFontId,
+  isSubtitleSizeId,
+  SUBTITLE_COLOURS,
+  SUBTITLE_FONTS,
+  SUBTITLE_SIZES,
+} from './subtitleAxes';
 import { ASPECT_RATIOS, DEFAULT_ASPECT_RATIO, isAspectRatioId } from './aspect';
 import { HEADLINE_MAX_CHARS, sanitizeHeadline } from './headline';
 import {
@@ -448,6 +459,14 @@ export function createApp(db: Db): Express {
       // picker shows both, and one request means the two can never arrive out
       // of step with each other.
       positions: SUBTITLE_POSITIONS.map(({ id, label, description }) => ({ id, label, description })),
+      // The three axes a preset used to bundle. Sent from here rather than
+      // kept in the browser for the same reason as everything else in this
+      // response: the renderer owns what it can actually draw.
+      subtitleFonts: SUBTITLE_FONTS.map(({ id, label, description }) => ({ id, label, description })),
+      // The hex travels too — the picker paints a dot in each colour, and
+      // deriving it in the browser would be a second place the palette lives.
+      subtitleColors: SUBTITLE_COLOURS.map(({ id, label, description, hex }) => ({ id, label, description, hex })),
+      subtitleSizes: SUBTITLE_SIZES.map(({ id, label, description }) => ({ id, label, description })),
       // The renderer's limit, not a second copy of it in the browser.
       headlineMaxChars: HEADLINE_MAX_CHARS,
       // The headline catalogues travel with the caption ones for the same
@@ -1547,6 +1566,13 @@ export function createApp(db: Db): Express {
       const subtitlePosition = isSubtitlePositionId(req.body?.subtitlePosition)
         ? req.body.subtitlePosition
         : DEFAULT_SUBTITLE_POSITION;
+      // The three axes that ride on top of the preset. Each falls back to
+      // 'auto' (or the neutral 'medium'), which means "leave the preset
+      // alone" — so a client that does not know about them yet gets exactly
+      // what it got before.
+      const subtitleFont = isSubtitleFontId(req.body?.subtitleFont) ? req.body.subtitleFont : DEFAULT_SUBTITLE_FONT;
+      const subtitleColor = isSubtitleColourId(req.body?.subtitleColor) ? req.body.subtitleColor : DEFAULT_SUBTITLE_COLOUR;
+      const subtitleSize = isSubtitleSizeId(req.body?.subtitleSize) ? req.body.subtitleSize : DEFAULT_SUBTITLE_SIZE;
       // Opt-in: the most destructive pass in the pipeline, and on a noisy
       // recording it finds nothing anyway.
       const removeBreaths = req.body?.removeBreaths === true;
@@ -1571,7 +1597,7 @@ export function createApp(db: Db): Express {
       const id = randomUUID();
       await exec(
         db,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, subtitle_font, subtitle_color, subtitle_size, headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
@@ -1582,6 +1608,9 @@ export function createApp(db: Db): Express {
         reviewMode,
         subtitlePreset,
         subtitlePosition,
+        subtitleFont,
+        subtitleColor,
+        subtitleSize,
         headline,
         headlineFontId,
         headlineSizeId,
@@ -1755,6 +1784,9 @@ export function createApp(db: Db): Express {
         subtitles: job.subtitles,
         subtitlePreset: job.subtitle_preset,
         subtitlePosition: job.subtitle_position,
+        subtitleFont: job.subtitle_font,
+        subtitleColor: job.subtitle_color,
+        subtitleSize: job.subtitle_size,
         aspectRatio: job.aspect_ratio,
         headline: job.headline,
         headlineFont: job.headline_font,
@@ -1813,6 +1845,9 @@ export function createApp(db: Db): Express {
       ? body.subtitlePosition
       : parent.subtitle_position;
     const aspectRatio = isAspectRatioId(body.aspectRatio) ? body.aspectRatio : parent.aspect_ratio;
+    const subtitleFont = isSubtitleFontId(body.subtitleFont) ? body.subtitleFont : parent.subtitle_font;
+    const subtitleColor = isSubtitleColourId(body.subtitleColor) ? body.subtitleColor : parent.subtitle_color;
+    const subtitleSize = isSubtitleSizeId(body.subtitleSize) ? body.subtitleSize : parent.subtitle_size;
     // Distinguished from "not mentioned" by the key being present at all: an
     // empty string is how someone removes a headline they no longer want, and
     // falling back to the parent there would make it unremovable.
@@ -1856,9 +1891,10 @@ export function createApp(db: Db): Express {
       `INSERT INTO video_edit_jobs (
          id, tenant_id, source_video_url, template, pipeline, source_object_key,
          subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position,
+         subtitle_font, subtitle_color, subtitle_size,
          headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio,
          parent_job_id, manual_segments, artifacts
-       ) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)`,
+       ) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)`,
       id,
       tenantId,
       parent.source_video_url,
@@ -1873,6 +1909,9 @@ export function createApp(db: Db): Express {
       'never',
       subtitlePreset,
       subtitlePosition,
+      subtitleFont,
+      subtitleColor,
+      subtitleSize,
       headline,
       headlineFont,
       headlineSize,

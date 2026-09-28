@@ -266,3 +266,7 @@
 .field select:disabled { opacity: .45; }
 
 .fieldCheck { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--foreground); }
+
+/* The pickers stack; each is one line tall because its own row scrolls, so
+   six of them still leave the video the biggest thing on screen. */
+.pickers { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 14px; }

@@ -189,6 +189,12 @@ const MIGRATIONS: string[] = [
   // entirely rather than re-derive cuts it was explicitly told.
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS manual_segments JSONB`,
   `CREATE INDEX IF NOT EXISTS idx_video_edit_jobs_parent ON video_edit_jobs(parent_job_id)`,
+  // Caption look, split into axes the preset used to bundle (subtitleAxes.ts).
+  // 'auto' and the neutral 'medium' mean "whatever the preset says", which is
+  // what leaves every job rendered before this looking exactly as it did.
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitle_font TEXT NOT NULL DEFAULT 'auto'`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitle_color TEXT NOT NULL DEFAULT 'auto'`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS subtitle_size TEXT NOT NULL DEFAULT 'medium'`,
   `CREATE TABLE IF NOT EXISTS worker_heartbeats (
      worker_kind  TEXT PRIMARY KEY,
      last_seen_at TIMESTAMPTZ NOT NULL

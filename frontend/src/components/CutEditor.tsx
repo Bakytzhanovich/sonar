@@ -11,6 +11,7 @@ import {
   type SubtitlePosition,
   type SubtitlePreset,
 } from '@/lib/api';
+import PillPicker from './PillPicker';
 import styles from './CutEditor.module.css';
 
 // Module 8, level 3 — the manual half of Smart Cut.
@@ -124,6 +125,9 @@ export default function CutEditor({
     headlineSizes: HeadlineOption[];
     headlineColors: HeadlineOption[];
     headlineMaxChars: number;
+    subtitleFonts: HeadlineOption[];
+    subtitleColors: Array<HeadlineOption & { hex: string }>;
+    subtitleSizes: HeadlineOption[];
   } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -173,6 +177,9 @@ export default function CutEditor({
           headlineSizes: res.headlineSizes ?? [],
           headlineColors: res.headlineColors ?? [],
           headlineMaxChars: res.headlineMaxChars ?? 48,
+          subtitleFonts: res.subtitleFonts ?? [],
+          subtitleColors: res.subtitleColors ?? [],
+          subtitleSizes: res.subtitleSizes ?? [],
         });
       })
       // A picker that cannot be drawn is not worth failing the editor over:
@@ -537,43 +544,53 @@ export default function CutEditor({
 
             {style && catalogue && (
               <div className={styles.styleGrid}>
-                <label className={styles.field}>
-                  <span>Стиль субтитров</span>
-                  <select
+                {/* Rows rather than dropdowns: these are chosen by comparing,
+                    and a menu shows one option at a time. Most obvious on the
+                    colours, where a list of words becomes a palette the
+                    moment each carries its own dot. */}
+                <div className={styles.pickers}>
+                  <PillPicker
+                    label="Стиль субтитров"
+                    options={catalogue.presets}
                     value={style.subtitlePreset}
                     disabled={!style.subtitles}
-                    onChange={(e) => setStyle({ ...style, subtitlePreset: e.target.value })}
-                  >
-                    {catalogue.presets.map((p) => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className={styles.field}>
-                  <span>Положение</span>
-                  <select
+                    onChange={(id) => setStyle({ ...style, subtitlePreset: id })}
+                  />
+                  <PillPicker
+                    label="Шрифт"
+                    options={catalogue.subtitleFonts}
+                    value={style.subtitleFont}
+                    disabled={!style.subtitles}
+                    onChange={(id) => setStyle({ ...style, subtitleFont: id })}
+                  />
+                  <PillPicker
+                    label="Цвет"
+                    options={catalogue.subtitleColors}
+                    value={style.subtitleColor}
+                    disabled={!style.subtitles}
+                    onChange={(id) => setStyle({ ...style, subtitleColor: id })}
+                  />
+                  <PillPicker
+                    label="Размер"
+                    options={catalogue.subtitleSizes}
+                    value={style.subtitleSize}
+                    disabled={!style.subtitles}
+                    onChange={(id) => setStyle({ ...style, subtitleSize: id })}
+                  />
+                  <PillPicker
+                    label="Положение"
+                    options={catalogue.positions}
                     value={style.subtitlePosition}
                     disabled={!style.subtitles}
-                    onChange={(e) => setStyle({ ...style, subtitlePosition: e.target.value })}
-                  >
-                    {catalogue.positions.map((p) => (
-                      <option key={p.id} value={p.id}>{p.label}</option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className={styles.field}>
-                  <span>Формат кадра</span>
-                  <select
+                    onChange={(id) => setStyle({ ...style, subtitlePosition: id })}
+                  />
+                  <PillPicker
+                    label="Формат кадра"
+                    options={catalogue.aspectRatios}
                     value={style.aspectRatio}
-                    onChange={(e) => setStyle({ ...style, aspectRatio: e.target.value })}
-                  >
-                    {catalogue.aspectRatios.map((a) => (
-                      <option key={a.id} value={a.id}>{a.label}</option>
-                    ))}
-                  </select>
-                </label>
+                    onChange={(id) => setStyle({ ...style, aspectRatio: id })}
+                  />
+                </div>
 
                 <label className={`${styles.field} ${styles.fieldWide}`}>
                   <span>Заголовок — пусто означает без плашки</span>

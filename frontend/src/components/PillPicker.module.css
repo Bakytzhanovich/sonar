@@ -1,0 +1,56 @@
+/* A row of choices, all visible at once. One accent, no gradients — the
+   selected pill is the only coloured thing, which is what makes it findable
+   at a glance in a column of four pickers. */
+
+.picker { display: flex; flex-direction: column; gap: 6px; }
+
+.head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.label { color: var(--foreground); font-size: var(--text-sm); font-weight: 650; }
+.hint { color: var(--foreground-muted); font-size: var(--text-xs); }
+
+.row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  /* The scrollbar is noise on a row this short, and every platform draws it
+     differently. The row is obviously scrollable from the pill clipped at its
+     edge. */
+  scrollbar-width: none;
+  /* Snap so a flick lands on a pill rather than halfway through one. */
+  scroll-snap-type: x proximity;
+  /* Room for the focus ring, which a tight row would clip. */
+  padding: 2px;
+  margin: -2px;
+}
+.row::-webkit-scrollbar { display: none; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.pill:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); color: var(--foreground); }
+
+.pillOn, .pillOn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--background);
+}
+
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+
+.disabled { opacity: .45; }
+.pill:disabled { cursor: not-allowed; }

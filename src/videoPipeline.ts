@@ -4,6 +4,7 @@ import path from 'node:path';
 import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
 import { fontFileFor, loadFontMetrics, measureText } from './fontMetrics';
+import { applySubtitleAxes } from './subtitleAxes';
 import { denoiseModelAvailable, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
 import {
   DEFAULT_SMART_CUT_OPTIONS,
@@ -547,7 +548,19 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // the finished video.
     const captionStyle = clearOfHeadline(
       scaleStyleToFrame(
-        applyPosition(styleForPreset(job.subtitle_preset), job.subtitle_position),
+        // Axes before position, and both before the frame scaling: the sizes
+        // they set are written against the reference frame like every other
+        // number in a preset, so a multiplier applied after scaling would
+        // compound with it and a 1:1 video's captions would come out a
+        // different size from a 9:16 one's for no reason anybody asked for.
+        applyPosition(
+          applySubtitleAxes(styleForPreset(job.subtitle_preset), {
+            font: job.subtitle_font,
+            colour: job.subtitle_color,
+            size: job.subtitle_size,
+          }),
+          job.subtitle_position
+        ),
         frame
       ),
       job.headline,

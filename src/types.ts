@@ -352,6 +352,10 @@ export interface VideoEditJob {
   review_mode: 'auto' | 'always' | 'never';
   subtitle_preset: string;
   subtitle_position: string;
+  // The three axes the preset used to bundle. 'auto'/'medium' defer to it.
+  subtitle_font: string;
+  subtitle_color: string;
+  subtitle_size: string;
   headline: string | null;
   headline_font: string;
   headline_size: string;

@@ -1081,6 +1081,40 @@ describe('what a revision may change besides the cut', () => {
     request(app).post(`/api/video-edit-jobs/${id}/revise`).set('Authorization', `Bearer ${key}`)
       .send({ segments: [{ start: 0, end: 5 }], ...body });
 
+  it('carries the caption axes through a revision', async () => {
+    const key = await setup('ax-1');
+    const res = await revise(app, key, 'ax-1', {
+      subtitleFont: 'oswald',
+      subtitleColor: 'turquoise',
+      subtitleSize: 'large',
+    });
+
+    expect(res.body.job.subtitle_font).toBe('oswald');
+    expect(res.body.job.subtitle_color).toBe('turquoise');
+    expect(res.body.job.subtitle_size).toBe('large');
+  });
+
+  // The combination the split exists for, end to end: a preset's look with a
+  // size and colour it never carried.
+  it('defers to the preset on every axis left alone', async () => {
+    const key = await setup('ax-2');
+    const res = await revise(app, key, 'ax-2', {});
+
+    expect(res.body.job.subtitle_font).toBe('auto');
+    expect(res.body.job.subtitle_color).toBe('auto');
+    expect(res.body.job.subtitle_size).toBe('medium');
+  });
+
+  // A stale client naming a colour that no longer exists gets the preset's
+  // own, not a 400 — a caption is not worth failing a paid transcription for.
+  it('falls back rather than failing on an unknown axis id', async () => {
+    const key = await setup('ax-3');
+    const res = await revise(app, key, 'ax-3', { subtitleColor: 'вырвиглазный' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.job.subtitle_color).toBe('auto');
+  });
+
   it('applies the caption style and frame the editor sent', async () => {
     const key = await setup('st-1');
     const res = await revise(app, key, 'st-1', {

@@ -391,3 +391,7 @@
 .previewVideo { width: 100%; height: 100%; object-fit: contain; display: block; }
 
 .previewNote { margin: 0; color: var(--foreground-muted); font-size: var(--text-xs); text-align: center; }
+
+/* Each picker's own row scrolls, so a column of five of them still leaves
+   the preview above as the biggest thing on the screen. */
+.pickers { display: flex; flex-direction: column; gap: 14px; }

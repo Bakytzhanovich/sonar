@@ -388,6 +388,14 @@ CREATE TABLE video_edit_jobs (
   -- face on one clip and under it on the next. 'auto' means "wherever the
   -- preset puts it", which is what keeps the older 'Снизу' preset honest.
   subtitle_position TEXT NOT NULL DEFAULT 'auto',
+  -- The three things people want to change independently of the look, which
+  -- the preset used to bundle (subtitleAxes.ts). Splitting them is what makes
+  -- "Крупный, but mint" expressible without inventing a sixth preset, and a
+  -- seventh for the next combination. 'auto', and the neutral 'medium', mean
+  -- "whatever the preset already said".
+  subtitle_font     TEXT NOT NULL DEFAULT 'auto',
+  subtitle_color    TEXT NOT NULL DEFAULT 'auto',
+  subtitle_size     TEXT NOT NULL DEFAULT 'medium',
   -- Typed by hand, drawn in a band above the picture (headline.ts). NULL
   -- means no band at all, and the video keeps the whole frame.
   headline          TEXT,
