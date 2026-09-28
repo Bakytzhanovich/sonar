@@ -80,6 +80,13 @@ export default function CutEditor({
   const [saving, setSaving] = useState(false);
   const [playhead, setPlayhead] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
+  // Playing the source straight through would show a video nobody asked for:
+  // the person just watched the edit and pressed "edit it", so the edit is
+  // what play should give them. Preview skips the cut parts as it plays, the
+  // way a timeline preview does — the removed footage stays on the timeline
+  // and reachable, it just does not interrupt the watch. Turned off when
+  // someone is hunting through what was thrown away for something to restore.
+  const [preview, setPreview] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -230,12 +237,51 @@ export default function CutEditor({
               src={data.source_url}
               controls
               preload="metadata"
-              onTimeUpdate={(e) => setPlayhead(e.currentTarget.currentTime)}
+              onTimeUpdate={(e) => {
+                const video = e.currentTarget;
+                setPlayhead(video.currentTime);
+                if (!preview || segments.length === 0) return;
+                // Inside a cut? Jump to where the edit resumes. Compared
+                // against the segment a hair BEFORE the playhead so a jump
+                // that lands exactly on a boundary is not read as still
+                // being in the hole it just left, which would re-fire this
+                // every frame and freeze playback.
+                const inKept = segments.some(
+                  (s) => video.currentTime >= s.start - 0.05 && video.currentTime <= s.end
+                );
+                if (inKept) return;
+                const next = segments.find((s) => s.start > video.currentTime);
+                // Nothing after this hole means the edit is over, even though
+                // the source runs on. Stopping is what the finished render
+                // does, so it is what the preview should do.
+                if (next) video.currentTime = next.start;
+                else video.pause();
+              }}
             />
 
+            <div className={styles.modeRow}>
+              <button
+                type="button"
+                className={`${styles.mode} ${preview ? styles.modeOn : ''}`}
+                onClick={() => setPreview(true)}
+              >
+                Смотреть монтаж
+              </button>
+              <button
+                type="button"
+                className={`${styles.mode} ${preview ? '' : styles.modeOn}`}
+                onClick={() => setPreview(false)}
+              >
+                Смотреть исходник
+              </button>
+            </div>
+
             <p className={styles.lead}>
-              Синим — то, что останется. Потяни края, чтобы подвинуть границу; нажми на вырезанный
-              кусок, чтобы вернуть его.
+              {preview
+                ? 'Проигрывается смонтированный вариант — вырезанное пропускается.'
+                : 'Проигрывается исходник целиком, вместе с вырезанным.'}{' '}
+              Цветом на полосе отмечено то, что останется. Потяни края, чтобы подвинуть границу;
+              нажми на вырезанный кусок, чтобы вернуть его.
             </p>
 
             <div
@@ -322,7 +368,14 @@ export default function CutEditor({
                     type="button"
                     key={`${word.start}-${i}`}
                     className={`${styles.word} ${wordKept(word) ? '' : styles.wordCut}`}
-                    onClick={() => seek(word.start)}
+                    onClick={() => {
+                      // Asking to hear a word the cut drops is asking to hear
+                      // the source. Left in preview mode the playhead would
+                      // land there and be thrown straight out again, which
+                      // reads as the click doing nothing.
+                      if (!wordKept(word)) setPreview(false);
+                      seek(word.start);
+                    }}
                   >
                     {word.word}
                   </button>

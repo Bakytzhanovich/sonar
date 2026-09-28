@@ -203,3 +203,21 @@
   .footer { flex-direction: column; align-items: stretch; }
   .actions { justify-content: flex-end; }
 }
+
+/* Watch the edit, or watch the whole source. Two states of one thing, so
+   they sit together as a segmented control rather than as a checkbox whose
+   label has to explain what being unchecked means. */
+.modeRow { display: flex; gap: 0; margin-top: 14px; }
+
+.mode {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--foreground-muted);
+  font-size: var(--text-sm);
+  font-weight: 650;
+  cursor: pointer;
+}
+.mode:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.mode:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; border-left: none; }
+.modeOn { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
