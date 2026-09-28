@@ -95,7 +95,21 @@ export default function CutEditor({
   // way a timeline preview does — the removed footage stays on the timeline
   // and reachable, it just does not interrupt the watch. Turned off when
   // someone is hunting through what was thrown away for something to restore.
-  const [preview, setPreview] = useState(true);
+  // Three things worth watching, and they are not interchangeable:
+  //   result  — the finished render being edited, captions and headline
+  //             burned in. What the person was just looking at, and the only
+  //             place the caption style is actually visible.
+  //   preview — the source with the cut parts skipped, which is the edit as
+  //             it stands right now, including changes not rendered yet.
+  //   source  — the whole source, for hunting through what was thrown away.
+  const [mode, setMode] = useState<'result' | 'preview' | 'source'>('result');
+  const preview = mode === 'preview';
+  // The result is a different timeline — twenty seconds against the source's
+  // forty-six — so the strip below must not follow it, and a seek asked for
+  // while it is on screen has to land on the source instead. Held until the
+  // swapped-in element reports it is ready, because setting currentTime on
+  // one that is still loading is silently dropped.
+  const pendingSeek = useRef<number | null>(null);
   // The look, and the words themselves. Both start as whatever produced the
   // render being edited, so opening the editor and pressing "Пересобрать"
   // without touching anything reproduces what is already there.
@@ -129,6 +143,11 @@ export default function CutEditor({
         setSegments(loaded.segments);
         setStyle(loaded.style);
         setWords(loaded.words.map((w) => w.word));
+        // Opening on the finished render is the point — it is what the person
+        // was looking at when they decided to change something. A job that
+        // never produced one opens on the edit instead; leaving the mode at
+        // 'result' there would show the source while refusing to track it.
+        if (!loaded.result_url) setMode('preview');
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось открыть редактор');
@@ -214,11 +233,20 @@ export default function CutEditor({
     };
   }, [duration, timeAt]);
 
-  function seek(to: number) {
+  // `to` is always a source timestamp — the strip, the segments and the words
+  // are all measured there. Asking for one while the finished render is on
+  // screen therefore means leaving it: that file has no such moment.
+  function seek(to: number, into: 'preview' | 'source' = 'preview') {
+    const at = Math.min(Math.max(to, 0), duration);
+    setPlayhead(at);
+    if (mode === 'result') {
+      pendingSeek.current = at;
+      setMode(into);
+      return;
+    }
+    if (into === 'source') setMode('source');
     const video = videoRef.current;
-    if (!video) return;
-    video.currentTime = Math.min(Math.max(to, 0), duration);
-    setPlayhead(video.currentTime);
+    if (video) video.currentTime = at;
   }
 
   function restoreGap(gap: Segment) {
@@ -297,13 +325,27 @@ export default function CutEditor({
         {data && (
           <>
             <video
+              // Remounted when swapping between the render and the source:
+              // they are different files of different lengths, and reusing
+              // one element leaves the old duration and position behind.
+              key={mode === 'result' ? 'result' : 'source'}
               ref={videoRef}
               className={styles.player}
-              src={data.source_url}
+              src={mode === 'result' && data.result_url ? data.result_url : data.source_url}
               controls
               preload="metadata"
+              onLoadedMetadata={(e) => {
+                const at = pendingSeek.current;
+                if (at === null) return;
+                pendingSeek.current = null;
+                e.currentTarget.currentTime = at;
+              }}
               onTimeUpdate={(e) => {
                 const video = e.currentTarget;
+                // The finished render runs on its own timeline; letting it
+                // drive the strip would slide the playhead to a moment of the
+                // source that has nothing to do with what is on screen.
+                if (mode === 'result') return;
                 setPlayhead(video.currentTime);
                 if (!preview || segments.length === 0) return;
                 // Inside a cut? Jump to where the edit resumes. Compared
@@ -325,26 +367,39 @@ export default function CutEditor({
             />
 
             <div className={styles.modeRow}>
+              {/* Only offered when there is one — a job that failed before it
+                  rendered has no result to show. */}
+              {data.result_url && (
+                <button
+                  type="button"
+                  className={`${styles.mode} ${mode === 'result' ? styles.modeOn : ''}`}
+                  onClick={() => setMode('result')}
+                >
+                  Готовый вариант
+                </button>
+              )}
               <button
                 type="button"
-                className={`${styles.mode} ${preview ? styles.modeOn : ''}`}
-                onClick={() => setPreview(true)}
+                className={`${styles.mode} ${mode === 'preview' ? styles.modeOn : ''}`}
+                onClick={() => setMode('preview')}
               >
-                Смотреть монтаж
+                Мой монтаж
               </button>
               <button
                 type="button"
-                className={`${styles.mode} ${preview ? '' : styles.modeOn}`}
-                onClick={() => setPreview(false)}
+                className={`${styles.mode} ${mode === 'source' ? styles.modeOn : ''}`}
+                onClick={() => setMode('source')}
               >
-                Смотреть исходник
+                Исходник
               </button>
             </div>
 
             <p className={styles.lead}>
-              {preview
-                ? 'Проигрывается смонтированный вариант — вырезанное пропускается.'
-                : 'Проигрывается исходник целиком, вместе с вырезанным.'}{' '}
+              {mode === 'result' &&
+                'Это то, что ИИ смонтировал: с субтитрами и заголовком. Правки ниже в нём ещё не видны — переключись на «Мой монтаж», чтобы посмотреть новую нарезку.'}
+              {mode === 'preview' &&
+                'Нарезка с твоими правками — вырезанное пропускается. Субтитров и заголовка здесь нет: они появятся только после пересборки.'}
+              {mode === 'source' && 'Исходник целиком, вместе с вырезанным.'}{' '}
               Цветом на полосе отмечено то, что останется. Потяни края, чтобы подвинуть границу;
               нажми на вырезанный кусок, чтобы вернуть его.
             </p>
@@ -465,11 +520,10 @@ export default function CutEditor({
                         }`}
                         onClick={() => {
                           // Asking to hear a word the cut drops is asking to
-                          // hear the source. Left in preview mode the playhead
-                          // would land there and be thrown straight out again,
-                          // which reads as the click doing nothing.
-                          if (!wordKept(word)) setPreview(false);
-                          seek(word.start);
+                          // hear the source. Left in preview the playhead
+                          // would land there and be thrown straight out
+                          // again, which reads as the click doing nothing.
+                          seek(word.start, wordKept(word) ? 'preview' : 'source');
                         }}
                         onDoubleClick={() => setEditingWord(i)}
                       >

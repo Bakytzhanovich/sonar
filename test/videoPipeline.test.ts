@@ -1007,6 +1007,29 @@ describe('GET /api/video-edit-jobs/:id/editor', () => {
     expect(res.body.source_url).toBeTruthy();
   });
 
+  // Without it, someone changing a caption style is choosing blind: the
+  // source player cannot show captions or a headline, because neither exists
+  // outside the rendered file.
+  it('hands over the finished render, captions and all', async () => {
+    const keyRes = await request(app).post('/api/tenants').send({ name: 'B', email: 'editor3@example.com' });
+    const apiKey = keyRes.body.apiKey as string;
+    const tenantId = (await queryOne<{ id: string }>(db, `SELECT id FROM tenants ORDER BY created_at DESC LIMIT 1`))!.id;
+    await exec(
+      db,
+      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, status, output_url, artifacts)
+       VALUES ('ed-3', ?, 'https://cdn.test/raw.mp4', 'ai_smart_cut', 'smart_cut', ?, 'completed', 'https://cdn.test/done.mp4', ?::jsonb)`,
+      tenantId,
+      `tenants/${tenantId}/sources/raw.mp4`,
+      JSON.stringify({
+        probe: { durationSec: 12, hasAudio: true, width: 1080, height: 1920 },
+        transcript: { words: [{ word: 'раз', start: 0, end: 1 }], language: 'ru' },
+      })
+    );
+
+    const res = await request(app).get('/api/video-edit-jobs/ed-3/editor').set('Authorization', `Bearer ${apiKey}`);
+    expect(res.body.result_url).toBe('https://cdn.test/done.mp4');
+  });
+
   it('says so when there is nothing to revise from', async () => {
     const keyRes = await request(app).post('/api/tenants').send({ name: 'B', email: 'editor2@example.com' });
     const apiKey = keyRes.body.apiKey as string;

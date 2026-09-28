@@ -1742,6 +1742,11 @@ export function createApp(db: Db): Express {
       // playhead instead of asking someone to find a sentence boundary by ear.
       words: transcript.words,
       source_url: sourceUrl,
+      // The render being edited, captions and headline burned in. The source
+      // player cannot show either — they exist only in this file — so without
+      // it someone changing a caption style is choosing blind until the
+      // revision comes back. Null on a job that never produced one.
+      result_url: job.output_url,
       manual: job.manual_segments !== null,
       // What this render was made with, so the editor's controls open showing
       // the truth rather than the defaults. Sending them back is also what

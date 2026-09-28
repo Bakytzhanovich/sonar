@@ -238,6 +238,8 @@ export interface CutEditorData {
   /** Timed words, so a boundary can be found by reading instead of by ear. */
   words: Array<{ word: string; start: number; end: number }>;
   source_url: string;
+  /** The render being edited, captions and headline burned in. */
+  result_url: string | null;
   manual: boolean;
   /** What this render was made with, so the controls open on the truth. */
   style: CutStyle;
