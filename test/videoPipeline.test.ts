@@ -1023,3 +1023,119 @@ describe('GET /api/video-edit-jobs/:id/editor', () => {
     expect(res.body.error).toBe('nothing_to_revise_from');
   });
 });
+
+// Everything else a person can change while they are in the editor: the
+// caption style, the frame, the headline, and the words themselves.
+describe('what a revision may change besides the cut', () => {
+  let app: Express;
+  let db: Db;
+
+  beforeEach(async () => { db = await createTestDb(); app = createApp(db); });
+  afterEach(async () => { if (db) await dropTestDb(db); });
+
+  async function setup(id: string): Promise<string> {
+    const keyRes = await request(app).post('/api/tenants').send({ name: 'B', email: `${id}@example.com` });
+    const tenantId = (await queryOne<{ id: string }>(db, `SELECT id FROM tenants ORDER BY created_at DESC LIMIT 1`))!.id;
+    await exec(
+      db,
+      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, status, artifacts,
+         subtitles, subtitle_preset, subtitle_position, aspect_ratio, headline, headline_font, headline_size, headline_color)
+       VALUES (?, ?, ?, 'ai_smart_cut', 'smart_cut', ?, 'completed', ?::jsonb,
+         true, 'bold', 'top', '1_1', 'Гонка', 'montserrat', 'large', 'white')`,
+      id,
+      tenantId,
+      `tenants/${tenantId}/sources/raw.mp4`,
+      `tenants/${tenantId}/sources/raw.mp4`,
+      JSON.stringify({
+        probe: { durationSec: 10, hasAudio: true, width: 1080, height: 1920 },
+        transcript: { words: [{ word: 'Асан', start: 0, end: 1 }, { word: 'сказал', start: 1, end: 2 }], language: 'ru' },
+      })
+    );
+    return keyRes.body.apiKey as string;
+  }
+
+  const revise = (app: Express, key: string, id: string, body: Record<string, unknown>) =>
+    request(app).post(`/api/video-edit-jobs/${id}/revise`).set('Authorization', `Bearer ${key}`)
+      .send({ segments: [{ start: 0, end: 5 }], ...body });
+
+  it('applies the caption style and frame the editor sent', async () => {
+    const key = await setup('st-1');
+    const res = await revise(app, key, 'st-1', {
+      subtitlePreset: 'minimal',
+      subtitlePosition: 'bottom',
+      aspectRatio: '9_16',
+    });
+
+    expect(res.body.job.subtitle_preset).toBe('minimal');
+    expect(res.body.job.subtitle_position).toBe('bottom');
+    expect(res.body.job.aspect_ratio).toBe('9_16');
+  });
+
+  // A revision that mentions only the cut must not quietly reset the look to
+  // the system defaults — that would be a worse bug than the one it came to
+  // fix, and it would be invisible until the render came back wrong.
+  it('keeps everything the editor did not mention', async () => {
+    const key = await setup('st-2');
+    const res = await revise(app, key, 'st-2', {});
+
+    expect(res.body.job.subtitle_preset).toBe('bold');
+    expect(res.body.job.subtitle_position).toBe('top');
+    expect(res.body.job.aspect_ratio).toBe('1_1');
+    expect(res.body.job.headline).toBe('Гонка');
+    expect(res.body.job.headline_size).toBe('large');
+    expect(res.body.job.subtitles).toBe(true);
+  });
+
+  it('lets the headline be retyped, restyled and removed', async () => {
+    const key = await setup('st-3');
+    const retyped = await revise(app, key, 'st-3', { headline: 'Финиш', headlineColor: 'yellow' });
+    expect(retyped.body.job.headline).toBe('Финиш');
+    expect(retyped.body.job.headline_color).toBe('yellow');
+
+    // An empty string is how the band is taken off entirely; falling back to
+    // the parent here would make a headline impossible to remove.
+    const removed = await revise(app, key, 'st-3', { headline: '' });
+    expect(removed.body.job.headline).toBeNull();
+  });
+
+  it('turns captions off when asked', async () => {
+    const key = await setup('st-4');
+    const res = await revise(app, key, 'st-4', { subtitles: false });
+    expect(res.body.job.subtitles).toBe(false);
+  });
+
+  // The point of correcting words rather than caption lines: the fix lives in
+  // the source timeline, so it survives whatever cut this same edit drew.
+  it('takes corrected words and keeps the pipeline timings', async () => {
+    const key = await setup('st-5');
+    const res = await revise(app, key, 'st-5', { words: ['Асхат', 'сказал'] });
+
+    const words = res.body.job.artifacts.transcript.words;
+    expect(words[0].word).toBe('Асхат');
+    expect(words[0].start).toBe(0);
+    expect(words[0].end).toBe(1);
+    expect(words[1].word).toBe('сказал');
+  });
+
+  it('refuses a word list that is not a correction of this transcript', async () => {
+    const key = await setup('st-6');
+    const res = await revise(app, key, 'st-6', { words: ['только одно'] });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('words_length_mismatch');
+  });
+
+  it('opens the editor with the look this render actually used', async () => {
+    const key = await setup('st-7');
+    const res = await request(app).get('/api/video-edit-jobs/st-7/editor').set('Authorization', `Bearer ${key}`);
+
+    expect(res.body.style).toMatchObject({
+      subtitles: true,
+      subtitlePreset: 'bold',
+      subtitlePosition: 'top',
+      aspectRatio: '1_1',
+      headline: 'Гонка',
+      headlineSize: 'large',
+    });
+  });
+});

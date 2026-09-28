@@ -1,7 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, type ApiConfig, type CutEditorData } from '@/lib/api';
+import {
+  api,
+  type ApiConfig,
+  type AspectRatioOption,
+  type CutEditorData,
+  type CutStyle,
+  type HeadlineOption,
+  type SubtitlePosition,
+  type SubtitlePreset,
+} from '@/lib/api';
 import styles from './CutEditor.module.css';
 
 // Module 8, level 3 — the manual half of Smart Cut.
@@ -87,6 +96,21 @@ export default function CutEditor({
   // and reachable, it just does not interrupt the watch. Turned off when
   // someone is hunting through what was thrown away for something to restore.
   const [preview, setPreview] = useState(true);
+  // The look, and the words themselves. Both start as whatever produced the
+  // render being edited, so opening the editor and pressing "Пересобрать"
+  // without touching anything reproduces what is already there.
+  const [style, setStyle] = useState<CutStyle | null>(null);
+  const [words, setWords] = useState<string[]>([]);
+  const [editingWord, setEditingWord] = useState<number | null>(null);
+  const [catalogue, setCatalogue] = useState<{
+    presets: SubtitlePreset[];
+    positions: SubtitlePosition[];
+    aspectRatios: AspectRatioOption[];
+    headlineFonts: HeadlineOption[];
+    headlineSizes: HeadlineOption[];
+    headlineColors: HeadlineOption[];
+    headlineMaxChars: number;
+  } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -103,6 +127,8 @@ export default function CutEditor({
         if (cancelled) return;
         setData(loaded);
         setSegments(loaded.segments);
+        setStyle(loaded.style);
+        setWords(loaded.words.map((w) => w.word));
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось открыть редактор');
@@ -111,6 +137,32 @@ export default function CutEditor({
       cancelled = true;
     };
   }, [config, jobId]);
+
+  // The catalogues come from the server rather than a copy kept here: these
+  // styles are defined in the renderer's terms, and two lists drift.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listSubtitlePresets(config)
+      .then((res) => {
+        if (cancelled) return;
+        setCatalogue({
+          presets: res.presets ?? [],
+          positions: res.positions ?? [],
+          aspectRatios: res.aspectRatios ?? [],
+          headlineFonts: res.headlineFonts ?? [],
+          headlineSizes: res.headlineSizes ?? [],
+          headlineColors: res.headlineColors ?? [],
+          headlineMaxChars: res.headlineMaxChars ?? 48,
+        });
+      })
+      // A picker that cannot be drawn is not worth failing the editor over:
+      // the cut is still editable, and the look simply stays as it was.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [config]);
 
   const duration = data?.duration_sec ?? 0;
 
@@ -188,7 +240,13 @@ export default function CutEditor({
     setSaving(true);
     setError(null);
     try {
-      const { job } = await api.reviseCut(config, jobId, segments);
+      const { job } = await api.reviseCut(config, jobId, segments, {
+        ...(style ?? {}),
+        // Only when something was actually retyped: an unchanged list is the
+        // transcript the parent already holds, and sending it back would be
+        // a no-op that can only go wrong.
+        ...(wordsChanged ? { words } : {}),
+      });
       onRevised(job.id);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Не удалось пересобрать');
@@ -198,10 +256,17 @@ export default function CutEditor({
 
   const gaps = useMemo(() => gapsBetween(segments, duration), [segments, duration]);
   const kept = totalKept(segments);
-  const changed = useMemo(
-    () => JSON.stringify(segments) !== JSON.stringify(data?.segments ?? []),
-    [segments, data]
-  );
+  // Left unmemoised on purpose: both are a walk over a few hundred short
+  // strings, and hand-memoising them defeats the React Compiler, which
+  // refuses to optimise a component whose manual memoization it cannot
+  // preserve — costing far more than these comparisons ever would.
+  const wordsChanged = words.some((w, i) => w !== data?.words[i]?.word);
+  // Enables the button. Any of the three counts: someone may open this only
+  // to fix one misheard name and leave the cut exactly as the AI made it.
+  const changed =
+    JSON.stringify(segments) !== JSON.stringify(data?.segments ?? []) ||
+    JSON.stringify(style) !== JSON.stringify(data?.style ?? null) ||
+    wordsChanged;
 
   // A word belongs to the cut when its middle falls inside a kept segment.
   // Measured at the midpoint rather than the start so a word straddling a
@@ -362,24 +427,157 @@ export default function CutEditor({
                 cut was planned from. Struck-through words are the ones the
                 current cut drops. */}
             {data.words.length > 0 && (
-              <div className={styles.words}>
-                {data.words.map((word, i) => (
-                  <button
-                    type="button"
-                    key={`${word.start}-${i}`}
-                    className={`${styles.word} ${wordKept(word) ? '' : styles.wordCut}`}
-                    onClick={() => {
-                      // Asking to hear a word the cut drops is asking to hear
-                      // the source. Left in preview mode the playhead would
-                      // land there and be thrown straight out again, which
-                      // reads as the click doing nothing.
-                      if (!wordKept(word)) setPreview(false);
-                      seek(word.start);
-                    }}
+              <>
+                <p className={styles.sectionLabel}>
+                  Текст субтитров — нажми на слово, чтобы перемотать, дважды — чтобы исправить
+                </p>
+                <div className={styles.words}>
+                  {data.words.map((word, i) =>
+                    editingWord === i ? (
+                      <input
+                        key={`edit-${i}`}
+                        className={styles.wordInput}
+                        value={words[i] ?? ''}
+                        autoFocus
+                        size={Math.max(4, (words[i] ?? '').length)}
+                        onChange={(e) =>
+                          setWords((current) => current.map((w, j) => (j === i ? e.target.value : w)))
+                        }
+                        onBlur={() => setEditingWord(null)}
+                        onKeyDown={(e) => {
+                          // Enter commits, Escape puts the original back —
+                          // the two things a text field is expected to do.
+                          if (e.key === 'Enter') setEditingWord(null);
+                          if (e.key === 'Escape') {
+                            setWords((current) =>
+                              current.map((w, j) => (j === i ? data.words[i].word : w))
+                            );
+                            setEditingWord(null);
+                          }
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        key={`${word.start}-${i}`}
+                        className={`${styles.word} ${wordKept(word) ? '' : styles.wordCut} ${
+                          words[i] !== word.word ? styles.wordFixed : ''
+                        }`}
+                        onClick={() => {
+                          // Asking to hear a word the cut drops is asking to
+                          // hear the source. Left in preview mode the playhead
+                          // would land there and be thrown straight out again,
+                          // which reads as the click doing nothing.
+                          if (!wordKept(word)) setPreview(false);
+                          seek(word.start);
+                        }}
+                        onDoubleClick={() => setEditingWord(i)}
+                      >
+                        {words[i] ?? word.word}
+                      </button>
+                    )
+                  )}
+                </div>
+              </>
+            )}
+
+            {style && catalogue && (
+              <div className={styles.styleGrid}>
+                <label className={styles.field}>
+                  <span>Стиль субтитров</span>
+                  <select
+                    value={style.subtitlePreset}
+                    disabled={!style.subtitles}
+                    onChange={(e) => setStyle({ ...style, subtitlePreset: e.target.value })}
                   >
-                    {word.word}
-                  </button>
-                ))}
+                    {catalogue.presets.map((p) => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className={styles.field}>
+                  <span>Положение</span>
+                  <select
+                    value={style.subtitlePosition}
+                    disabled={!style.subtitles}
+                    onChange={(e) => setStyle({ ...style, subtitlePosition: e.target.value })}
+                  >
+                    {catalogue.positions.map((p) => (
+                      <option key={p.id} value={p.id}>{p.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className={styles.field}>
+                  <span>Формат кадра</span>
+                  <select
+                    value={style.aspectRatio}
+                    onChange={(e) => setStyle({ ...style, aspectRatio: e.target.value })}
+                  >
+                    {catalogue.aspectRatios.map((a) => (
+                      <option key={a.id} value={a.id}>{a.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className={`${styles.field} ${styles.fieldWide}`}>
+                  <span>Заголовок — пусто означает без плашки</span>
+                  <input
+                    type="text"
+                    value={style.headline ?? ''}
+                    maxLength={catalogue.headlineMaxChars}
+                    onChange={(e) => setStyle({ ...style, headline: e.target.value })}
+                  />
+                </label>
+
+                {/* Only worth the room when there is a headline to style. */}
+                {style.headline ? (
+                  <>
+                    <label className={styles.field}>
+                      <span>Шрифт заголовка</span>
+                      <select
+                        value={style.headlineFont}
+                        onChange={(e) => setStyle({ ...style, headlineFont: e.target.value })}
+                      >
+                        {catalogue.headlineFonts.map((f) => (
+                          <option key={f.id} value={f.id}>{f.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className={styles.field}>
+                      <span>Размер заголовка</span>
+                      <select
+                        value={style.headlineSize}
+                        onChange={(e) => setStyle({ ...style, headlineSize: e.target.value })}
+                      >
+                        {catalogue.headlineSizes.map((s) => (
+                          <option key={s.id} value={s.id}>{s.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className={styles.field}>
+                      <span>Цвет заголовка</span>
+                      <select
+                        value={style.headlineColor}
+                        onChange={(e) => setStyle({ ...style, headlineColor: e.target.value })}
+                      >
+                        {catalogue.headlineColors.map((c) => (
+                          <option key={c.id} value={c.id}>{c.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                ) : null}
+
+                <label className={`${styles.field} ${styles.fieldCheck}`}>
+                  <input
+                    type="checkbox"
+                    checked={style.subtitles}
+                    onChange={(e) => setStyle({ ...style, subtitles: e.target.checked })}
+                  />
+                  <span>Вжигать субтитры в видео</span>
+                </label>
               </div>
             )}
 

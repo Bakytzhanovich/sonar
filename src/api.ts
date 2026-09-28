@@ -1743,6 +1743,19 @@ export function createApp(db: Db): Express {
       words: transcript.words,
       source_url: sourceUrl,
       manual: job.manual_segments !== null,
+      // What this render was made with, so the editor's controls open showing
+      // the truth rather than the defaults. Sending them back is also what
+      // lets a revision change one of them without resetting the rest.
+      style: {
+        subtitles: job.subtitles,
+        subtitlePreset: job.subtitle_preset,
+        subtitlePosition: job.subtitle_position,
+        aspectRatio: job.aspect_ratio,
+        headline: job.headline,
+        headlineFont: job.headline_font,
+        headlineSize: job.headline_size,
+        headlineColor: job.headline_color,
+      },
     });
   }));
 
@@ -1783,6 +1796,55 @@ export function createApp(db: Db): Express {
     // was meant is how a person ends up with a render they did not draw.
     if (!segments) return res.status(400).json({ error: 'segments_invalid' });
 
+    // Everything the person could also have changed while they were in there.
+    // Absent means "same as before", which is why each one falls back to the
+    // parent's value rather than to the system default — a revision that
+    // quietly reset the caption style to Классика because the editor did not
+    // mention it would be a worse bug than the one it came to fix.
+    const body = req.body ?? {};
+    const subtitles = typeof body.subtitles === 'boolean' ? body.subtitles : parent.subtitles;
+    const subtitlePreset = isSubtitlePresetId(body.subtitlePreset) ? body.subtitlePreset : parent.subtitle_preset;
+    const subtitlePosition = isSubtitlePositionId(body.subtitlePosition)
+      ? body.subtitlePosition
+      : parent.subtitle_position;
+    const aspectRatio = isAspectRatioId(body.aspectRatio) ? body.aspectRatio : parent.aspect_ratio;
+    // Distinguished from "not mentioned" by the key being present at all: an
+    // empty string is how someone removes a headline they no longer want, and
+    // falling back to the parent there would make it unremovable.
+    const headline =
+      body.headline === undefined
+        ? parent.headline
+        : typeof body.headline === 'string'
+          ? sanitizeHeadline(body.headline) || null
+          : null;
+    const headlineFont = isHeadlineFontId(body.headlineFont) ? body.headlineFont : parent.headline_font;
+    const headlineSize = isHeadlineSizeId(body.headlineSize) ? body.headlineSize : parent.headline_size;
+    const headlineColor = isHeadlineColourId(body.headlineColor) ? body.headlineColor : parent.headline_color;
+
+    // Corrected words — how a misheard name gets fixed. Only the text is
+    // taken; the timings stay the pipeline's, exactly as the caption review
+    // does it, because a client-supplied timing would desynchronise the
+    // captions from the video. Same length required for the same reason:
+    // this is a correction of what was heard, not a different transcript.
+    //
+    // Stored against the SOURCE timeline rather than as caption lines, which
+    // is what makes it survive this edit's new cut: captions are rebuilt from
+    // these words against whatever segments were drawn, so fixing a word and
+    // moving a boundary in one pass cannot desynchronise them.
+    let revisedTranscript = transcript;
+    if (Array.isArray(body.words)) {
+      if (body.words.length !== transcript.words.length) {
+        return res.status(400).json({ error: 'words_length_mismatch' });
+      }
+      revisedTranscript = {
+        ...transcript,
+        words: transcript.words.map((word, i) => ({
+          ...word,
+          word: typeof body.words[i] === 'string' ? body.words[i].trim().slice(0, 100) : word.word,
+        })),
+      };
+    }
+
     const id = randomUUID();
     await exec(
       db,
@@ -1797,21 +1859,21 @@ export function createApp(db: Db): Express {
       parent.source_video_url,
       parent.template,
       parent.source_object_key,
-      parent.subtitles,
+      subtitles,
       parent.denoise_mode,
       // Never 'auto' or 'always', whatever the parent said: the pause exists
       // to ask a person to check the machine's work, and a person is what
       // just produced this edit. Stopping to ask them again would be asking
       // them to approve their own typing.
       'never',
-      parent.subtitle_preset,
-      parent.subtitle_position,
-      parent.headline,
-      parent.headline_font,
-      parent.headline_size,
-      parent.headline_color,
+      subtitlePreset,
+      subtitlePosition,
+      headline,
+      headlineFont,
+      headlineSize,
+      headlineColor,
       parent.remove_breaths,
-      parent.aspect_ratio,
+      aspectRatio,
       parent.id,
       JSON.stringify(segments),
       // Exactly the three checkpoints that describe the SOURCE rather than the
@@ -1821,7 +1883,7 @@ export function createApp(db: Db): Express {
       // over would have the card claim passes that never happened. `usage` is
       // dropped because this render genuinely spends nothing on transcription
       // and copying it would bill the same audio twice.
-      JSON.stringify({ probe, transcript, ...(noise ? { noise } : {}) })
+      JSON.stringify({ probe, transcript: revisedTranscript, ...(noise ? { noise } : {}) })
     );
 
     res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });

@@ -221,3 +221,48 @@
 .mode:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
 .mode:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; border-left: none; }
 .modeOn { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+.sectionLabel { margin: 16px 0 6px; color: var(--foreground-muted); font-size: var(--text-xs); }
+
+/* A word being retyped. Sized to its content so the line does not reflow
+   under the cursor while someone is typing in it. */
+.wordInput {
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+/* Corrected by hand — underlined rather than recoloured, so it still reads
+   as part of the sentence while saying it was touched. */
+.wordFixed { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+
+.styleGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.field { display: flex; flex-direction: column; gap: 4px; font-size: var(--text-xs); color: var(--foreground-muted); }
+.fieldWide { grid-column: 1 / -1; }
+
+.field select, .field input[type='text'] {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.field select:disabled { opacity: .45; }
+
+.fieldCheck { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 8px; font-size: var(--text-sm); color: var(--foreground); }

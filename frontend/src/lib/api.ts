@@ -239,6 +239,19 @@ export interface CutEditorData {
   words: Array<{ word: string; start: number; end: number }>;
   source_url: string;
   manual: boolean;
+  /** What this render was made with, so the controls open on the truth. */
+  style: CutStyle;
+}
+
+export interface CutStyle {
+  subtitles: boolean;
+  subtitlePreset: string;
+  subtitlePosition: string;
+  aspectRatio: string;
+  headline: string | null;
+  headlineFont: string;
+  headlineSize: string;
+  headlineColor: string;
 }
 
 export interface SubtitlePreset {
@@ -615,8 +628,17 @@ export const api = {
 
   // Returns the NEW job, not the one that was edited: the original keeps its
   // render, and this is what the queue should now be watching.
-  reviseCut: (config: ApiConfig, jobId: string, segments: Array<{ start: number; end: number }>) =>
-    apiRequest(config, 'POST', `/api/video-edit-jobs/${jobId}/revise`, { segments }) as Promise<{ job: VideoEditJob }>,
+  reviseCut: (
+    config: ApiConfig,
+    jobId: string,
+    segments: Array<{ start: number; end: number }>,
+    // Anything omitted keeps the parent's value; the server never falls back
+    // to a system default, so sending only what changed is safe.
+    edits: Partial<CutStyle> & { words?: string[] } = {}
+  ) =>
+    apiRequest(config, 'POST', `/api/video-edit-jobs/${jobId}/revise`, { segments, ...edits }) as Promise<{
+      job: VideoEditJob;
+    }>,
 
   processVideoTick: (config: ApiConfig) => apiRequest(config, 'POST', '/api/video-edit-jobs/process-tick') as Promise<{ advanced: number }>,
 
