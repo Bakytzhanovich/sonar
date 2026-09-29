@@ -281,6 +281,31 @@ export interface SubtitlePreset {
   description: string;
   /** Shown on the chip — 'NEW' on something genuinely new. */
   badge?: string;
+  /** The numbers behind the look, so the live preview can draw the same
+   *  captions the renderer will burn in without keeping its own copy. */
+  layout?: PresetLayout;
+}
+
+/** Sizes as shares of the frame WIDTH, because that is the dimension the
+ *  renderer scales caption sizes by. Margins follow the height, for the same
+ *  reason the renderer does — see scaleStyleToFrame. */
+export interface PresetLayout {
+  fontFamily: string;
+  fontSizeRatio: number;
+  outlineRatio: number;
+  shadowRatio: number;
+  marginRatio: number;
+  row: 'top' | 'middle' | 'bottom';
+  primary: string;
+  highlight: string;
+  /** True for the stacked, emphasised layout rather than a single line. */
+  poster: boolean;
+}
+
+export interface PosterLayout {
+  emphasisScale: number;
+  overlap: number;
+  uppercase: boolean;
 }
 
 // Where the captions sit — a separate axis from how they look.
@@ -602,6 +627,9 @@ export const api = {
        *  and deriving it here would be a second place the palette lives. */
       subtitleColors?: Array<HeadlineOption & { hex: string }>;
       subtitleSizes?: HeadlineOption[];
+      posterLayout?: PosterLayout;
+      /** Size id to multiplier, so the preview scales the way a render will. */
+      sizeScales?: Record<string, number>;
     }>,
 
   // An object, not nine positional arguments. There are a dozen of these

@@ -1,0 +1,45 @@
+/* Captions drawn over the video. The stage is the video's own box, and
+   `container-type: size` is what makes cqw and cqh mean "a share of this
+   frame" — which is how the renderer measures too, so the two agree without
+   either knowing about the other. */
+
+.stage {
+  position: absolute;
+  inset: 0;
+  container-type: size;
+  display: flex;
+  justify-content: center;
+  /* Nothing here is interactive: the video's own controls sit underneath and
+     must stay clickable through it. */
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.top { align-items: flex-start; }
+.middle { align-items: center; padding-top: 0 !important; padding-bottom: 0 !important; }
+.bottom { align-items: flex-end; }
+
+.block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  font-weight: 800;
+  line-height: 1.15;
+  /* The renderer wraps nothing — chunks are short by construction — and a
+     preview that wrapped where the render will not would be showing a
+     different layout. */
+  white-space: nowrap;
+}
+
+.quiet { display: block; }
+
+.loud {
+  display: block;
+  line-height: 1;
+  /* Uppercase has no descenders, so the bite into the neighbouring lines is
+     safe to take from both sides. */
+  letter-spacing: -0.01em;
+}
+
+.single { display: block; }

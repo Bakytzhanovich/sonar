@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   applySubtitleAxes,
+  assToRgb,
   rgbToAss,
   SUBTITLE_COLOURS,
   SUBTITLE_FONTS,
@@ -98,5 +99,26 @@ describe('applySubtitleAxes', () => {
   it('does not give the poster style an outline it deliberately lacks', () => {
     const out = applySubtitleAxes(styleForPreset('poster'), { size: 'large' });
     expect(out.outline).toBe(0);
+  });
+});
+
+describe('assToRgb', () => {
+  // The browser preview draws what the renderer will burn in, and the presets
+  // carry their colours in the renderer's form. A second list of hex values
+  // would let the two disagree about what "Классика" looks like.
+  it('is the exact inverse of rgbToAss', () => {
+    for (const hex of ['#FACC15', '#38BDF8', '#A3E635', '#F43F5E', '#FFFFFF', '#2DD4BF', '#000000']) {
+      expect(assToRgb(rgbToAss(hex))).toBe(hex);
+    }
+  });
+
+  it('reads the colours the presets already carry', () => {
+    expect(assToRgb('&H00FFFFFF')).toBe('#FFFFFF');
+    expect(assToRgb('&H0000FFFF')).toBe('#FFFF00'); // the classic yellow highlight
+  });
+
+  it('refuses anything that is not an ASS colour', () => {
+    expect(() => assToRgb('#FACC15')).toThrow();
+    expect(() => assToRgb('&H00FFF')).toThrow();
   });
 });

@@ -205,3 +205,38 @@ html[data-theme='light'] {
     padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* ---- Caption typefaces ---------------------------------------------------
+   The same four files the renderer hands to libass, copied into public/fonts
+   so the live caption preview draws in the typeface the video will actually
+   be burned with. Without these the preview would show the browser's default
+   and quietly promise the wrong thing — the exact failure that had Verdana
+   standing in for Montserrat in renders for days.
+
+   Redistributed under the SIL Open Font License, which permits web embedding
+   and requires the licence to travel with the copy: the .OFL.txt files sit
+   beside the .ttf ones in the same directory.
+
+   `swap` rather than the default: a preview that is blank until the font
+   arrives looks broken, where one that reflows once looks like it is
+   loading. */
+@font-face {
+  font-family: 'Montserrat';
+  src: url('/fonts/Montserrat.ttf') format('truetype');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Oswald';
+  src: url('/fonts/Oswald.ttf') format('truetype');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Unbounded';
+  src: url('/fonts/Unbounded.ttf') format('truetype');
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Playfair Display';
+  src: url('/fonts/PlayfairDisplay.ttf') format('truetype');
+  font-display: swap;
+}

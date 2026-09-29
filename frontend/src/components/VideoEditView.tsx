@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type AspectRatioOption, type HeadlineOption, type SubtitlePosition, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
+import { api, type AspectRatioOption, type HeadlineOption, type PosterLayout, type SubtitlePosition, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
 import { STAFF_BOOTSTRAP_AVAILABLE } from '@/lib/useApiAccess';
@@ -9,6 +9,7 @@ import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
 import Switch from './Switch';
 import PillPicker from './PillPicker';
+import CaptionOverlay, { type CaptionLook } from './CaptionOverlay';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
 import CutEditor from './CutEditor';
@@ -16,6 +17,12 @@ import StatusMessage from './StatusMessage';
 import controls from './Controls.module.css';
 import layout from './Layout.module.css';
 import styles from './VideoEditView.module.css';
+
+// A line with the shape the real ones have: a couple of quiet words and one
+// worth shouting. Fixed rather than generated, because the word to emphasise
+// is chosen server-side for a real render and a second heuristic in the
+// browser would be a third thing to keep in step.
+const SAMPLE_CAPTION = { words: ['каждая', 'твоя', 'история'], emphasis: 2 };
 
 const TEMPLATES: { value: VideoTemplate; level: string; title: string; description: string }[] = [
   {
@@ -157,6 +164,8 @@ export default function VideoEditView() {
   const [subtitleFonts, setSubtitleFonts] = useState<HeadlineOption[]>([]);
   const [subtitleColors, setSubtitleColors] = useState<Array<HeadlineOption & { hex: string }>>([]);
   const [subtitleSizes, setSubtitleSizes] = useState<HeadlineOption[]>([]);
+  const [posterLayout, setPosterLayout] = useState<PosterLayout | null>(null);
+  const [sizeScales, setSizeScales] = useState<Record<string, number>>({});
   const [subtitleFont, setSubtitleFont] = useState('auto');
   const [subtitleColor, setSubtitleColor] = useState('auto');
   const [subtitleSize, setSubtitleSize] = useState('medium');
@@ -201,6 +210,22 @@ export default function VideoEditView() {
     []
   );
 
+  // Everything the overlay needs, assembled from the axes on screen. Null
+  // until the catalogue has arrived, which is also what keeps the preview
+  // from flashing a default look before the real one loads.
+  const presetLayout = presets.find((p) => p.id === subtitlePreset)?.layout;
+  const captionLook: CaptionLook | null =
+    presetLayout && posterLayout
+      ? {
+          preset: presetLayout,
+          poster: posterLayout,
+          sizeScale: sizeScales[subtitleSize] ?? 1,
+          fontFamily: subtitleFonts.find((f) => f.id === subtitleFont)?.label,
+          highlight: subtitleColors.find((c) => c.id === subtitleColor)?.hex,
+          position: subtitlePosition as 'auto' | 'top' | 'middle' | 'bottom',
+        }
+      : null;
+
   const load = useCallback(async () => {
     if (!hasAccess) return;
     try {
@@ -235,6 +260,8 @@ export default function VideoEditView() {
         setSubtitleFonts(res.subtitleFonts ?? []);
         setSubtitleColors(res.subtitleColors ?? []);
         setSubtitleSizes(res.subtitleSizes ?? []);
+        setPosterLayout(res.posterLayout ?? null);
+        setSizeScales(res.sizeScales ?? {});
       })
       .catch(() => {
         setPresets([]);
@@ -246,6 +273,8 @@ export default function VideoEditView() {
         setSubtitleFonts([]);
         setSubtitleColors([]);
         setSubtitleSizes([]);
+        setPosterLayout(null);
+        setSizeScales({});
       });
   }, [baseUrl]);
 
@@ -438,9 +467,19 @@ export default function VideoEditView() {
                     style={{ aspectRatio: (aspectRatio ?? '9_16').replace('_', ' / ') }}
                   >
                     <video className={styles.previewVideo} src={filePreviewUrl} controls playsInline preload="metadata" />
+                    {/* Drawn over the video rather than rendered into it, so
+                        every typeface and colour can be tried at once — the
+                        combinations run to the hundreds and pre-rendering
+                        them is not a thing anyone can do. The words are a
+                        sample: nothing has been transcribed yet. */}
+                    {subtitles && captionLook && (
+                      <CaptionOverlay line={SAMPLE_CAPTION} look={captionLook} />
+                    )}
                   </div>
                   <p className={styles.previewNote}>
-                    Так встанет кадр. Субтитры и заголовок появятся после монтажа.
+                    {subtitles && captionLook
+                      ? 'Так встанет кадр и оформление. Текст здесь — пример: настоящие субтитры возьмутся из твоей речи.'
+                      : 'Так встанет кадр. Субтитры и заголовок появятся после монтажа.'}
                   </p>
                 </div>
               )}

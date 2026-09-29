@@ -375,6 +375,9 @@
 .previewStage { margin-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 
 .previewFrame {
+  /* The overlay positions itself against this box, so it has to be the
+     positioning context — without it the captions would anchor to the page. */
+  position: relative;
   width: 100%;
   max-width: 280px;
   max-height: 46vh;

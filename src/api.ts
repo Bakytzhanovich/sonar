@@ -48,6 +48,9 @@ import { generateCarouselSlides } from './carouselGeneration';
 import { publishDuePosts } from './publisher';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
+import { assToRgb } from './assColour';
+import { DEFAULT_POSTER_OPTIONS } from './subtitles';
+import { REFERENCE_FRAME } from './aspect';
 import { pickPreviewWindow } from './previewWindow';
 import { normalizeManualSegments } from './smartCut';
 import { downloadUrlFor, presign, storageConfigFromEnv } from './storage';
@@ -458,7 +461,43 @@ export function createApp(db: Db): Express {
   // terms (ASS colour order), not the browser's.
   app.get('/api/subtitle-presets', (_req, res) => {
     res.json({
-      presets: SUBTITLE_PRESETS.map(({ id, label, description, badge }) => ({ id, label, description, badge })),
+      // The look, plus the numbers behind it. The browser draws a live
+      // preview of these captions, and it has to draw them from the same
+      // figures the renderer uses — a second copy in CSS would let the
+      // preview and the render disagree about what "Классика" is.
+      //
+      // Sizes travel as a share of the frame WIDTH, because that is the
+      // dimension caption sizes are scaled by (see scaleStyleToFrame). In CSS
+      // that is a container-query width unit, so the two agree by
+      // construction rather than by coincidence.
+      presets: SUBTITLE_PRESETS.map(({ id, label, description, badge, style }) => ({
+        id,
+        label,
+        description,
+        badge,
+        layout: {
+          fontFamily: style.fontName,
+          fontSizeRatio: style.fontSize / REFERENCE_FRAME.width,
+          outlineRatio: style.outline / REFERENCE_FRAME.width,
+          shadowRatio: style.shadow / REFERENCE_FRAME.width,
+          marginRatio: style.marginV / REFERENCE_FRAME.height,
+          // 1 bottom row, 2 middle, 3 top — libass's numpad, resolved here so
+          // the browser does not have to know that alphabet.
+          row: Math.ceil(style.alignment / 3) === 3 ? 'top' : Math.ceil(style.alignment / 3) === 1 ? 'bottom' : 'middle',
+          primary: assToRgb(style.primaryColour),
+          highlight: assToRgb(style.highlightColour),
+          // Only the poster style stacks and emphasises; the rest are one
+          // line, and the browser needs to know which is which.
+          poster: id === 'poster',
+        },
+      })),
+      // What the poster layout does, for the preview to mirror.
+      posterLayout: {
+        emphasisScale: DEFAULT_POSTER_OPTIONS.emphasisScale,
+        overlap: DEFAULT_POSTER_OPTIONS.overlap,
+        uppercase: DEFAULT_POSTER_OPTIONS.uppercaseEmphasis,
+      },
+      sizeScales: Object.fromEntries(SUBTITLE_SIZES.map((s) => [s.id, s.scale])),
       // Shipped alongside the looks rather than from a second endpoint: the
       // picker shows both, and one request means the two can never arrive out
       // of step with each other.

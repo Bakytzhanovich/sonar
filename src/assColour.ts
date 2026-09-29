@@ -19,3 +19,19 @@ export function rgbToAss(hex: string): string {
   const bb = clean.slice(4, 6);
   return `&H00${bb}${gg}${rr}`.toUpperCase();
 }
+
+/**
+ * The reverse: &HAABBGGRR back to #RRGGBB.
+ *
+ * Needed because the browser preview has to draw the same colours the
+ * renderer will burn in, and the presets carry them in the renderer's form.
+ * Deriving the hex rather than keeping a second list is the whole point —
+ * two lists would let the preview and the render disagree about what
+ * "Классика" looks like.
+ */
+export function assToRgb(ass: string): string {
+  const m = /^&H[0-9a-fA-F]{2}([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/.exec(ass.trim());
+  if (!m) throw new Error(`не ASS-цвет: ${ass}`);
+  const [, bb, gg, rr] = m;
+  return `#${rr}${gg}${bb}`.toUpperCase();
+}

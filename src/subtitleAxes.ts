@@ -1,8 +1,8 @@
-import { rgbToAss } from './assColour';
+import { assToRgb, rgbToAss } from './assColour';
 import { HEADLINE_FONTS } from './headlineStyles';
 import type { SubtitleStyle } from './subtitles';
 
-export { rgbToAss };
+export { assToRgb, rgbToAss };
 
 // The three things about a caption that people want to change independently
 // of its look: the typeface, the colour of the word being emphasised, and how
