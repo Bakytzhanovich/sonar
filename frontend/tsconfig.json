@@ -19,11 +19,16 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@shared/*": ["../src/*"]
     }
   },
   "include": [
     "next-env.d.ts",
+    "../src/subtitles.ts",
+    "../src/emphasis.ts",
+    "../src/aspect.ts",
+    "../src/smartCut.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",

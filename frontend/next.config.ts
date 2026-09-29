@@ -19,11 +19,19 @@ const nextConfig: NextConfig = {
       { source: '/webhooks/:path*', destination: `${API_ORIGIN}/webhooks/:path*` },
     ];
   },
-  // Without this, Turbopack walks up and finds the backend's
-  // package-lock.json in the parent Sonar/ folder and guesses that's the
-  // project root instead of frontend/ itself.
   turbopack: {
-    root: path.join(__dirname),
+    // The repository root, stated rather than guessed. It used to be pinned
+    // to frontend/ precisely to stop Turbopack inferring this from the
+    // backend's package-lock.json — the problem then was the guessing, and an
+    // explicit value settles it either way.
+    //
+    // It has to reach the parent now because the live caption preview imports
+    // the renderer's own chunking and emphasis rules from ../src rather than
+    // reimplementing them, and Turbopack will not resolve a module outside
+    // its root. tsconfig `paths` alone is not enough — it satisfies the
+    // typechecker and never reaches the bundler — and `resolveAlias` matches
+    // whole specifiers rather than prefixes, so it cannot stand in either.
+    root: path.join(__dirname, '..'),
   },
 };
 

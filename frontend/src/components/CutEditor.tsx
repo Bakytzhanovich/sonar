@@ -8,10 +8,19 @@ import {
   type CutEditorData,
   type CutStyle,
   type HeadlineOption,
+  type PosterLayout,
   type SubtitlePosition,
   type SubtitlePreset,
 } from '@/lib/api';
 import PillPicker from './PillPicker';
+import CaptionOverlay, { type CaptionLook } from './CaptionOverlay';
+// The renderer's own chunking and emphasis, imported rather than reimplemented.
+// Both are pure — no filesystem, no node builtins — so the browser can run the
+// exact code that decides where caption lines break and which word is shouted.
+// A second copy here would be a third thing to keep in step with the ASS
+// generator and the overlay's CSS.
+import { chunkWords, DEFAULT_CHUNK_OPTIONS, joinBoundaries, remapWordsToOutputTimeline } from '@shared/subtitles';
+import { pickEmphasis } from '@shared/emphasis';
 import styles from './CutEditor.module.css';
 
 // Module 8, level 3 — the manual half of Smart Cut.
@@ -133,6 +142,8 @@ export default function CutEditor({
     subtitleFonts: HeadlineOption[];
     subtitleColors: Array<HeadlineOption & { hex: string }>;
     subtitleSizes: HeadlineOption[];
+    posterLayout: PosterLayout | null;
+    sizeScales: Record<string, number>;
   } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -185,6 +196,8 @@ export default function CutEditor({
           subtitleFonts: res.subtitleFonts ?? [],
           subtitleColors: res.subtitleColors ?? [],
           subtitleSizes: res.subtitleSizes ?? [],
+          posterLayout: res.posterLayout ?? null,
+          sizeScales: res.sizeScales ?? {},
         });
       })
       // A picker that cannot be drawn is not worth failing the editor over:
@@ -358,6 +371,54 @@ export default function CutEditor({
     [segments]
   );
 
+  // ---- Live captions -----------------------------------------------------
+  //
+  // Unlike the creation screen, which can only show sample words, this has the
+  // real transcript — so the overlay shows the person's own captions at their
+  // own moments, and re-cuts itself as boundaries are dragged.
+
+  // The transcript as it stands, corrections included: timings from the
+  // server, text from whatever has been retyped.
+  const editedWords = (data?.words ?? []).map((word, i) => ({ ...word, word: words[i] ?? word.word }));
+
+  // Where the playhead is on the OUTPUT timeline. The strip and the player
+  // both speak source time, but captions live in output time — the difference
+  // is exactly the footage the cut removes before this moment.
+  function toOutputTime(sourceTime: number): number {
+    let elapsed = 0;
+    for (const segment of segments) {
+      if (sourceTime < segment.start) break;
+      if (sourceTime <= segment.end) return elapsed + (sourceTime - segment.start);
+      elapsed += segment.end - segment.start;
+    }
+    return elapsed;
+  }
+
+  // The renderer's own chunking, against the cut currently drawn.
+  const chunks =
+    editedWords.length > 0
+      ? chunkWords(
+          remapWordsToOutputTimeline(editedWords, segments),
+          DEFAULT_CHUNK_OPTIONS,
+          joinBoundaries(segments)
+        )
+      : [];
+
+  const outputNow = toOutputTime(playhead);
+  const activeChunk = chunks.find((c) => outputNow >= c.start && outputNow <= c.end);
+  const presetLayout = catalogue?.presets.find((p) => p.id === style?.subtitlePreset)?.layout;
+  const captionLook: CaptionLook | null =
+    style && presetLayout && catalogue?.posterLayout
+      ? {
+          preset: presetLayout,
+          poster: catalogue.posterLayout,
+          sizeScale: catalogue.sizeScales[style.subtitleSize] ?? 1,
+          fontFamily: catalogue.subtitleFonts.find((f) => f.id === style.subtitleFont)?.label,
+          highlight: catalogue.subtitleColors.find((c) => c.id === style.subtitleColor)?.hex,
+          position: style.subtitlePosition as 'auto' | 'top' | 'middle' | 'bottom',
+        }
+      : null;
+
   const pct = (value: number) => (duration > 0 ? (value / duration) * 100 : 0);
 
   return (
@@ -375,6 +436,7 @@ export default function CutEditor({
 
         {data && (
           <>
+            <div className={styles.playerStage}>
             <video
               // Remounted when swapping between the render and the source:
               // they are different files of different lengths, and reusing
@@ -416,6 +478,20 @@ export default function CutEditor({
                 else video.pause();
               }}
             />
+            {/* Only over the source views. The finished render already has
+                its captions burned in, and drawing a second set on top of
+                them would be two copies of the same words at slightly
+                different sizes. */}
+            {mode !== 'result' && style?.subtitles && captionLook && activeChunk && (
+              <CaptionOverlay
+                line={{
+                  words: activeChunk.words.map((w) => w.word),
+                  emphasis: pickEmphasis(activeChunk.words.map((w) => w.word)),
+                }}
+                look={captionLook}
+              />
+            )}
+            </div>
 
             <div className={styles.modeRow}>
               {/* Only offered when there is one — a job that failed before it
