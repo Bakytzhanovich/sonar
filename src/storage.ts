@@ -108,7 +108,7 @@ function amzDate(now: Date): string {
 }
 
 export interface PresignOptions {
-  method: 'GET' | 'PUT';
+  method: 'GET' | 'PUT' | 'DELETE';
   key: string;
   expiresInSec?: number;
   contentType?: string;
@@ -230,4 +230,19 @@ export async function uploadFile(config: StorageConfig, key: string, sourcePath:
     body,
   });
   if (!response.ok) throw new Error(`storage PUT failed with ${response.status}`);
+}
+
+/**
+ * Removes an object.
+ *
+ * Signed the same way as the others, so it inherits the same credentials and
+ * the same clock. A 404 counts as success: the caller wants the object gone,
+ * and one that was never there — or that a previous sweep already removed —
+ * satisfies that.
+ */
+export async function deleteObject(config: StorageConfig, key: string): Promise<void> {
+  const response = await fetch(presign(config, { method: 'DELETE', key }), { method: 'DELETE' });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`storage DELETE failed with ${response.status}`);
+  }
 }

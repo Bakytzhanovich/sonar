@@ -27,7 +27,7 @@ import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './tr
 import { summarizeUsage } from './usage';
 import { CLAIM_LEASE_MS } from './jobLease';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
-import { downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
+import { deleteObject, downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
 import { localMediaConfigFromEnv, localStorageIo } from './localMedia';
 import { deriveKey } from './auth';
 import type { VideoEditJob, VideoFailureReason, VideoJobArtifacts, VideoStage } from './types';
@@ -102,6 +102,8 @@ export interface StorageIo {
   download(key: string, destPath: string): Promise<void>;
   upload(key: string, sourcePath: string, contentType: string): Promise<void>;
   publicUrl(key: string): string;
+  /** Used by the preview sweep. Deleting something already gone is success. */
+  remove(key: string): Promise<void>;
 }
 
 export interface PipelineDeps {
@@ -140,6 +142,7 @@ export function defaultPipelineDeps(): PipelineDeps {
       ? {
           download: (key, destPath) => downloadToFile(config, key, destPath),
           upload: (key, sourcePath, contentType) => uploadFile(config, key, sourcePath, contentType),
+          remove: (key) => deleteObject(config, key),
           publicUrl: (key) => publicUrlFor(config, key),
         }
       : localConfig && localStorageIo(localConfig),

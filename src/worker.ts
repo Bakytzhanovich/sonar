@@ -1,5 +1,6 @@
 import { createDb, closeDb } from './db';
 import { ffmpegAvailable } from './ffmpeg';
+import { sweepExpiredPreviews } from './previewSweep';
 import { defaultPipelineDeps, runSmartCutJobs } from './videoPipeline';
 import { storageConfigFromEnv } from './storage';
 import { localMediaConfigFromEnv } from './localMedia';
@@ -18,6 +19,10 @@ import { HEARTBEAT_INTERVAL_MS, recordHeartbeat } from './workerHealth';
 
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 5_000);
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 1);
+// Hourly. The thing being cleaned up expires in hours, so sweeping more often
+// would be work that finds nothing, and less often lets a day of trying
+// styles pile up before anything is collected.
+const SWEEP_INTERVAL_MS = Number(process.env.WORKER_SWEEP_INTERVAL_MS ?? 3_600_000);
 
 async function main(): Promise<void> {
   const deps = defaultPipelineDeps();
@@ -72,6 +77,18 @@ async function main(): Promise<void> {
   }, HEARTBEAT_INTERVAL_MS);
   // Unref so a pending beat cannot hold the process open after the loop ends.
   beat.unref();
+
+  // Previews expire on their own timer for the same reason the heartbeat
+  // does: the poll below awaits a whole render, and a sweep sitting inside it
+  // would run once an hour or once a day depending on how busy the queue was.
+  const sweep = setInterval(() => {
+    void sweepExpiredPreviews(db, deps.storage)
+      .then(({ removed, failed }) => {
+        if (removed || failed) console.log(`[worker] превью убрано: ${removed}, не удалось: ${failed}`);
+      })
+      .catch((err) => console.error('[worker] preview sweep failed', err));
+  }, SWEEP_INTERVAL_MS);
+  sweep.unref();
   await recordHeartbeat(db).catch((err) => console.error('[worker] heartbeat failed', err));
 
   while (!stopping) {
@@ -89,6 +106,7 @@ async function main(): Promise<void> {
     }
   }
 
+  clearInterval(sweep);
   clearInterval(beat);
   await closeDb(db);
   console.log('[worker] stopped');

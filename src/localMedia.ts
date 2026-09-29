@@ -117,6 +117,11 @@ export function localStorageIo(config: LocalMediaConfig): StorageIo {
       await fs.mkdir(path.dirname(target), { recursive: true });
       await fs.copyFile(sourcePath, target);
     },
+    async remove(key) {
+      // force: a sweep runs repeatedly over the same list until the rows are
+      // gone, and a file already deleted is the outcome it wanted anyway.
+      await fs.rm(resolveKeyPath(config, key), { force: true });
+    },
     publicUrl(key) {
       // A day, matching RENDER_URL_TTL_SEC in storage.ts — the two have to
       // agree, or the same link behaves differently depending on which
