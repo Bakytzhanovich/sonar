@@ -1917,7 +1917,7 @@ export function createApp(db: Db): Express {
       false,
       look.aspectRatio,
       parent.id,
-      JSON.stringify([window]),
+      JSON.stringify(window),
       JSON.stringify({ probe, transcript, ...(noise ? { noise } : {}) })
     );
 

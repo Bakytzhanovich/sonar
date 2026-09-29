@@ -8,49 +8,56 @@ import type { KeepSegment, TranscriptWord } from './smartCut';
 // looking at the camera. Worse than useless: it looks like the captions are
 // broken.
 //
-// So the window has to contain words, and it has to be inside the cut — the
-// preview must show the video as it will actually be, not footage this edit
-// throws away.
+// Nor is it four seconds of one segment. An edited video is made of many
+// short pieces — a real recording cut by Smart Cut came out as five segments
+// of between 0.8 and 2.1 seconds — and taking the preview from whichever one
+// happens to hold speech first gave a 0.76-second flash. The preview is of
+// the CUT, where those pieces play back to back, so it spans as many of them
+// as four seconds needs. That it then contains a join is a feature: joins are
+// what the edit does, and seeing one is part of seeing the result.
 //
 // Pure, and therefore testable without a video or a worker, like emphasis.ts
 // and smartCut.ts.
 
-/** Fewer than this and the window may catch a single word with silence
- *  around it, which shows the typeface but not the rhythm. */
-const MIN_WORDS = 2;
+/** Below this a preview is a flash rather than something anyone can read. */
+const MIN_USEFUL_SEC = 1.2;
 
 export function pickPreviewWindow(
   segments: KeepSegment[],
   words: TranscriptWord[],
   targetSec = 4
-): KeepSegment | null {
-  if (segments.length === 0) return null;
-
-  for (const segment of segments) {
+): KeepSegment[] | null {
+  // Start where the speaking starts. Everything before it is the padding
+  // Smart Cut left around the speech, and spending a quarter of a preview on
+  // it is a quarter of the preview showing nothing.
+  const firstSpokenAt = segments.reduce<number | null>((found, segment) => {
+    if (found !== null) return found;
     const inside = words.filter((w) => w.start >= segment.start && w.start < segment.end);
-    if (inside.length === 0) continue;
-
-    // Start at the first word rather than at the segment's edge: a kept
-    // segment usually opens with the padding Smart Cut left around the
-    // speech, and spending a second of a four-second preview on it is a
-    // quarter of the preview showing nothing.
-    const start = Math.max(segment.start, inside[0].start - 0.15);
-    const end = Math.min(segment.end, start + targetSec);
-    // A segment too short to hold the target is used whole rather than
-    // skipped — a two-second preview of real speech beats hunting for a
-    // longer one further into the video, which is also further from what the
-    // person is looking at.
-    if (end - start < 0.5) continue;
-
-    const covered = inside.filter((w) => w.start < end).length;
-    // Enough words in this window, or the segment simply has no more to give
-    // — in which case this is still the best window that exists.
-    if (covered >= MIN_WORDS || covered === inside.length) {
-      return { start, end };
-    }
-  }
+    return inside.length > 0 ? Math.max(segment.start, inside[0].start - 0.15) : null;
+  }, null);
 
   // Speech-free footage: a music clip, or a cut that kept only silence. The
   // caller renders nothing rather than a preview that would misrepresent it.
-  return null;
+  if (firstSpokenAt === null) return null;
+
+  const window: KeepSegment[] = [];
+  let taken = 0;
+
+  for (const segment of segments) {
+    if (segment.end <= firstSpokenAt) continue;
+    const start = Math.max(segment.start, firstSpokenAt);
+    const remaining = targetSec - taken;
+    if (remaining <= 0) break;
+
+    const end = Math.min(segment.end, start + remaining);
+    if (end - start <= 0.01) continue;
+    window.push({ start, end });
+    taken += end - start;
+  }
+
+  if (window.length === 0) return null;
+  // A cut with barely any speech left in it has nothing worth previewing —
+  // and a render of under a second reads as a glitch, not as an answer.
+  if (taken < MIN_USEFUL_SEC) return null;
+  return window;
 }
