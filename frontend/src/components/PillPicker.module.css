@@ -50,7 +50,17 @@
   color: var(--background);
 }
 
-.dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+/* The hairline is not decoration: Жемчуг and Белый are #FFFFFF, and without
+   it their dot vanishes into a light background while every other colour
+   shows one — which reads as the white option being broken. Drawn in the
+   text colour so it works on the plain pill and the filled one alike. */
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 1px currentColor;
+}
 
 .disabled { opacity: .45; }
 .pill:disabled { cursor: not-allowed; }
