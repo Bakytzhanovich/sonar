@@ -26,8 +26,9 @@
   background: var(--background);
 }
 
-.header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .header h2 { margin: 0; font-size: var(--text-lg); }
+.subtitle { margin: 4px 0 0; color: var(--foreground-muted); font-size: var(--text-xs); }
 
 .close {
   flex: 0 0 auto;

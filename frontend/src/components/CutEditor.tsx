@@ -431,10 +431,17 @@ export default function CutEditor({
   const pct = (value: number) => (duration > 0 ? (value / duration) * 100 : 0);
 
   return (
-    <div className={styles.backdrop} role="dialog" aria-modal="true" aria-label="Редактор нарезки">
+    <div className={styles.backdrop} role="dialog" aria-modal="true" aria-label="Редактор монтажа">
       <div className={styles.panel}>
         <header className={styles.header}>
-          <h2>Редактор нарезки</h2>
+          <div>
+            <h2>Редактор монтажа</h2>
+            {/* Said once, at the top: the name of the button that opens this
+                used to promise only cuts, and everything below — the caption
+                text, the typeface, the colour, the headline — went unfound
+                because of it. */}
+            <p className={styles.subtitle}>Нарезка, текст субтитров и оформление — всё меняется здесь</p>
+          </div>
           <button type="button" className={styles.close} onClick={onClose} aria-label="Закрыть">
             ✕
           </button>

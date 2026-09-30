@@ -847,8 +847,11 @@ export default function VideoEditView() {
                           real server) until a real Shotstack/Creatomate integration
                           replaces videoRender.ts — flagging that here so clicking
                           "Скачать" and hitting a DNS error isn't a surprise. */}
-                      {/* The ИИ guessed where the cuts go, and a guess can be
-                          wrong in ways only the person who filmed it sees.
+                      {/* "Изменить монтаж", not "Редактировать нарезку": the
+                          screen behind this button also changes the caption
+                          style, the colour, the typeface and the headline,
+                          and a name that promises only cuts is a name the
+                          person with a colour complaint never presses.
                           Offered next to the download rather than hidden in a
                           menu: disagreeing with the edit is a normal outcome,
                           not an advanced one. */}
@@ -862,7 +865,7 @@ export default function VideoEditView() {
                           className={styles.jobSecondaryButton}
                           onClick={() => setEditingJobId(j.id)}
                         >
-                          Редактировать нарезку
+                          Изменить монтаж
                         </button>
                       )}
                       {j.pipeline !== 'smart_cut' && (
