@@ -33,6 +33,19 @@ const FONTS_DIR = process.env.FONTS_DIR ?? path.resolve(__dirname, '..', 'assets
 export interface FontMetrics {
   /** Font design units per em — every advance below is in these. */
   unitsPerEm: number;
+  /**
+   * How big the em comes out when libass is asked for a given size: an ASS
+   * "Fontsize" of 100 draws an em of 100 × this, not 100.
+   *
+   * libass sizes a face the way GDI does — the whole of winAscent+winDescent
+   * from the OS/2 table is fitted into the requested size — whereas a browser,
+   * and measureText below, treat the size as the em itself. For the families
+   * we ship that puts the em at 0.59 to 0.71 of the size, so anything that
+   * measured or drew at the raw size was 40-70% too large. Found by laying a
+   * browser preview beside a real render: the geometry matched to the pixel
+   * and the headline came out nearly twice the size.
+   */
+  assEmRatio: number;
   /** Advance width of a code point, in font units. */
   advanceOf(codePoint: number): number;
 }
@@ -135,6 +148,16 @@ export function loadFontMetrics(filePath: string): FontMetrics {
   }
 
   const unitsPerEm = buf.readUInt16BE(head.offset + 18);
+
+  // The OS/2 win metrics are what libass fits into the size (set_font_metrics
+  // there mimics GDI). Without a usable OS/2 table libass keeps FreeType's
+  // own ascender/descender, which come from hhea — so that is the fallback
+  // here too, and only a font with neither is measured at the raw size.
+  const os2 = tables.get('OS/2');
+  const winHeight = os2 && os2.length >= 78 ? buf.readUInt16BE(os2.offset + 74) + buf.readUInt16BE(os2.offset + 76) : 0;
+  const hheaHeight = buf.readInt16BE(hhea.offset + 4) - buf.readInt16BE(hhea.offset + 6);
+  const lineHeight = winHeight > 0 ? winHeight : hheaHeight > 0 ? hheaHeight : unitsPerEm;
+  const assEmRatio = unitsPerEm / lineHeight;
   const numberOfHMetrics = buf.readUInt16BE(hhea.offset + 34);
   const subtable = selectCmapSubtable(buf, cmap.offset);
   if (!subtable) throw new Error(`${filePath}: no character map this code can read (need format 4 or 12)`);
@@ -151,6 +174,7 @@ export function loadFontMetrics(filePath: string): FontMetrics {
   const glyphCache = new Map<number, number>();
   const metrics: FontMetrics = {
     unitsPerEm,
+    assEmRatio,
     advanceOf(codePoint: number): number {
       const hit = glyphCache.get(codePoint);
       if (hit !== undefined) return hit;
@@ -187,6 +211,16 @@ export function measureText(text: string, metrics: FontMetrics, fontSizePx: numb
 }
 
 /**
+ * Width of `text` when libass draws it at ASS size `assSize` — the number
+ * written into a Style line or a \\fs override, which is not the em (see
+ * assEmRatio). This is the one to use for anything that ends up in an .ass
+ * file; measureText is for callers that mean the em.
+ */
+export function measureAssText(text: string, metrics: FontMetrics, assSize: number): number {
+  return measureText(text, metrics, assSize * metrics.assEmRatio);
+}
+
+/**
  * The largest size at which `text` still fits `maxWidthPx`, capped at
  * `maxSizePx` and never below `minSizePx`.
  *
@@ -219,4 +253,42 @@ export function fitFontSize(
  */
 export function fontFileFor(family: string): string {
   return path.join(FONTS_DIR, `${family.replace(/\s+/g, '')}.ttf`);
+}
+
+/**
+ * The family name recorded inside the file — what libass matches a Style's
+ * Fontname against, which is not the filename and not always what you expect.
+ *
+ * Exists because of a bug the "does the file exist" check could not see: the
+ * committed Montserrat.ttf was the variable font's Thin default instance,
+ * whose family name is "Montserrat Thin" and whose weight is 100. Every style
+ * asks for "Montserrat" bold, libass found no match, and quietly rendered
+ * captions and headlines in Helvetica — for as long as the feature has
+ * existed. The file was there the whole time.
+ */
+export function familyNameOf(filePath: string): { family: string; weight: number } {
+  const buf = fs.readFileSync(filePath);
+  const tables = readTableDirectory(buf);
+  const name = tables.get('name');
+  const os2 = tables.get('OS/2');
+  if (!name) throw new Error(`${filePath}: no name table`);
+
+  const count = buf.readUInt16BE(name.offset + 2);
+  const storage = name.offset + buf.readUInt16BE(name.offset + 4);
+  let family = '';
+  for (let i = 0; i < count; i++) {
+    const record = name.offset + 6 + i * 12;
+    const platform = buf.readUInt16BE(record);
+    const nameId = buf.readUInt16BE(record + 6);
+    // Platform 3 (Windows) name 1 (family) in UTF-16BE is the one every
+    // renderer reads; ID 16 is the typographic family, which libass does not
+    // match on, so it is deliberately not consulted here.
+    if (platform !== 3 || nameId !== 1 || family) continue;
+    const length = buf.readUInt16BE(record + 8);
+    const offset = buf.readUInt16BE(record + 10);
+    // UTF-16BE, which Node reads by swapping to LE first. Copied before the
+    // swap: swap16 mutates in place, and this buffer is the whole font.
+    family = Buffer.from(buf.subarray(storage + offset, storage + offset + length)).swap16().toString('utf16le');
+  }
+  return { family, weight: os2 ? buf.readUInt16BE(os2.offset + 4) : 400 };
 }

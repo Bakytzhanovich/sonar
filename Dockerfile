@@ -63,11 +63,18 @@ RUN test -f assets/rnnoise/bd.rnnn
 # Same stance for the fonts, and the more important one: a missing model is
 # audible, a missing font is not. libass substitutes without a word, so an
 # image short a typeface renders a client's video in the wrong one and says
-# nothing. The list mirrors HEADLINE_FONTS in src/headlineStyles.ts.
-RUN for f in Montserrat Oswald Unbounded PlayfairDisplay; do \
-        test -f "assets/fonts/$f.ttf" \
-        || (echo "assets/fonts/$f.ttf missing — headlines would silently fall back to another font" && exit 1); \
-    done
+# nothing.
+#
+# Presence is not enough, which cost us: the committed Montserrat.ttf was the
+# variable font's Thin instance — family "Montserrat Thin", weight 100 — so
+# every style asking for "Montserrat" bold matched nothing and rendered in
+# Helvetica. The file was there the whole time and this check passed.
+#
+# So the build now reads the family name out of each file and compares it with
+# what the catalogue asks for. Same assertion as the test in
+# test/headlineStyles.test.ts; done here as well because this is the image
+# that actually renders, and a test can be skipped where a build cannot.
+RUN node -e "require('./dist/fontChecks.js').assertFontsUsable()" 
 
 ENV NODE_ENV=production
 CMD ["node", "dist/worker.js"]

@@ -139,11 +139,12 @@ export default function CutEditor({
     headlineSizes: HeadlineOption[];
     headlineColors: Array<HeadlineOption & { hex: string }>;
     headlineMaxChars: number;
-    subtitleFonts: HeadlineOption[];
+    subtitleFonts: Array<HeadlineOption & { family: string }>;
     subtitleColors: Array<HeadlineOption & { hex: string }>;
     subtitleSizes: HeadlineOption[];
     posterLayout: PosterLayout | null;
     sizeScales: Record<string, number>;
+    fontEmRatios: Record<string, number>;
   } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -198,6 +199,7 @@ export default function CutEditor({
           subtitleSizes: res.subtitleSizes ?? [],
           posterLayout: res.posterLayout ?? null,
           sizeScales: res.sizeScales ?? {},
+          fontEmRatios: res.fontEmRatios ?? {},
         });
       })
       // A picker that cannot be drawn is not worth failing the editor over:
@@ -413,7 +415,11 @@ export default function CutEditor({
           preset: presetLayout,
           poster: catalogue.posterLayout,
           sizeScale: catalogue.sizeScales[style.subtitleSize] ?? 1,
-          fontFamily: catalogue.subtitleFonts.find((f) => f.id === style.subtitleFont)?.label,
+          fontFamily: catalogue.subtitleFonts.find((f) => f.id === style.subtitleFont)?.family || undefined,
+          emRatio:
+            catalogue.fontEmRatios[
+              catalogue.subtitleFonts.find((f) => f.id === style.subtitleFont)?.family || presetLayout.fontFamily
+            ],
           highlight: catalogue.subtitleColors.find((c) => c.id === style.subtitleColor)?.hex,
           position: style.subtitlePosition as 'auto' | 'top' | 'middle' | 'bottom',
         }

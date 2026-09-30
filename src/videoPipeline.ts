@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
-import { fontFileFor, loadFontMetrics, measureText } from './fontMetrics';
+import { fontFileFor, loadFontMetrics, measureAssText } from './fontMetrics';
 import { applySubtitleAxes } from './subtitleAxes';
 import { denoiseModelAvailable, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
 import {
@@ -580,7 +580,7 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       try {
         const metrics = loadFontMetrics(fontFileFor(captionStyle.fontName));
         eventsFor = (chunk, s) =>
-          buildPosterEvents(chunk, s, (text, size) => measureText(text, metrics, size));
+          buildPosterEvents(chunk, s, (text, size) => measureAssText(text, metrics, size));
       } catch (err) {
         console.warn(
           `[video-pipeline] job ${job.id}: poster captions need font metrics for ${captionStyle.fontName}, falling back: ${err instanceof Error ? err.message : String(err)}`

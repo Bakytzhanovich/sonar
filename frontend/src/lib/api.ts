@@ -622,7 +622,8 @@ export const api = {
       headlineSizes?: HeadlineOption[];
       headlineColors?: Array<HeadlineOption & { hex: string }>;
       aspectRatios?: AspectRatioOption[];
-      subtitleFonts?: HeadlineOption[];
+      /** `family` is empty for 'auto', which means "the preset's own". */
+      subtitleFonts?: Array<HeadlineOption & { family: string }>;
       /** The palette, hex included: the picker paints a dot in each colour
        *  and deriving it here would be a second place the palette lives. */
       subtitleColors?: Array<HeadlineOption & { hex: string }>;
@@ -630,6 +631,8 @@ export const api = {
       posterLayout?: PosterLayout;
       /** Size id to multiplier, so the preview scales the way a render will. */
       sizeScales?: Record<string, number>;
+      /** Family to how big libass draws its em relative to the ASS size. */
+      fontEmRatios?: Record<string, number>;
     }>,
 
   // An object, not nine positional arguments. There are a dozen of these

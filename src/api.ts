@@ -49,6 +49,7 @@ import { publishDuePosts } from './publisher';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
 import { assToRgb } from './assColour';
+import { fontFileFor, loadFontMetrics } from './fontMetrics';
 import { DEFAULT_POSTER_OPTIONS } from './subtitles';
 import { REFERENCE_FRAME } from './aspect';
 import { pickPreviewWindow } from './previewWindow';
@@ -498,6 +499,25 @@ export function createApp(db: Db): Express {
         uppercase: DEFAULT_POSTER_OPTIONS.uppercaseEmphasis,
       },
       sizeScales: Object.fromEntries(SUBTITLE_SIZES.map((s) => [s.id, s.scale])),
+      // How big libass draws the em for each family, relative to the size it
+      // is asked for (see assEmRatio). The browser treats a font size as the
+      // em and libass does not, so without this every preview size is 40-70%
+      // too large. Read from the same .ttf files the renderer uses; a family
+      // with no file here is left out, and the preview draws it unscaled —
+      // libass would be substituting some other face for it anyway.
+      fontEmRatios: Object.fromEntries(
+        [...new Set([
+          ...SUBTITLE_PRESETS.map((p) => p.style.fontName),
+          ...SUBTITLE_FONTS.map((f) => f.family).filter(Boolean),
+          ...HEADLINE_FONTS.map((f) => f.family),
+        ])].flatMap((family) => {
+          try {
+            return [[family, loadFontMetrics(fontFileFor(family)).assEmRatio]];
+          } catch {
+            return [];
+          }
+        })
+      ),
       // Shipped alongside the looks rather than from a second endpoint: the
       // picker shows both, and one request means the two can never arrive out
       // of step with each other.
@@ -505,7 +525,12 @@ export function createApp(db: Db): Express {
       // The three axes a preset used to bundle. Sent from here rather than
       // kept in the browser for the same reason as everything else in this
       // response: the renderer owns what it can actually draw.
-      subtitleFonts: SUBTITLE_FONTS.map(({ id, label, description }) => ({ id, label, description })),
+      // The family travels beside the label because the preview has to draw
+      // in it, and the two are not the same string: 'auto' is labelled
+      // "Как в стиле" and has no family of its own. Using the label as a
+      // font name is how the live preview ended up asking the browser for a
+      // typeface called "Как в стиле" and getting a serif fallback.
+      subtitleFonts: SUBTITLE_FONTS.map(({ id, label, description, family }) => ({ id, label, description, family })),
       // The hex travels too — the picker paints a dot in each colour, and
       // deriving it in the browser would be a second place the palette lives.
       subtitleColors: SUBTITLE_COLOURS.map(({ id, label, description, hex }) => ({ id, label, description, hex })),

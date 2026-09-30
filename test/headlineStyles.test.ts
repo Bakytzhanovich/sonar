@@ -13,6 +13,7 @@ import {
   isHeadlineSizeId,
 } from '../src/headlineStyles';
 import { buildHeadlineAss, headlineStyleFor } from '../src/headline';
+import { familyNameOf } from '../src/fontMetrics';
 
 const FONTS_DIR = path.resolve(__dirname, '..', 'assets', 'fonts');
 
@@ -96,5 +97,28 @@ describe('headlineStyleFor', () => {
     const ass = buildHeadlineAss('Выиграл', headlineStyleFor({ font: 'playfair', colour: 'red' }))!;
     expect(ass).toContain('Playfair Display');
     expect(ass).toContain('&H004444EF');
+  });
+});
+
+describe('the font files behind the catalogue', () => {
+  // The check that would have caught the bug the "file exists" one could not:
+  // the committed Montserrat.ttf was the variable font's Thin instance, named
+  // "Montserrat Thin" at weight 100. Every style asks for "Montserrat" bold,
+  // libass matched nothing, and rendered in Helvetica instead — silently, for
+  // as long as the feature had existed.
+  it('names the family the styles actually ask for', () => {
+    for (const font of HEADLINE_FONTS) {
+      const file = path.join(FONTS_DIR, `${font.family.replace(/\s+/g, '')}.ttf`);
+      expect(familyNameOf(file).family, `${font.family}: семейство внутри файла`).toBe(font.family);
+    }
+  });
+
+  // Captions and headlines are both set bold. A face that declares itself
+  // Thin is not one libass will use for that, whatever its family says.
+  it('ships a weight heavy enough for the bold every style requests', () => {
+    for (const font of HEADLINE_FONTS) {
+      const file = path.join(FONTS_DIR, `${font.family.replace(/\s+/g, '')}.ttf`);
+      expect(familyNameOf(file).weight, `${font.family}: вес`).toBeGreaterThanOrEqual(400);
+    }
   });
 });

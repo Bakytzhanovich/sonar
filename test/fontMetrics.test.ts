@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { fitFontSize, loadFontMetrics, measureText } from '../src/fontMetrics';
+import { fitFontSize, loadFontMetrics, measureAssText, measureText } from '../src/fontMetrics';
 
 // Measured against the fonts actually committed under assets/fonts — the same
 // files the Docker image hands to libass. Testing against a fixture font
@@ -77,5 +77,36 @@ describe('fitFontSize', () => {
   it('bottoms out at the floor instead of failing on an impossible line', () => {
     const size = fitFontSize('невероятнодлинноесловокотороенивлезет', montserrat(), 50, 120, 24);
     expect(size).toBe(24);
+  });
+});
+
+describe('assEmRatio', () => {
+  // Read from the OS/2 table of the files we actually ship. libass fits the
+  // whole of winAscent+winDescent into the requested size, so the em comes
+  // out well short of it — for Oswald, 0.588.
+  it('reads how small libass draws the em for each family we ship', () => {
+    expect(loadFontMetrics(path.join(FONTS, 'Oswald.ttf')).assEmRatio).toBeCloseTo(0.588, 3);
+    expect(loadFontMetrics(path.join(FONTS, 'Montserrat.ttf')).assEmRatio).toBeCloseTo(0.640, 3);
+  });
+
+  it('is below one for every shipped face, which is the whole trap', () => {
+    for (const file of ['Montserrat.ttf', 'Oswald.ttf', 'PlayfairDisplay.ttf', 'Unbounded.ttf']) {
+      const ratio = loadFontMetrics(path.join(FONTS, file)).assEmRatio;
+      expect(ratio).toBeGreaterThan(0.5);
+      expect(ratio).toBeLessThan(1);
+    }
+  });
+});
+
+describe('measureAssText', () => {
+  // The number this is pinned to came from a real render: "Как я поднял 2"
+  // in Oswald at ASS size 118 was measured at 386px wide in the finished
+  // frame. Treating 118 as the em predicts 673px — off by three quarters.
+  it('predicts the width libass actually draws, not the em-based one', () => {
+    const width = measureAssText('Как я поднял 2', oswald(), 118);
+    expect(width).toBeGreaterThanOrEqual(386);
+    // Kerning is ignored on purpose, so a small overestimate is expected; a
+    // large one would mean the ratio is wrong again.
+    expect(width).toBeLessThan(386 * 1.06);
   });
 });

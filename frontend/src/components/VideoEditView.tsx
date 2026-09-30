@@ -9,7 +9,8 @@ import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
 import Switch from './Switch';
 import PillPicker from './PillPicker';
-import CaptionOverlay, { type CaptionLook } from './CaptionOverlay';
+import { type CaptionLook } from './CaptionOverlay';
+import FramePreview from './FramePreview';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
 import CutEditor from './CutEditor';
@@ -161,11 +162,12 @@ export default function VideoEditView() {
   // The three axes that used to be baked into the preset. 'auto' and the
   // neutral 'medium' mean "leave the style alone", which is why they are the
   // defaults: choosing a style must not silently repaint it.
-  const [subtitleFonts, setSubtitleFonts] = useState<HeadlineOption[]>([]);
+  const [subtitleFonts, setSubtitleFonts] = useState<Array<HeadlineOption & { family: string }>>([]);
   const [subtitleColors, setSubtitleColors] = useState<Array<HeadlineOption & { hex: string }>>([]);
   const [subtitleSizes, setSubtitleSizes] = useState<HeadlineOption[]>([]);
   const [posterLayout, setPosterLayout] = useState<PosterLayout | null>(null);
   const [sizeScales, setSizeScales] = useState<Record<string, number>>({});
+  const [fontEmRatios, setFontEmRatios] = useState<Record<string, number>>({});
   const [subtitleFont, setSubtitleFont] = useState('auto');
   const [subtitleColor, setSubtitleColor] = useState('auto');
   const [subtitleSize, setSubtitleSize] = useState('medium');
@@ -220,7 +222,9 @@ export default function VideoEditView() {
           preset: presetLayout,
           poster: posterLayout,
           sizeScale: sizeScales[subtitleSize] ?? 1,
-          fontFamily: subtitleFonts.find((f) => f.id === subtitleFont)?.label,
+          fontFamily: subtitleFonts.find((f) => f.id === subtitleFont)?.family || undefined,
+          emRatio:
+            fontEmRatios[subtitleFonts.find((f) => f.id === subtitleFont)?.family || presetLayout.fontFamily],
           highlight: subtitleColors.find((c) => c.id === subtitleColor)?.hex,
           position: subtitlePosition as 'auto' | 'top' | 'middle' | 'bottom',
         }
@@ -262,6 +266,7 @@ export default function VideoEditView() {
         setSubtitleSizes(res.subtitleSizes ?? []);
         setPosterLayout(res.posterLayout ?? null);
         setSizeScales(res.sizeScales ?? {});
+        setFontEmRatios(res.fontEmRatios ?? {});
       })
       .catch(() => {
         setPresets([]);
@@ -275,6 +280,7 @@ export default function VideoEditView() {
         setSubtitleSizes([]);
         setPosterLayout(null);
         setSizeScales({});
+        setFontEmRatios({});
       });
   }, [baseUrl]);
 
@@ -462,24 +468,24 @@ export default function VideoEditView() {
                   a framing the renderer does not do. */}
               {filePreviewUrl && (
                 <div className={styles.previewStage}>
-                  <div
-                    className={styles.previewFrame}
-                    style={{ aspectRatio: (aspectRatio ?? '9_16').replace('_', ' / ') }}
-                  >
-                    <video className={styles.previewVideo} src={filePreviewUrl} controls playsInline preload="metadata" />
-                    {/* Drawn over the video rather than rendered into it, so
-                        every typeface and colour can be tried at once — the
-                        combinations run to the hundreds and pre-rendering
-                        them is not a thing anyone can do. The words are a
-                        sample: nothing has been transcribed yet. */}
-                    {subtitles && captionLook && (
-                      <CaptionOverlay line={SAMPLE_CAPTION} look={captionLook} />
-                    )}
-                  </div>
+                  {/* The whole output frame: the headline band, the picture
+                      moved down to make room for it exactly as the renderer
+                      moves it, and the captions over both. Drawn rather than
+                      rendered, so every typeface and colour can be tried at
+                      once — the combinations run to the hundreds. The caption
+                      words are a sample: nothing has been transcribed yet. */}
+                  <FramePreview
+                    src={filePreviewUrl}
+                    aspectRatio={aspectRatio}
+                    headline={headline}
+                    headlineChoice={{ font: headlineFont, size: headlineSize, colour: headlineColor }}
+                    captions={subtitles && captionLook ? { line: SAMPLE_CAPTION, look: captionLook } : null}
+                    fontEmRatios={fontEmRatios}
+                  />
                   <p className={styles.previewNote}>
                     {subtitles && captionLook
-                      ? 'Так встанет кадр и оформление. Текст здесь — пример: настоящие субтитры возьмутся из твоей речи.'
-                      : 'Так встанет кадр. Субтитры и заголовок появятся после монтажа.'}
+                      ? 'Так встанет кадр, заголовок и субтитры. Текст субтитров здесь — пример: настоящие возьмутся из твоей речи.'
+                      : 'Так встанет кадр и заголовок.'}
                   </p>
                 </div>
               )}
