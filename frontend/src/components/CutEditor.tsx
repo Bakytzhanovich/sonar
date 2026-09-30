@@ -421,7 +421,10 @@ export default function CutEditor({
               catalogue.subtitleFonts.find((f) => f.id === style.subtitleFont)?.family || presetLayout.fontFamily
             ],
           highlight: catalogue.subtitleColors.find((c) => c.id === style.subtitleColor)?.hex,
-          position: style.subtitlePosition as 'auto' | 'top' | 'middle' | 'bottom',
+          position: (() => {
+            const chosen = catalogue.positions.find((x) => x.id === style.subtitlePosition);
+            return chosen?.row ? { row: chosen.row, marginRatio: chosen.marginRatio ?? null } : null;
+          })(),
         }
       : null;
 

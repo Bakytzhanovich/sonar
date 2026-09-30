@@ -226,7 +226,10 @@ export default function VideoEditView() {
           emRatio:
             fontEmRatios[subtitleFonts.find((f) => f.id === subtitleFont)?.family || presetLayout.fontFamily],
           highlight: subtitleColors.find((c) => c.id === subtitleColor)?.hex,
-          position: subtitlePosition as 'auto' | 'top' | 'middle' | 'bottom',
+          position: (() => {
+            const chosen = positions.find((x) => x.id === subtitlePosition);
+            return chosen?.row ? { row: chosen.row, marginRatio: chosen.marginRatio ?? null } : null;
+          })(),
         }
       : null;
 

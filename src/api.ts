@@ -521,7 +521,20 @@ export function createApp(db: Db): Express {
       // Shipped alongside the looks rather than from a second endpoint: the
       // picker shows both, and one request means the two can never arrive out
       // of step with each other.
-      positions: SUBTITLE_POSITIONS.map(({ id, label, description }) => ({ id, label, description })),
+      // Each position carries its own margin, not just an alignment: the top
+      // one clears the platform's header, the bottom one clears the Reels
+      // controls. The preview has to use those, not the preset's — otherwise
+      // "Сверху" sits under someone else's interface in the preview and
+      // clears it in the render.
+      positions: SUBTITLE_POSITIONS.map(({ id, label, description, alignment, marginV }) => ({
+        id,
+        label,
+        description,
+        // Resolved out of libass's numpad here so the browser does not have
+        // to know that alphabet, and named the way the CSS does.
+        row: alignment === null ? null : alignment >= 7 ? 'top' : alignment <= 3 ? 'bottom' : 'middle',
+        marginRatio: marginV === null ? null : marginV / REFERENCE_FRAME.height,
+      })),
       // The three axes a preset used to bundle. Sent from here rather than
       // kept in the browser for the same reason as everything else in this
       // response: the renderer owns what it can actually draw.

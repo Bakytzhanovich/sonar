@@ -33,8 +33,15 @@ export interface CaptionLook {
   /** Overrides from the font and colour axes, empty when set to 'auto'. */
   fontFamily?: string;
   highlight?: string;
-  /** 'auto' keeps the preset's own row. */
-  position?: 'auto' | 'top' | 'middle' | 'bottom';
+  /**
+   * The chosen position, straight from the catalogue. Both halves matter: a
+   * position is never only an alignment — each carries the margin that clears
+   * the platform's own interface, and using the preset's margin instead puts
+   * "Сверху" under a header in the preview that it clears in the render.
+   *
+   * Null row means 'auto', which defers to the preset entirely.
+   */
+  position?: { row: 'top' | 'middle' | 'bottom' | null; marginRatio: number | null } | null;
   /**
    * How big libass draws the em relative to the size it is asked for, for
    * the family in use (see assEmRatio on the server). A browser treats a font
@@ -72,7 +79,7 @@ export default function CaptionOverlay({
   const { preset, poster, sizeScale } = look;
   const family = look.fontFamily || preset.fontFamily;
   const highlight = look.highlight || preset.highlight;
-  const row = !look.position || look.position === 'auto' ? preset.row : look.position;
+  const row = look.position?.row ?? preset.row;
 
   // Shares of the frame turned into container-query units: 1cqw is one per
   // cent of the overlay's width, and the overlay is exactly the video.
@@ -88,10 +95,14 @@ export default function CaptionOverlay({
   const outline = preset.outlineRatio * sizeScale * 100;
   // Only the top row moves: the renderer pushes top-aligned captions below
   // the band and leaves every other placement alone.
+  // The position's own margin when one was chosen, the preset's otherwise.
+  const baseMargin = look.position?.marginRatio ?? preset.marginRatio;
+  // Only the top row moves further: the renderer pushes top-aligned captions
+  // below the headline band and leaves every other placement alone.
   const margin =
     row === 'top' && topMarginRatio !== undefined
-      ? Math.max(preset.marginRatio, topMarginRatio) * 100
-      : preset.marginRatio * 100;
+      ? Math.max(baseMargin, topMarginRatio) * 100
+      : baseMargin * 100;
 
   // A stroke ASS draws around every glyph, approximated by four shadows.
   // Four is the compromise: eight would be smoother and is twice the paint

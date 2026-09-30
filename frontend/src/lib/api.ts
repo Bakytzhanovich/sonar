@@ -313,6 +313,12 @@ export interface SubtitlePosition {
   id: string;
   label: string;
   description: string;
+  /** Null for 'auto', which defers to the preset. Resolved from libass's
+   *  numpad alignment server-side so the browser need not know it. */
+  row?: 'top' | 'middle' | 'bottom' | null;
+  /** Each position carries its own margin — the top one clears the platform
+   *  header, the bottom one the Reels controls. */
+  marginRatio?: number | null;
 }
 
 // Typeface, size step and colour for the headline band. Same shape for all

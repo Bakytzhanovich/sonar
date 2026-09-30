@@ -9,6 +9,7 @@ import {
 } from '../src/subtitleAxes';
 import { DEFAULT_SUBTITLE_STYLE } from '../src/subtitles';
 import { styleForPreset } from '../src/subtitlePresets';
+import { SUBTITLE_POSITIONS } from '../src/subtitlePositions';
 
 // THE test in this file. A colour written backwards is still a valid colour:
 // the render succeeds and the captions simply come out blue when they were
@@ -120,5 +121,38 @@ describe('assToRgb', () => {
   it('refuses anything that is not an ASS colour', () => {
     expect(() => assToRgb('#FACC15')).toThrow();
     expect(() => assToRgb('&H00FFF')).toThrow();
+  });
+});
+
+// The bug these guard against: the catalogue calls the middle position
+// 'center', the preview's CSS calls that row 'middle', and nothing connected
+// the two — so picking "По центру" left the captions with no alignment at all
+// and they collapsed to the top of the frame. A naming mismatch across two
+// languages that typechecked on both sides.
+describe('the rows the preview is given', () => {
+  it('resolves every position to one of the three the preview can draw', () => {
+    for (const position of SUBTITLE_POSITIONS) {
+      const row =
+        position.alignment === null
+          ? null
+          : position.alignment >= 7
+            ? 'top'
+            : position.alignment <= 3
+              ? 'bottom'
+              : 'middle';
+      expect([null, 'top', 'middle', 'bottom']).toContain(row);
+      // 'auto' is the only one allowed to defer; every other position must
+      // resolve to something, or it silently becomes no position at all.
+      if (position.id !== 'auto') expect(row).not.toBeNull();
+    }
+  });
+
+  // A position is never only an alignment: the top one clears the platform's
+  // header, the bottom one the Reels controls. A preview using the preset's
+  // margin instead would put text under someone else's interface.
+  it('carries a margin with every alignment it carries', () => {
+    for (const position of SUBTITLE_POSITIONS) {
+      expect(position.alignment === null).toBe(position.marginV === null);
+    }
   });
 });
