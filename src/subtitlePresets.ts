@@ -53,9 +53,12 @@ export const SUBTITLE_PRESETS: SubtitlePreset[] = [
       // else would silently look identical to the default.
       alignment: 2,
       // Reels, Shorts and TikTok all draw their own controls and caption
-      // over the lower fifth of the frame. 340 of 1920 clears that; 60,
-      // which is the ASS default, puts the text under their UI.
-      marginV: 340,
+      // over the lower fifth of the frame — 384 of 1920. This claimed to
+      // clear it at 340, which is INSIDE that band, not above it; a client
+      // watching the live preview is what caught it. 430 leaves a real gap
+      // above the reserved zone; 60, the ASS default, puts the text under
+      // their UI entirely.
+      marginV: 430,
     },
   },
   {

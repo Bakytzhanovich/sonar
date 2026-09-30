@@ -73,9 +73,9 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
  * display width — the frames are equally wide and the text would not be.
  *
  * Vertical margins follow the HEIGHT, because that is the dimension they are a
- * distance in. The 340 that clears the Reels controls means "the lower fifth
- * of the frame"; scaled by width it would put the captions near the middle of
- * a landscape one.
+ * distance in. The margin that clears the Reels controls means "this many
+ * pixels of the lower fifth of the frame"; scaled by width it would put the
+ * captions near the middle of a landscape one.
  */
 export function scaleStyleToFrame(style: SubtitleStyle, frame: FrameSize): SubtitleStyle {
   const textScale = frame.width / REFERENCE_FRAME.width;

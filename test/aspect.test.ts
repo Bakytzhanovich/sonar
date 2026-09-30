@@ -66,10 +66,11 @@ describe('scaleStyleToFrame', () => {
   });
 
   it('keeps the bottom position clear of the platform UI it was measured against', () => {
-    // 340 of 1920 is the lower fifth Reels and Shorts reserve. Whatever the
-    // frame, the margin has to stay that same fraction of the height — scaled
-    // by width, 340 would become 605 of a 1080-high frame and put the captions
-    // above the middle.
+    // The margin clears the lower fifth Reels and Shorts reserve — 384 of
+    // 1920. Whatever the frame, it has to stay the same FRACTION of the
+    // height: scaled by width instead, it would grow on a wider frame and
+    // shrink on a narrower one for no reason tied to where the platform UI
+    // actually sits.
     const bottom = applyPosition(styleForPreset('classic'), 'bottom');
     const landscape = scaleStyleToFrame(bottom, aspectRatioFor('16_9'));
     expect(landscape.marginV / landscape.playResY).toBeCloseTo(bottom.marginV / 1920, 3);

@@ -60,9 +60,11 @@ export const SUBTITLE_POSITIONS: SubtitlePosition[] = [
     label: 'Снизу',
     description: 'Выше кнопок Reels и Shorts',
     alignment: 2,
-    // The same 340 the 'lower' preset was already using — a value that had
-    // been checked against the lower fifth those platforms reserve.
-    marginV: 340,
+    // The lower fifth those platforms reserve for their own UI is 384 of
+    // 1920. This used to be 340 — inside that zone, not above it, so the
+    // caption sat exactly where the label says it should not. 430 clears it
+    // with a visible gap rather than by a margin a rounding error could eat.
+    marginV: 430,
   },
 ];
 
