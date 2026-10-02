@@ -20,9 +20,9 @@ import { rgbToAss } from './assColour';
 // &HAABBGGRR order — alpha, then BLUE-GREEN-RED — which is reversed from the
 // RRGGBB everyone expects and wrong silently when confused.
 
-export type HeadlineFontId = 'montserrat' | 'oswald' | 'unbounded' | 'playfair';
+export type HeadlineFontId = 'montserrat' | 'oswald' | 'unbounded' | 'playfair' | 'caveat' | 'comfortaa';
 export type HeadlineSizeId = 'small' | 'medium' | 'large';
-export type HeadlineColourId = 'white' | 'yellow' | 'mint' | 'red';
+export type HeadlineColourId = 'white' | 'yellow' | 'mint' | 'red' | 'violet' | 'orange';
 
 export interface HeadlineFont {
   id: HeadlineFontId;
@@ -37,6 +37,8 @@ export const HEADLINE_FONTS: HeadlineFont[] = [
   { id: 'oswald', label: 'Oswald', description: 'Узкий — влезает больше слов', family: 'Oswald' },
   { id: 'unbounded', label: 'Unbounded', description: 'Широкий и заметный', family: 'Unbounded' },
   { id: 'playfair', label: 'Playfair Display', description: 'С засечками, для серьёзной темы', family: 'Playfair Display' },
+  { id: 'caveat', label: 'Caveat', description: 'Рукописный — личный тон, не для длинных фраз', family: 'Caveat' },
+  { id: 'comfortaa', label: 'Comfortaa', description: 'Округлый, дружелюбный', family: 'Comfortaa' },
 ];
 
 export const DEFAULT_HEADLINE_FONT: HeadlineFontId = 'montserrat';
@@ -76,6 +78,8 @@ export const HEADLINE_COLOURS: HeadlineColour[] = [
   { id: 'yellow' as const, label: 'Жёлтый', description: 'Тот самый цвет кликбейта', hex: '#FACC15' },
   { id: 'mint' as const, label: 'Мятный', description: 'Спокойный акцент', hex: '#34D399' },
   { id: 'red' as const, label: 'Красный', description: 'Тревога, срочность', hex: '#EF4444' },
+  { id: 'violet' as const, label: 'Фиолетовый', description: 'Яркий, нестандартный акцент', hex: '#C084FC' },
+  { id: 'orange' as const, label: 'Оранжевый', description: 'Тёплый, энергичный', hex: '#FB923C' },
 ].map((colour) => ({ ...colour, colour: rgbToAss(colour.hex) }));
 
 export const DEFAULT_HEADLINE_COLOUR: HeadlineColourId = 'white';

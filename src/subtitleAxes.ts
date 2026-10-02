@@ -36,6 +36,8 @@ export const SUBTITLE_COLOURS: SubtitleColour[] = [
   { id: 'crimson', label: 'Багровый', description: 'Красный — тревога и срочность', hex: '#F43F5E' },
   { id: 'pearl', label: 'Жемчуг', description: 'Белый — когда цвет не нужен вовсе', hex: '#FFFFFF' },
   { id: 'turquoise', label: 'Бирюза', description: 'Зелёно-голубой, мягкий акцент', hex: '#2DD4BF' },
+  { id: 'amethyst', label: 'Аметист', description: 'Фиолетовый, нестандартный акцент', hex: '#C084FC' },
+  { id: 'coral', label: 'Коралл', description: 'Оранжевый, тёплый и заметный', hex: '#FB923C' },
 ];
 
 export interface SubtitleSize {
