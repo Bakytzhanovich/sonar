@@ -409,6 +409,34 @@ describe('reel analysis API', () => {
     expect(await queryOne(db, `SELECT id FROM generated_scripts WHERE analysis_id = 'done'`)).toBeUndefined();
   });
 
+  // The model takes seconds; the person can delete the analysis meanwhile.
+  // The script must not resurrect a child of a deleted row, nor break the delete.
+  it('deletes an analysis while a script for it is still being written', async () => {
+    const t = await tenant('race@example.com');
+    await finished(t.id);
+    await request(app).post('/api/reel-analyses/done/scripts').set('Authorization', `Bearer ${t.apiKey}`).send({ niche: 'первый' });
+
+    let release!: () => void;
+    let started!: () => void;
+    const modelStarted = new Promise<void>((resolve) => { started = resolve; });
+    chat = async () => {
+      started();
+      await new Promise<void>((resolve) => { release = resolve; });
+      return JSON.stringify({ script: 'Поздний сценарий' });
+    };
+    const writing = request(app).post('/api/reel-analyses/done/scripts').set('Authorization', `Bearer ${t.apiKey}`).send({ niche: 'фитнес' }).then((r) => r);
+    await modelStarted;
+
+    const del = await request(app).delete('/api/reel-analyses/done').set('Authorization', `Bearer ${t.apiKey}`);
+    release();
+    const late = await writing;
+
+    expect(del.status).toBe(204);
+    expect(late.status).toBe(404);
+    expect(await queryOne(db, `SELECT id FROM reel_analyses WHERE id = 'done'`)).toBeUndefined();
+    expect(await queryOne(db, `SELECT id FROM generated_scripts WHERE analysis_id = 'done'`)).toBeUndefined();
+  });
+
   async function failedWith(tenantId: string, reason: string, id = 'bad'): Promise<void> {
     await exec(
       db,

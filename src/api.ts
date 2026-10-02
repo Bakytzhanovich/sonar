@@ -1347,8 +1347,25 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     const analysis = await getAnalysisForTenant(db, req.params.id, tenantId);
     if (!analysis) return res.status(404).json({ error: 'analysis not found' });
 
-    await exec(db, `DELETE FROM generated_scripts WHERE analysis_id = ? AND tenant_id = ?`, analysis.id, tenantId);
-    await exec(db, `DELETE FROM reel_analyses WHERE id = ? AND tenant_id = ?`, analysis.id, tenantId);
+    // One transaction with the row locked first, because a script can be
+    // generating while the person deletes: the model call takes seconds, and
+    // a script saved between the two DELETEs would leave a child pointing at
+    // the analysis — the second DELETE fails, the earlier scripts are already
+    // gone and the analysis stays. The lock makes the script insert below
+    // wait for this to finish, then find nothing to attach to.
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      await exec(client, `SELECT id FROM reel_analyses WHERE id = ? AND tenant_id = ? FOR UPDATE`, analysis.id, tenantId);
+      await exec(client, `DELETE FROM generated_scripts WHERE analysis_id = ? AND tenant_id = ?`, analysis.id, tenantId);
+      await exec(client, `DELETE FROM reel_analyses WHERE id = ? AND tenant_id = ?`, analysis.id, tenantId);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
 
     // After the rows, and never fatal: a file that could not be removed is
     // storage to tidy later, while a row left behind is a reel still showing
@@ -1419,7 +1436,17 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       return res.status(reason === 'llm_not_configured' ? 503 : 502).json({ error: reason });
     }
     const id = randomUUID();
-    await exec(db, `INSERT INTO generated_scripts (id, tenant_id, analysis_id, niche, script_text) VALUES (?, ?, ?, ?, ?)`, id, res.locals.tenantId, analysis.id, niche, scriptText);
+    // Attached only if the analysis is still there: it may have been deleted
+    // while the model was writing. FOR SHARE waits out a delete in progress
+    // (see DELETE above) instead of racing it into a foreign-key error.
+    const saved = await queryAll<{ id: string }>(
+      db,
+      `INSERT INTO generated_scripts (id, tenant_id, analysis_id, niche, script_text)
+       SELECT ?, tenant_id, id, ?, ? FROM reel_analyses WHERE id = ? AND tenant_id = ? FOR SHARE
+       RETURNING id`,
+      id, niche, scriptText, analysis.id, res.locals.tenantId
+    );
+    if (saved.length === 0) return res.status(404).json({ error: 'analysis not found' });
 
     res.status(201).json({ script: { id, tenant_id: res.locals.tenantId, analysis_id: analysis.id, niche, script_text: scriptText } });
   }));
