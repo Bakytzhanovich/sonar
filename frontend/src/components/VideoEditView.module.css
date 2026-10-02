@@ -22,13 +22,19 @@
  * style picker and the template label each brought their own spacing, and a
  * switch that happened to carry a hint pushed its text into the heading of the
  * next section. */
-.controls { display: flex; flex-direction: column; gap: 16px; }
+/* The top margin matches the gap inside: without it the first setting sat
+   tight under the file picker while every other block had 16px around it. */
+.controls { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; }
 /* The description under the picker, where it has room to be read, instead of
  * inside the option label where it was cut off mid-word. */
 .fieldHint { color: var(--foreground-muted); font-size: var(--text-xs); line-height: 1.45; }
-.fieldLabel { color: var(--foreground-muted); font-size: var(--text-xs); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+/* The same label as a PillPicker row's. This screen used to carry three:
+   small grey capitals here, bold sentence case on the pill rows, large
+   regular text on the switches — and with three there was no telling a
+   section from a setting. One style now, so position does that job. */
+.fieldLabel { color: var(--foreground); font-size: var(--text-sm); font-weight: 650; }
 .field .input { width: 100%; padding: 10px 12px; font-size: var(--text-base); }
 
 .templateLabel { margin: 20px 0 8px; }
@@ -282,7 +288,10 @@
   align-items: center;
   gap: 4px;
   padding: 26px 16px;
-  border: 1px dashed var(--border);
+  /* --border is tuned for hairlines between panels; dashed at that
+     contrast it all but vanished on a phone, and this is the first thing on
+     the screen anyone has to press. */
+  border: 1.5px dashed color-mix(in srgb, var(--foreground-muted) 55%, transparent);
   border-radius: var(--radius-lg);
   background: var(--surface);
   text-align: center;

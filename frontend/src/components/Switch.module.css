@@ -8,7 +8,9 @@
 }
 
 .text { display: flex; flex-direction: column; gap: 2px; }
-.label { font-size: var(--text-base); }
+/* Matches the PillPicker row label. Larger and lighter than everything
+   around it, it read as a heading rather than a setting. */
+.label { font-size: var(--text-sm); font-weight: 650; }
 .hint { color: var(--foreground-muted); font-size: var(--text-xs); }
 
 /* Hidden from view, not from the accessibility tree or the keyboard: the

@@ -14,7 +14,10 @@
 }
 
 .input::placeholder {
-  color: var(--foreground-muted);
+  /* Fainter than muted text: at --foreground-muted a placeholder read as a
+     value somebody had already typed — the headline field looked filled in
+     when it was empty. */
+  color: color-mix(in srgb, var(--foreground-muted) 55%, transparent);
 }
 
 .buttonBase {

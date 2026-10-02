@@ -514,7 +514,7 @@ export default function VideoEditView() {
                     value={headline}
                     onChange={(e) => setHeadline(e.target.value.slice(0, headlineMaxChars))}
                     maxLength={headlineMaxChars}
-                    placeholder="БРОСЬ РАБОТУ ПРЯМО СЕЙЧАС"
+                    placeholder="Например: Брось работу прямо сейчас"
                     aria-label="Заголовок на плашке"
                   />
                   <span className={styles.fieldHint}>
@@ -550,17 +550,14 @@ export default function VideoEditView() {
                   </div>
                 )}
 
+                {/* Directly above the subtitle settings it switches on and
+                    off. It used to sit between the headline and them, with
+                    the breath switch in between, so the control and the
+                    things it governed were three blocks apart. */}
                 <Switch
                   checked={subtitles}
                   onChange={setSubtitles}
                   label="Вжечь динамические субтитры"
-                />
-
-                <Switch
-                  checked={removeBreaths}
-                  onChange={setRemoveBreaths}
-                  label="Убрать вздохи"
-                  hint="Ищет придыхания между словами — их не видит расшифровка"
                 />
 
                 {/* Only shown when there is something to style. */}
@@ -607,6 +604,16 @@ export default function VideoEditView() {
                     />
                   </div>
                 )}
+
+                {/* Last: it is about the sound, not the look, and everything
+                    above it is about the look. The hint says what it does
+                    for the person — how it works is not their problem. */}
+                <Switch
+                  checked={removeBreaths}
+                  onChange={setRemoveBreaths}
+                  label="Убрать вздохи"
+                  hint="Вырезает вдохи между фразами"
+                />
               </div>
             </>
           ) : (
