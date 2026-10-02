@@ -42,6 +42,10 @@ const FAILURE_LABEL: Record<string, string> = {
   legacy_mock: 'Старый тестовый разбор — это не настоящий анализ. Загрузите ролик заново.',
 };
 
+// Mirrors the server's REEL_RETRYABLE: offered only where another attempt
+// can change the answer. The server refuses the rest anyway.
+const RETRYABLE = new Set(['llm_failed', 'llm_invalid_answer', 'transcription_failed', 'transcription_quota_exhausted']);
+
 const SCRIPT_ERROR: Record<string, string> = {
   analysis_not_ready: 'Разбор ещё не готов.',
   llm_not_configured: 'Сценарии не настроены на сервере.',
@@ -196,6 +200,47 @@ export default function ReelsView() {
     }
   }
 
+  async function retry() {
+    if (!selected) return;
+    try {
+      await api.retryAnalysis(config, selected.id);
+      await loadAnalyses();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function remove() {
+    if (!selected) return;
+    // Asked, because it cannot be undone and takes the uploaded file and the
+    // scripts with it.
+    if (!window.confirm('Удалить разбор вместе со сценариями и загруженным видео?')) return;
+    try {
+      await api.deleteAnalysis(config, selected.id);
+      setSelectedId(null);
+      await loadAnalyses();
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // Copies what is in the box, edits included — the script is for a notes
+  // app or a teleprompter, and selecting a long text by hand on a phone is
+  // the part people give up on.
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  async function copyScript(id: string, textarea: HTMLTextAreaElement | null) {
+    if (!textarea) return;
+    try {
+      await navigator.clipboard.writeText(textarea.value);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 2000);
+    } catch {
+      // Clipboard can be refused (insecure context, permissions); selecting
+      // the text leaves the person one shortcut away instead.
+      textarea.select();
+    }
+  }
+
   async function searchByNiche() {
     if (!nicheSearch.trim()) return setSearchResults(null);
     try {
@@ -327,6 +372,16 @@ export default function ReelsView() {
             <div className={styles.progress}>
               <span className={styles.eyebrow}>РАЗБОР НЕ ПОЛУЧИЛСЯ</span>
               <h2>{FAILURE_LABEL[selected.failure_reason ?? ''] ?? 'Что-то пошло не так. Загрузите ролик ещё раз.'}</h2>
+              <div className={styles.failureActions}>
+                {RETRYABLE.has(selected.failure_reason ?? '') && (
+                  <button className={controls.buttonPrimary} onClick={retry}>
+                    Попробовать ещё раз
+                  </button>
+                )}
+                <button className={controls.buttonSecondary} onClick={remove}>
+                  Удалить разбор
+                </button>
+              </div>
             </div>
           )}
 
@@ -349,6 +404,9 @@ export default function ReelsView() {
                   ) : (
                     <div className={styles.playerMissing}>Видео недоступно</div>
                   )}
+                  <button type="button" className={styles.deleteLink} onClick={remove}>
+                    Удалить разбор
+                  </button>
                 </div>
 
                 <div className={styles.resultColumn}>
@@ -435,9 +493,20 @@ export default function ReelsView() {
 
                 {scripts.map((s) => (
                   <div key={s.id} className={styles.scriptCard}>
-                    <span className={styles.nicheBadge}>{s.niche}</span>
+                    <div className={styles.scriptHead}>
+                      <span className={styles.nicheBadge}>{s.niche}</span>
+                      <button
+                        type="button"
+                        className={controls.buttonSecondary}
+                        onClick={(e) =>
+                          copyScript(s.id, e.currentTarget.closest('div')?.parentElement?.querySelector('textarea') ?? null)
+                        }
+                      >
+                        {copiedId === s.id ? 'Скопировано ✓' : 'Скопировать'}
+                      </button>
+                    </div>
                     {/* Editable so it can be tweaked before recording; the
-                        edits stay on this screen. */}
+                        copy button takes the edited text. */}
                     <textarea className={`${controls.input} ${styles.scriptTextarea}`} defaultValue={s.script_text} rows={12} />
                   </div>
                 ))}

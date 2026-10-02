@@ -398,6 +398,58 @@ describe('reel analysis API', () => {
     expect(res.body.error).toBe('llm_failed');
   });
 
+  it('deletes an analysis together with its scripts', async () => {
+    const t = await tenant('del@example.com');
+    await finished(t.id);
+    await request(app).post('/api/reel-analyses/done/scripts').set('Authorization', `Bearer ${t.apiKey}`).send({ niche: 'фитнес' });
+
+    const res = await request(app).delete('/api/reel-analyses/done').set('Authorization', `Bearer ${t.apiKey}`);
+    expect(res.status).toBe(204);
+    expect(await queryOne(db, `SELECT id FROM reel_analyses WHERE id = 'done'`)).toBeUndefined();
+    expect(await queryOne(db, `SELECT id FROM generated_scripts WHERE analysis_id = 'done'`)).toBeUndefined();
+  });
+
+  async function failedWith(tenantId: string, reason: string, id = 'bad'): Promise<void> {
+    await exec(
+      db,
+      `INSERT INTO reel_analyses (id, tenant_id, status, failure_reason, source_object_key, attempt_count)
+       VALUES (?, ?, 'failed', ?, ?, 3)`,
+      id, tenantId, reason, `tenants/${tenantId}/sources/x.mp4`
+    );
+  }
+
+  it('runs a failed analysis again when another attempt can help', async () => {
+    const t = await tenant('retry@example.com');
+    await failedWith(t.id, 'llm_failed');
+    const res = await request(app).post('/api/reel-analyses/bad/retry').set('Authorization', `Bearer ${t.apiKey}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.analysis.status).toBe('processing');
+    expect(res.body.analysis.failure_reason).toBeNull();
+    // A fresh budget of attempts, or the worker would give up on the first.
+    expect(res.body.analysis.attempt_count).toBe(0);
+  });
+
+  // Each retry would be another transcription bill for the same answer.
+  it('refuses to retry what is a fact about the file', async () => {
+    const t = await tenant('noretry@example.com');
+    for (const reason of ['no_speech', 'no_audio_track', 'video_too_long', 'legacy_mock']) {
+      await failedWith(t.id, reason, reason);
+      const res = await request(app).post(`/api/reel-analyses/${reason}/retry`).set('Authorization', `Bearer ${t.apiKey}`);
+      expect(res.status, reason).toBe(409);
+    }
+  });
+
+  it('will not delete or retry another tenant\'s analysis', async () => {
+    const owner = await tenant('owner2@example.com');
+    const intruder = await tenant('intruder2@example.com');
+    await failedWith(owner.id, 'llm_failed');
+
+    expect((await request(app).post('/api/reel-analyses/bad/retry').set('Authorization', `Bearer ${intruder.apiKey}`)).status).toBe(404);
+    expect((await request(app).delete('/api/reel-analyses/bad').set('Authorization', `Bearer ${intruder.apiKey}`)).status).toBe(404);
+    expect(await queryOne(db, `SELECT id FROM reel_analyses WHERE id = 'bad'`)).toBeTruthy();
+  });
+
   it('one tenant cannot see or generate scripts for another tenant\'s analysis', async () => {
     const owner = await tenant('owner-reels@example.com');
     const intruder = await tenant('intruder-reels@example.com');

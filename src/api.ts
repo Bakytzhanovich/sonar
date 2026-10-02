@@ -54,7 +54,7 @@ import { REFERENCE_FRAME } from './aspect';
 import { pickPreviewWindow } from './previewWindow';
 import { adaptReelScript, openAiChatFromEnv, ReelAnalysisError, type ChatModel } from './reelLlm';
 import { normalizeManualSegments } from './smartCut';
-import { downloadUrlFor, presign, storageConfigFromEnv } from './storage';
+import { deleteObject, downloadUrlFor, presign, storageConfigFromEnv } from './storage';
 import { localMediaConfigFromEnv, resolveKeyPath, signLocalUrl, verifyLocalUrl } from './localMedia';
 import { notify, listNotifications } from './notifications';
 import { getOrCreateVapidKeys } from './vapidKeys';
@@ -86,6 +86,15 @@ const UPLOAD_URL_TTL_SEC = 30 * 60;
 // element dying mid-scrub, which is how an expired source URL shows up: the
 // player simply stops seeking and nothing says why.
 const EDITOR_SOURCE_TTL_SEC = 2 * 60 * 60;
+// Reel analysis failures another attempt can actually change: a model that
+// answered badly, a transcription service that hiccupped, a quota that has
+// since refilled. Everything else is a fact about the file.
+const REEL_RETRYABLE = new Set([
+  'llm_failed',
+  'llm_invalid_answer',
+  'transcription_failed',
+  'transcription_quota_exhausted',
+]);
 // Long enough to read two or three captions, short enough that the render is
 // over before anyone gives up waiting for it.
 const PREVIEW_SECONDS = 4;
@@ -1328,6 +1337,60 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       : null;
 
     res.json({ analysis, videoUrl });
+  }));
+
+  // Removes an analysis, its scripts and the uploaded reel. The file goes too:
+  // it is somebody else's video, kept only so it could be analysed and
+  // played back, and there is no reason to hold it after the person is done.
+  app.delete('/api/reel-analyses/:id', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const analysis = await getAnalysisForTenant(db, req.params.id, tenantId);
+    if (!analysis) return res.status(404).json({ error: 'analysis not found' });
+
+    await exec(db, `DELETE FROM generated_scripts WHERE analysis_id = ? AND tenant_id = ?`, analysis.id, tenantId);
+    await exec(db, `DELETE FROM reel_analyses WHERE id = ? AND tenant_id = ?`, analysis.id, tenantId);
+
+    // After the rows, and never fatal: a file that could not be removed is
+    // storage to tidy later, while a row left behind is a reel still showing
+    // in the person's library after they deleted it.
+    const key = analysis.source_object_key;
+    if (key && key.startsWith(`tenants/${tenantId}/`)) {
+      const storage = storageConfigFromEnv();
+      const removal = storage
+        ? deleteObject(storage, key)
+        : localMedia
+          ? fsp.rm(resolveKeyPath(localMedia, key), { force: true })
+          : Promise.resolve();
+      await removal.catch((err: unknown) =>
+        console.warn(`[api] reel ${analysis.id}: uploaded file not removed: ${err instanceof Error ? err.message : String(err)}`)
+      );
+    }
+
+    res.status(204).end();
+  }));
+
+  // Runs a failed analysis again from the same upload. Only where another
+  // attempt can change the answer: a reel with no speech, no sound or three
+  // minutes too many will fail the same way, and each retry would be another
+  // transcription bill for the same outcome.
+  app.post('/api/reel-analyses/:id/retry', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const analysis = await getAnalysisForTenant(db, req.params.id, tenantId);
+    if (!analysis) return res.status(404).json({ error: 'analysis not found' });
+    if (analysis.status !== 'failed') return res.status(409).json({ error: 'not_failed' });
+    if (!analysis.source_object_key || !REEL_RETRYABLE.has(analysis.failure_reason ?? '')) {
+      return res.status(409).json({ error: 'not_retryable' });
+    }
+
+    await exec(
+      db,
+      `UPDATE reel_analyses
+       SET status = 'processing', stage = NULL, failure_reason = NULL, attempt_count = 0, claimed_at = NULL
+       WHERE id = ? AND tenant_id = ? AND status = 'failed'`,
+      analysis.id,
+      tenantId
+    );
+    res.json({ analysis: await getAnalysisForTenant(db, analysis.id, tenantId) });
   }));
 
   app.post('/api/reel-analyses/:id/scripts', asyncHandler(async (req, res) => {

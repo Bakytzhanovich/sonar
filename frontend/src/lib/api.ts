@@ -563,6 +563,12 @@ export const api = {
 
   // One analysis plus a signed link to play the reel itself. Kept out of the
   // list, which is polled while anything is processing.
+  deleteAnalysis: (config: ApiConfig, id: string) => apiRequest(config, 'DELETE', `/api/reel-analyses/${id}`),
+
+  // Only for failures another attempt can change; the server refuses the rest.
+  retryAnalysis: (config: ApiConfig, id: string) =>
+    apiRequest(config, 'POST', `/api/reel-analyses/${id}/retry`) as Promise<{ analysis: ReelAnalysis }>,
+
   getAnalysis: (config: ApiConfig, id: string) =>
     apiRequest(config, 'GET', `/api/reel-analyses/${id}`) as Promise<{ analysis: ReelAnalysis; videoUrl: string | null }>,
 

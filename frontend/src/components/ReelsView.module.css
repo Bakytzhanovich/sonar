@@ -315,3 +315,23 @@ button.beatItemActive, button.beatItemActive:hover:not(:disabled) { border-color
   .main { order: 1; }
   .sidebar { order: 2; }
 }
+
+.failureActions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+
+/* Quiet on purpose: deleting is a normal thing to want, but not the thing the
+   result screen is for. */
+.deleteLink {
+  display: block;
+  margin: 10px auto 0;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.deleteLink:hover { color: var(--status-failed); }
+
+.scriptHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
