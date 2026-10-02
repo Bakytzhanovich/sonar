@@ -11,7 +11,6 @@ import Switch from './Switch';
 import PillPicker from './PillPicker';
 import { type CaptionLook } from './CaptionOverlay';
 import FramePreview from './FramePreview';
-import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import PulseIndicator from './PulseIndicator';
 import CutEditor from './CutEditor';
 import StatusMessage from './StatusMessage';
@@ -394,7 +393,7 @@ export default function VideoEditView() {
   // Why the submit button is unavailable, in the order the user hits them:
   // no key means every request 401s, so say that before asking for a file.
   const blockedReason = !hasAccess
-    ? 'Нет доступа:'
+    ? 'Чтобы смонтировать, нужен аккаунт:'
     : template === 'ai_smart_cut'
       ? file
         ? null
@@ -415,7 +414,13 @@ export default function VideoEditView() {
       </header>
 
       <main className={styles.main}>
-        {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
+        {/* No banner here, unlike the other screens. Everything below can be
+            tried without an account — picking a file, previewing the frame,
+            leafing through fonts and colours — and that is what shows a
+            visitor what the product does. The one thing that needs an account
+            is the button, so that is the one place that says so. A banner on
+            top as well meant the same message twice, the first one before
+            anybody had tried to do anything. */}
 
         <div className={styles.hero}>
           <div>
