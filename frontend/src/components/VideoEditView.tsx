@@ -237,19 +237,6 @@ export default function VideoEditView() {
         }
       : null;
 
-  // Folded by default. The summary names only what differs from the style's
-  // own choice, so the closed row reads "Как в стиле" until somebody changes
-  // something, and then says exactly what.
-  const [captionDetailsOpen, setCaptionDetailsOpen] = useState(false);
-  const captionDetailsSummary = [
-    subtitleFont !== 'auto' ? subtitleFonts.find((f) => f.id === subtitleFont)?.label : null,
-    subtitleColor !== 'auto' ? subtitleColors.find((c) => c.id === subtitleColor)?.label : null,
-    subtitleSize !== 'medium' ? subtitleSizes.find((x) => x.id === subtitleSize)?.label : null,
-    subtitlePosition !== 'auto' ? positions.find((x) => x.id === subtitlePosition)?.label : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-
   const load = useCallback(async () => {
     if (!hasAccess) return;
     try {
@@ -598,59 +585,33 @@ export default function VideoEditView() {
                       value={subtitlePreset}
                       onChange={setSubtitlePreset}
                     />
-                    {/* The style is enough for most people; typeface, colour,
-                        size and placement are for those who want to tune it.
-                        Five rows of pills in a row ran to two phone screens
-                        of scrolling before the button. Folded, the closed
-                        row still says what has been changed, so nothing
-                        chosen is hidden from the person who chose it. */}
-                    <button
-                      type="button"
-                      className={styles.detailsToggle}
-                      aria-expanded={captionDetailsOpen}
-                      onClick={() => setCaptionDetailsOpen((open) => !open)}
-                    >
-                      <span className={styles.detailsTitle}>
-                        {captionDetailsOpen ? 'Скрыть настройки' : 'Шрифт, цвет, размер, положение'}
-                      </span>
-                      {!captionDetailsOpen && (
-                        <span className={styles.detailsSummary}>{captionDetailsSummary || 'Как в стиле'}</span>
-                      )}
-                      <span className={styles.detailsChevron} aria-hidden="true">
-                        {captionDetailsOpen ? '▴' : '▾'}
-                      </span>
-                    </button>
-                    {captionDetailsOpen && (
-                      <>
-                        <PillPicker
-                          label="Шрифт"
-                          options={subtitleFonts}
-                          value={subtitleFont}
-                          onChange={setSubtitleFont}
-                        />
-                        <PillPicker
-                          label="Цвет"
-                          options={subtitleColors}
-                          value={subtitleColor}
-                          onChange={setSubtitleColor}
-                        />
-                        <PillPicker
-                          label="Размер"
-                          options={subtitleSizes}
-                          value={subtitleSize}
-                          onChange={setSubtitleSize}
-                        />
-                        {/* Placement is its own axis, not part of a style: the
-                            same typography belongs over the face on one clip
-                            and under it on the next. */}
-                        <PillPicker
-                          label="Положение"
-                          options={positions}
-                          value={subtitlePosition}
-                          onChange={setSubtitlePosition}
-                        />
-                      </>
-                    )}
+                    <PillPicker
+                      label="Шрифт"
+                      options={subtitleFonts}
+                      value={subtitleFont}
+                      onChange={setSubtitleFont}
+                    />
+                    <PillPicker
+                      label="Цвет"
+                      options={subtitleColors}
+                      value={subtitleColor}
+                      onChange={setSubtitleColor}
+                    />
+                    <PillPicker
+                      label="Размер"
+                      options={subtitleSizes}
+                      value={subtitleSize}
+                      onChange={setSubtitleSize}
+                    />
+                    {/* Placement is its own axis, not part of a style: the
+                        same typography belongs over the face on one clip
+                        and under it on the next. */}
+                    <PillPicker
+                      label="Положение"
+                      options={positions}
+                      value={subtitlePosition}
+                      onChange={setSubtitlePosition}
+                    />
                   </div>
                 )}
 
