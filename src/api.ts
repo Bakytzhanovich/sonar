@@ -1313,7 +1313,21 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     const analysis = await getAnalysisForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!analysis) return res.status(404).json({ error: 'analysis not found' });
 
-    res.json({ analysis });
+    // The reel itself, so the screen can play it beside its analysis and a
+    // person can check "the solution starts at 0:09" against the video rather
+    // than take it on trust. Signed here and not in the list, which is polled
+    // every few seconds while anything is processing.
+    const storage = storageConfigFromEnv();
+    const key = analysis.source_object_key;
+    const videoUrl = key
+      ? storage
+        ? presign(storage, { method: 'GET', key, expiresInSec: EDITOR_SOURCE_TTL_SEC })
+        : localMedia
+          ? signLocalUrl(localMedia, 'GET', key, EDITOR_SOURCE_TTL_SEC)
+          : null
+      : null;
+
+    res.json({ analysis, videoUrl });
   }));
 
   app.post('/api/reel-analyses/:id/scripts', asyncHandler(async (req, res) => {

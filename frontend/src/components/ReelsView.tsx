@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type GeneratedScript, type ReelAnalysis } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
@@ -55,6 +55,15 @@ function seconds(value: number): string {
   return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s} с`;
 }
 
+// The part of the reel the playhead is in: the last one that has started.
+function activeBeatIndex(starts: number[], at: number): number {
+  let index = -1;
+  starts.forEach((start, i) => {
+    if (at + 0.05 >= start) index = i;
+  });
+  return index;
+}
+
 // The upload screen's own wording for an API error, falling back to the raw
 // message only when there is nothing better to say.
 function errorText(err: unknown, table: Record<string, string>): string {
@@ -81,8 +90,42 @@ export default function ReelsView() {
   const [nicheSearch, setNicheSearch] = useState('');
   const [searchResults, setSearchResults] = useState<GeneratedScript[] | null>(null);
   const [status, setStatus] = useState('');
+  // The reel itself, for the selected analysis. Fetched once per selection —
+  // a signed link, so it is not part of the polled list.
+  const [video, setVideo] = useState<{ id: string; url: string | null } | null>(null);
+  const [playhead, setPlayhead] = useState(0);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const selected = analyses.find((a) => a.id === selectedId) ?? null;
+  const selectedReady = selected?.status === 'completed';
+
+  useEffect(() => {
+    if (!selectedId || !selectedReady) return;
+    let cancelled = false;
+    api
+      .getAnalysis(config, selectedId)
+      .then((res) => {
+        if (!cancelled) setVideo({ id: selectedId, url: res.videoUrl });
+      })
+      .catch(() => {
+        if (!cancelled) setVideo({ id: selectedId, url: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, selectedReady]);
+
+  const videoUrl = video && video.id === selectedId ? video.url : null;
+
+  // Jump the player to where a part of the reel starts — the point of having
+  // the video beside the analysis is to check each claim against it.
+  function seekTo(sec: number) {
+    const el = videoRef.current;
+    if (!el) return;
+    el.currentTime = sec;
+    void el.play().catch(() => {});
+  }
 
   const loadAnalyses = useCallback(async () => {
     if (!hasAccess) return;
@@ -175,34 +218,16 @@ export default function ReelsView() {
 
       <div className={layout.twoPane}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>
-          {/* A file, not a link: the server does not download other
-              people's reels. Styled as a target, because the native input
-              is a tiny OS button with English text on it. */}
-          <label className={`${styles.dropzone} ${file ? styles.dropzoneFilled : ''}`}>
-            <input
-              className={styles.hiddenInput}
-              type="file"
-              accept="video/mp4,video/quicktime,video/webm"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
-            <span className={styles.dropzoneTitle}>{file ? file.name : 'Выбрать рилс'}</span>
-            <span className={styles.dropzoneHint}>
-              {file ? `${(file.size / 1024 / 1024).toFixed(1)} МБ · нажмите, чтобы заменить` : 'Файл видео, до 3 минут'}
-            </span>
-          </label>
-          <button
-            className={`${controls.buttonPrimary} ${styles.fullButton}`}
-            onClick={analyze}
-            disabled={!file || uploading || !hasAccess}
-          >
-            {uploading ? 'Загружаю…' : 'Разобрать'}
-          </button>
-          {/* One message, at the button — the only thing that needs an account. */}
-          {!hasAccess && (
-            <p className={styles.accessHint}>
-              Чтобы разобрать, нужен аккаунт:{' '}
-              <a href="/login">Войти</a> · <a href="/signup">Регистрация</a>
-            </p>
+          {/* The upload lives in the main area, where the screen's own
+              empty state points; this only gets back to it from a result. */}
+          {selected && (
+            <button
+              type="button"
+              className={`${controls.buttonSecondary} ${styles.fullButton}`}
+              onClick={() => setSelectedId(null)}
+            >
+              + Новый разбор
+            </button>
           )}
 
           {analyses.length > 0 && <div className={styles.sectionLabel}>Мои разборы</div>}
@@ -251,11 +276,42 @@ export default function ReelsView() {
 
         <div className={`${layout.main} ${styles.main}`}>
           {!selected && (
-            <div className={styles.emptyState}>
-              <div className={styles.emptyIcon}>◌</div>
+            <div className={styles.uploadPanel}>
               <span className={styles.eyebrow}>АНАЛИЗ КОНТЕНТА</span>
               <h2>Найди повторяемую механику</h2>
-              <p>Загрузи чужой рилс, который хорошо зашёл: разберём, чем он цепляет и как устроен, и перепишем под твою нишу.</p>
+              <p>
+                Загрузи чужой рилс, который хорошо зашёл: разберём, чем он цепляет и как устроен, и перепишем под твою
+                нишу.
+              </p>
+              {/* A file, not a link: the server does not download other
+                  people's reels. Styled as a target, because the native
+                  input is a tiny OS button with English text on it. */}
+              <label className={`${styles.dropzone} ${file ? styles.dropzoneFilled : ''}`}>
+                <input
+                  className={styles.hiddenInput}
+                  type="file"
+                  accept="video/mp4,video/quicktime,video/webm"
+                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                />
+                <span className={styles.dropzoneIcon} aria-hidden="true">{file ? '▶' : '+'}</span>
+                <span className={styles.dropzoneTitle}>{file ? file.name : 'Выбрать рилс'}</span>
+                <span className={styles.dropzoneHint}>
+                  {file ? `${(file.size / 1024 / 1024).toFixed(1)} МБ · нажмите, чтобы заменить` : 'Файл видео, до 3 минут'}
+                </span>
+              </label>
+              <button
+                className={`${controls.buttonPrimary} ${styles.analyzeButton}`}
+                onClick={analyze}
+                disabled={!file || uploading || !hasAccess}
+              >
+                {uploading ? 'Загружаю…' : 'Разобрать'}
+              </button>
+              {/* One message, at the button — the only thing that needs an account. */}
+              {!hasAccess && (
+                <p className={styles.accessHint}>
+                  Чтобы разобрать, нужен аккаунт: <a href="/login">Войти</a> · <a href="/signup">Регистрация</a>
+                </p>
+              )}
             </div>
           )}
 
@@ -276,44 +332,84 @@ export default function ReelsView() {
 
           {selected?.status === 'completed' && selected.structure && (
             <>
-              <div className={styles.signalCard}>
-                <span>ЧЕМ ЦЕПЛЯЕТ</span>
-                <strong>{selected.hook}</strong>
-              </div>
-
-              {selected.why && (
-                <div className={styles.signalCard}>
-                  <span>ПОЧЕМУ РАБОТАЕТ</span>
-                  <p>{selected.why}</p>
-                </div>
-              )}
-
-              <h3 className={styles.sectionTitle}>Структура ролика</h3>
-              {/* Real position in time: each part's start plotted against
-                  the reel's actual length. */}
-              {selected.duration_seconds ? (
-                <div className={styles.timeline}>
-                  {selected.structure.map((beat, i) => (
-                    <span
-                      key={i}
-                      className={styles.timelineMarker}
-                      style={{ left: `${Math.min(100, (beat.timestampSeconds / selected.duration_seconds!) * 100)}%` }}
-                      title={`${beat.label} — ${seconds(beat.timestampSeconds)}`}
+              <div className={styles.resultGrid}>
+                {/* The reel beside its analysis, so every claim below can be
+                    checked against the video instead of taken on trust. */}
+                <div className={styles.playerColumn}>
+                  {videoUrl ? (
+                    <video
+                      ref={videoRef}
+                      className={styles.player}
+                      src={videoUrl}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      onTimeUpdate={(e) => setPlayhead(e.currentTarget.currentTime)}
                     />
-                  ))}
+                  ) : (
+                    <div className={styles.playerMissing}>Видео недоступно</div>
+                  )}
                 </div>
-              ) : null}
-              <ol className={styles.beatList}>
-                {selected.structure.map((beat, i) => (
-                  <li key={i} className={styles.beatItem}>
-                    <span className={styles.beatTime}>{seconds(beat.timestampSeconds)}</span>
-                    <span>
-                      <strong>{beat.label}</strong>
-                      {beat.summary ? <span className={styles.beatSummary}> — {beat.summary}</span> : null}
-                    </span>
-                  </li>
-                ))}
-              </ol>
+
+                <div className={styles.resultColumn}>
+                  <div className={styles.signalCard}>
+                    <span>ЧЕМ ЦЕПЛЯЕТ</span>
+                    <strong>{selected.hook}</strong>
+                  </div>
+
+                  {selected.why && (
+                    <div className={styles.signalCard}>
+                      <span>ПОЧЕМУ РАБОТАЕТ</span>
+                      <p>{selected.why}</p>
+                    </div>
+                  )}
+
+                  <h3 className={styles.sectionTitle}>Структура ролика</h3>
+                  {selected.duration_seconds ? (
+                    <div className={styles.timeline}>
+                      {selected.structure.map((beat, i) => (
+                        <span
+                          key={i}
+                          className={styles.timelineMarker}
+                          style={{ left: `${Math.min(100, (beat.timestampSeconds / selected.duration_seconds!) * 100)}%` }}
+                          title={`${beat.label} — ${seconds(beat.timestampSeconds)}`}
+                        />
+                      ))}
+                      {videoUrl ? (
+                        <span
+                          className={styles.timelinePlayhead}
+                          style={{ left: `${Math.min(100, (playhead / selected.duration_seconds) * 100)}%` }}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {/* Each part is a button that plays the reel from where the
+                      part starts; the part being played is highlighted. */}
+                  <ol className={styles.beatList}>
+                    {(() => {
+                      const active = videoUrl
+                        ? activeBeatIndex(selected.structure.map((b) => b.timestampSeconds), playhead)
+                        : -1;
+                      return selected.structure.map((beat, i) => (
+                        <li key={i}>
+                          <button
+                            type="button"
+                            className={`${styles.beatItem} ${i === active ? styles.beatItemActive : ''}`}
+                            onClick={() => seekTo(beat.timestampSeconds)}
+                            disabled={!videoUrl}
+                          >
+                            <span className={styles.beatTime}>{seconds(beat.timestampSeconds)}</span>
+                            <span>
+                              <strong>{beat.label}</strong>
+                              {beat.summary ? <span className={styles.beatSummary}> — {beat.summary}</span> : null}
+                            </span>
+                          </button>
+                        </li>
+                      ));
+                    })()}
+                  </ol>
+                </div>
+              </div>
 
               {selected.transcript && selected.transcript.length > 0 && (
                 <>

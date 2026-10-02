@@ -320,6 +320,29 @@ describe('reel analysis API', () => {
     expect(list.body.analyses).toHaveLength(1);
   });
 
+  // So the screen can play the reel beside its analysis and a person can
+  // check the seconds against the video rather than take them on trust.
+  it('hands back a playable link to the reel with a single analysis', async () => {
+    const t = await tenant('play@example.com');
+    const created = await request(app)
+      .post('/api/reel-analyses')
+      .set('Authorization', `Bearer ${t.apiKey}`)
+      .send({ sourceObjectKey: `tenants/${t.id}/sources/x.mp4` });
+
+    const res = await request(app)
+      .get(`/api/reel-analyses/${created.body.analysis.id}`)
+      .set('Authorization', `Bearer ${t.apiKey}`);
+    expect(typeof res.body.videoUrl).toBe('string');
+    expect(res.body.videoUrl).toContain(`tenants/${t.id}/sources/x.mp4`);
+  });
+
+  it('has no link to play for a row with no uploaded file', async () => {
+    const t = await tenant('nolink@example.com');
+    await finished(t.id, 'old');
+    const res = await request(app).get('/api/reel-analyses/old').set('Authorization', `Bearer ${t.apiKey}`);
+    expect(res.body.videoUrl).toBeNull();
+  });
+
   it('requires a file', async () => {
     const t = await tenant('nofile@example.com');
     const res = await request(app).post('/api/reel-analyses').set('Authorization', `Bearer ${t.apiKey}`).send({});

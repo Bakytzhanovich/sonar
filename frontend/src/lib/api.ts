@@ -561,6 +561,11 @@ export const api = {
 
   listAnalyses: (config: ApiConfig) => apiRequest(config, 'GET', '/api/reel-analyses') as Promise<{ analyses: ReelAnalysis[] }>,
 
+  // One analysis plus a signed link to play the reel itself. Kept out of the
+  // list, which is polled while anything is processing.
+  getAnalysis: (config: ApiConfig, id: string) =>
+    apiRequest(config, 'GET', `/api/reel-analyses/${id}`) as Promise<{ analysis: ReelAnalysis; videoUrl: string | null }>,
+
   generateScript: (config: ApiConfig, analysisId: string, niche: string) =>
     apiRequest(config, 'POST', `/api/reel-analyses/${analysisId}/scripts`, { niche }) as Promise<{ script: GeneratedScript }>,
 
