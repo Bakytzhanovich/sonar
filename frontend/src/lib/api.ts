@@ -114,15 +114,23 @@ export interface ConversationMessage {
 export interface StructureBeat {
   label: string;
   timestampSeconds: number;
+  /** What happens in this part. Absent on rows from the old mock pipeline. */
+  summary?: string;
 }
 
+/** Everything but `status` and `created_at` is null until the worker is done. */
 export interface ReelAnalysis {
   id: string;
-  source_url: string;
-  hook: string;
-  duration_seconds: number;
-  on_screen_text: string;
-  structure: StructureBeat[];
+  source_url: string | null;
+  status: 'processing' | 'completed' | 'failed';
+  stage: 'probe' | 'transcribe' | 'analyze' | null;
+  hook: string | null;
+  duration_seconds: number | null;
+  structure: StructureBeat[] | null;
+  why: string | null;
+  transcript: Array<{ word: string; start: number; end: number }> | null;
+  language: string | null;
+  failure_reason: string | null;
   created_at: string;
 }
 
@@ -546,8 +554,10 @@ export const api = {
 
   // ---- Module 3: Reel analysis (mocked pipeline) -------------------------
 
-  createAnalysis: (config: ApiConfig, sourceUrl: string) =>
-    apiRequest(config, 'POST', '/api/reel-analyses', { sourceUrl }) as Promise<{ analysis: ReelAnalysis }>,
+  // From an uploaded file (see requestVideoUpload), never a link — the
+  // server does not download other people's reels.
+  createAnalysis: (config: ApiConfig, sourceObjectKey: string) =>
+    apiRequest(config, 'POST', '/api/reel-analyses', { sourceObjectKey }) as Promise<{ analysis: ReelAnalysis }>,
 
   listAnalyses: (config: ApiConfig) => apiRequest(config, 'GET', '/api/reel-analyses') as Promise<{ analyses: ReelAnalysis[] }>,
 

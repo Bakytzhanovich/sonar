@@ -182,16 +182,30 @@ export interface ConversationMessage {
 export interface StructureBeat {
   label: string;
   timestampSeconds: number;
+  /** What happens in this part. Absent on rows from the old mock pipeline. */
+  summary?: string;
 }
+
+export type ReelAnalysisStatus = 'processing' | 'completed' | 'failed';
 
 export interface ReelAnalysis {
   id: string;
   tenant_id: string;
-  source_url: string;
-  hook: string;
-  duration_seconds: number;
-  on_screen_text: string;
-  structure: StructureBeat[];
+  source_url: string | null;
+  status: ReelAnalysisStatus;
+  stage: 'probe' | 'transcribe' | 'analyze' | null;
+  source_object_key: string | null;
+  // Null until the worker has finished.
+  hook: string | null;
+  duration_seconds: number | null;
+  on_screen_text: string | null;
+  structure: StructureBeat[] | null;
+  why: string | null;
+  transcript: Array<{ word: string; start: number; end: number }> | null;
+  language: string | null;
+  failure_reason: string | null;
+  attempt_count: number;
+  claimed_at: string | null;
   created_at: string;
 }
 
@@ -384,7 +398,14 @@ export interface PushSubscriptionRecord {
   created_at: string;
 }
 
-export type NotificationType = 'post_published' | 'post_failed' | 'post_pending_approval' | 'video_completed' | 'video_failed';
+export type NotificationType =
+  | 'post_published'
+  | 'post_failed'
+  | 'post_pending_approval'
+  | 'video_completed'
+  | 'video_failed'
+  | 'reel_analyzed'
+  | 'reel_failed';
 
 export interface AppNotification {
   id: string;

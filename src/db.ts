@@ -215,6 +215,41 @@ const MIGRATIONS: string[] = [
        GRANT SELECT, INSERT, UPDATE ON worker_heartbeats TO sonar_worker;
      END IF;
    END $$`,
+  // ---- Module 3: real reel analysis -------------------------------------
+  // The analysis used to be computed in the request from a hash of the URL —
+  // a made-up result of a video nobody opened. It now runs in the worker
+  // over an uploaded file, so a row exists before its result does: the
+  // result columns lose NOT NULL, and a status says which state it is in.
+  // Existing rows are finished ones, hence the default.
+  `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'completed'`,
+  `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS stage TEXT`,
+  `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS source_object_key TEXT`,
+  `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS transcript JSONB`,
+  `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS language TEXT`,
+  `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS why TEXT`,
+  `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS failure_reason TEXT`,
+  `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ`,
+  `ALTER TABLE reel_analyses ALTER COLUMN source_url DROP NOT NULL`,
+  `ALTER TABLE reel_analyses ALTER COLUMN hook DROP NOT NULL`,
+  `ALTER TABLE reel_analyses ALTER COLUMN duration_seconds DROP NOT NULL`,
+  `ALTER TABLE reel_analyses ALTER COLUMN on_screen_text DROP NOT NULL`,
+  `ALTER TABLE reel_analyses ALTER COLUMN structure DROP NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_reel_analyses_status ON reel_analyses(status, claimed_at)`,
+  // The rows the old pipeline produced are fakes — a hook picked from four
+  // templates by a hash of the URL, flagged "[мок]" in their screen text.
+  // Left as 'completed' they would sit in the library looking like real
+  // analyses. Marked instead, so the screen can say what they are.
+  `UPDATE reel_analyses SET status = 'failed', failure_reason = 'legacy_mock'
+     WHERE status = 'completed' AND on_screen_text LIKE '[мок]%'`,
+  // The worker connects as a least-privilege role granted table by table;
+  // without this it cannot see a single analysis to work on, and the failure
+  // would read as a permission error inside every tick.
+  `DO $$ BEGIN
+     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sonar_worker') THEN
+       GRANT SELECT, UPDATE ON reel_analyses TO sonar_worker;
+     END IF;
+   END $$`,
 ];
 
 async function applyMigrations(client: PoolClient): Promise<void> {

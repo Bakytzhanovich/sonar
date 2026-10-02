@@ -1,6 +1,8 @@
 import { createDb, closeDb } from './db';
 import { ffmpegAvailable } from './ffmpeg';
 import { sweepExpiredPreviews } from './previewSweep';
+import { runReelJobs, type ReelDeps } from './reelPipeline';
+import { openAiChatFromEnv } from './reelLlm';
 import { defaultPipelineDeps, runSmartCutJobs } from './videoPipeline';
 import { storageConfigFromEnv } from './storage';
 import { localMediaConfigFromEnv } from './localMedia';
@@ -26,6 +28,14 @@ const SWEEP_INTERVAL_MS = Number(process.env.WORKER_SWEEP_INTERVAL_MS ?? 3_600_0
 
 async function main(): Promise<void> {
   const deps = defaultPipelineDeps();
+  // The reel analysis reuses the video pipeline's storage, ffmpeg and
+  // transcriber — same engines, same Kazakh handling — plus the chat model.
+  const reelDeps: ReelDeps = {
+    storage: deps.storage,
+    transcribe: deps.transcribe,
+    ffmpeg: { probe: deps.ffmpeg.probe, extractAudio: deps.ffmpeg.extractAudio },
+    chat: openAiChatFromEnv(),
+  };
 
   // Both are fatal-at-boot rather than per-job failures on purpose, the same
   // fail-loudly stance as server.ts's mock webhook check: a worker that can
@@ -94,9 +104,13 @@ async function main(): Promise<void> {
   while (!stopping) {
     try {
       const { processed } = await runSmartCutJobs(db, new Date(), deps, CONCURRENCY);
+      // Reels after renders, in the same loop: one worker process, one job at
+      // a time, because both lean on the same CPU and the same transcription
+      // budget. A reel is short, so it never holds a render up for long.
+      const { processed: reels } = await runReelJobs(db, new Date(), reelDeps, CONCURRENCY);
       // Only sleep when there was nothing to do — with a backlog, poll again
       // immediately instead of idling for the interval between every job.
-      if (processed === 0) await sleep(POLL_INTERVAL_MS);
+      if (processed === 0 && reels === 0) await sleep(POLL_INTERVAL_MS);
     } catch (err) {
       // A throw here is infrastructure (the claim query itself failed), not a
       // job failure — processSmartCutJob handles those internally. Backing

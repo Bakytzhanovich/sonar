@@ -33,6 +33,8 @@ GRANT USAGE ON SCHEMA public TO sonar_worker;
 
 -- Claims jobs, records stages and artifacts, writes the finished output.
 GRANT SELECT, UPDATE ON video_edit_jobs TO sonar_worker;
+-- Module 3: the worker transcribes and analyses uploaded reels.
+GRANT SELECT, UPDATE ON reel_analyses TO sonar_worker;
 
 -- Tells the owner their render is done or failed.
 GRANT INSERT ON notifications TO sonar_worker;

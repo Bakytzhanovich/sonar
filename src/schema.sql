@@ -224,11 +224,27 @@ CREATE TABLE reel_analyses (
   id               TEXT PRIMARY KEY,
   seq              BIGSERIAL,
   tenant_id        TEXT NOT NULL REFERENCES tenants(id),
-  source_url       TEXT NOT NULL,
-  hook             TEXT NOT NULL,
-  duration_seconds INTEGER NOT NULL,
-  on_screen_text   TEXT NOT NULL,
-  structure        JSONB NOT NULL, -- StructureBeat[] (src/types.ts)
+  -- Optional link to the original, for the person's own reference. The
+  -- analysis works from an uploaded file, never from this — downloading other
+  -- people's reels is the same legal question that keeps Module 7 unstarted.
+  source_url       TEXT,
+  -- processing | completed | failed. A row exists from upload onwards; the
+  -- worker fills in everything below it.
+  status           TEXT NOT NULL DEFAULT 'completed',
+  stage            TEXT, -- probe | transcribe | analyze, while processing
+  source_object_key TEXT,
+  hook             TEXT,
+  duration_seconds INTEGER,
+  -- Never filled any more: reading text drawn on screen needs a vision model
+  -- over the frames. Kept so older rows still load.
+  on_screen_text   TEXT,
+  structure        JSONB, -- ReelBeat[] (src/reelLlm.ts)
+  why              TEXT,
+  transcript       JSONB, -- TranscriptWord[], so the screen can show what was said
+  language         TEXT,
+  failure_reason   TEXT,
+  attempt_count    INTEGER NOT NULL DEFAULT 0,
+  claimed_at       TIMESTAMPTZ,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

@@ -43,7 +43,6 @@ import { asRole, canPerform, requiredRole, ROLE_LABELS } from './roles';
 import { SMART_CUT_WORKER, isWorkerOnline } from './workerHealth';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
-import { analyzeReelMock, generateScriptMock } from './reelAnalysis';
 import { generateCarouselSlides } from './carouselGeneration';
 import { publishDuePosts } from './publisher';
 import { computeContentRecommendations } from './contentRecommendations';
@@ -53,6 +52,7 @@ import { fontFileFor, loadFontMetrics } from './fontMetrics';
 import { DEFAULT_POSTER_OPTIONS } from './subtitles';
 import { REFERENCE_FRAME } from './aspect';
 import { pickPreviewWindow } from './previewWindow';
+import { adaptReelScript, openAiChatFromEnv, ReelAnalysisError, type ChatModel } from './reelLlm';
 import { normalizeManualSegments } from './smartCut';
 import { downloadUrlFor, presign, storageConfigFromEnv } from './storage';
 import { localMediaConfigFromEnv, resolveKeyPath, signLocalUrl, verifyLocalUrl } from './localMedia';
@@ -101,7 +101,14 @@ function demoExternalAccountId(tenantId: string): string {
   return `demo:${tenantId}`;
 }
 
-export function createApp(db: Db): Express {
+export interface AppOptions {
+  /** The model that adapts reel scripts. Injected by tests so they never
+   *  reach the network; defaults to OpenAI with the key from the environment. */
+  reelChat?: ChatModel;
+}
+
+export function createApp(db: Db, options: AppOptions = {}): Express {
+  const reelChat = options.reelChat ?? openAiChatFromEnv();
   const app = express();
 
   // Rate limiting keys on req.ip, which behind a reverse proxy is the
@@ -1263,34 +1270,36 @@ export function createApp(db: Db): Express {
     res.status(204).send();
   }));
 
-  // ---- Module 3: Reel analysis and script adaptation (mocked) ------------
-  // "Вставьте ссылку" -> analyzeReelMock stands in for yt-dlp + Whisper +
-  // an LLM call. Only this function's internals change when the real
-  // pipeline replaces it; the request/response shape here is what the
-  // real version will also expose.
+  // ---- Module 3: Reel analysis and script adaptation -------------------
+  // An uploaded reel, not a link: downloading other people's reels is the
+  // same legal question that keeps Module 7 unstarted, and the person usually
+  // has the file anyway. The row is created here and filled in by the worker
+  // (reelPipeline.ts) — transcription and a model call are not something to
+  // hold a request open for.
   app.post('/api/reel-analyses', asyncHandler(async (req, res) => {
-    const sourceUrl = typeof req.body?.sourceUrl === 'string' ? req.body.sourceUrl.trim() : '';
-    if (!sourceUrl) return res.status(400).json({ error: 'sourceUrl is required' });
+    const tenantId = res.locals.tenantId as string;
+    const sourceObjectKey = typeof req.body?.sourceObjectKey === 'string' ? req.body.sourceObjectKey.trim() : '';
+    if (!sourceObjectKey) return res.status(400).json({ error: 'sourceObjectKey is required' });
+    // Multi-tenancy isolation (CLAUDE.md), same check as the video jobs: the
+    // key must come from this tenant's own upload, or a tenant could have the
+    // worker transcribe — and hand back the words of — someone else's file.
+    if (!sourceObjectKey.startsWith(`tenants/${tenantId}/sources/`)) {
+      return res.status(403).json({ error: 'source_object_key_not_owned' });
+    }
+    // Optional, for the person's own reference; never fetched.
+    const sourceUrl = typeof req.body?.sourceUrl === 'string' ? req.body.sourceUrl.trim().slice(0, 500) || null : null;
 
-    const fields = analyzeReelMock(sourceUrl);
     const id = randomUUID();
     await exec(
       db,
-      `INSERT INTO reel_analyses (id, tenant_id, source_url, hook, duration_seconds, on_screen_text, structure)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO reel_analyses (id, tenant_id, source_url, source_object_key, status) VALUES (?, ?, ?, ?, 'processing')`,
       id,
-      res.locals.tenantId,
-      fields.source_url,
-      fields.hook,
-      fields.duration_seconds,
-      fields.on_screen_text,
-      // pg serializes a JS array parameter as a Postgres array literal, not
-      // JSON — must stringify explicitly for a jsonb column (see db.ts's
-      // query helpers: objects get auto-JSON'd by pg, arrays don't).
-      JSON.stringify(fields.structure)
+      tenantId,
+      sourceUrl,
+      sourceObjectKey
     );
 
-    const analysis = (await getAnalysisForTenant(db, id, res.locals.tenantId as string))!;
+    const analysis = (await getAnalysisForTenant(db, id, tenantId))!;
     res.status(201).json({ analysis });
   }));
 
@@ -1311,10 +1320,27 @@ export function createApp(db: Db): Express {
     const analysis = await getAnalysisForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!analysis) return res.status(404).json({ error: 'analysis not found' });
 
-    const niche = typeof req.body?.niche === 'string' ? req.body.niche.trim() : '';
+    const niche = typeof req.body?.niche === 'string' ? req.body.niche.trim().slice(0, 100) : '';
     if (!niche) return res.status(400).json({ error: 'niche is required' });
+    // A script needs a finished analysis to adapt; one still being transcribed
+    // has nothing to give it yet.
+    if (analysis.status !== 'completed' || !analysis.hook || !analysis.structure) {
+      return res.status(409).json({ error: 'analysis_not_ready' });
+    }
 
-    const scriptText = generateScriptMock(analysis, niche);
+    let scriptText: string;
+    try {
+      scriptText = await adaptReelScript(
+        { hook: analysis.hook, structure: analysis.structure.map((b) => ({ ...b, summary: b.summary ?? '' })), why: analysis.why ?? '' },
+        niche,
+        reelChat
+      );
+    } catch (err) {
+      // Said plainly rather than replaced with a template: a canned script
+      // presented as adapted is exactly what this module stopped doing.
+      const reason = err instanceof ReelAnalysisError ? err.reason : 'llm_failed';
+      return res.status(reason === 'llm_not_configured' ? 503 : 502).json({ error: reason });
+    }
     const id = randomUUID();
     await exec(db, `INSERT INTO generated_scripts (id, tenant_id, analysis_id, niche, script_text) VALUES (?, ?, ?, ?, ?)`, id, res.locals.tenantId, analysis.id, niche, scriptText);
 
