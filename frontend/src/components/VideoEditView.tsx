@@ -22,6 +22,11 @@ import styles from './VideoEditView.module.css';
 // worth shouting. Fixed rather than generated, because the word to emphasise
 // is chosen server-side for a real render and a second heuristic in the
 // browser would be a third thing to keep in step.
+// The mock pipelines (levels 1 and 2) and their controls exist for
+// development: they return a link to a file that is never made. Shown only
+// where the staff tools are — never on the deployed site customers use.
+const MOCK_PIPELINES_VISIBLE = STAFF_BOOTSTRAP_AVAILABLE;
+
 const SAMPLE_CAPTION = { words: ['каждая', 'твоя', 'история'], emphasis: 2 };
 
 const TEMPLATES: { value: VideoTemplate; level: string; title: string; description: string }[] = [
@@ -231,6 +236,19 @@ export default function VideoEditView() {
           })(),
         }
       : null;
+
+  // Folded by default. The summary names only what differs from the style's
+  // own choice, so the closed row reads "Как в стиле" until somebody changes
+  // something, and then says exactly what.
+  const [captionDetailsOpen, setCaptionDetailsOpen] = useState(false);
+  const captionDetailsSummary = [
+    subtitleFont !== 'auto' ? subtitleFonts.find((f) => f.id === subtitleFont)?.label : null,
+    subtitleColor !== 'auto' ? subtitleColors.find((c) => c.id === subtitleColor)?.label : null,
+    subtitleSize !== 'medium' ? subtitleSizes.find((x) => x.id === subtitleSize)?.label : null,
+    subtitlePosition !== 'auto' ? positions.find((x) => x.id === subtitlePosition)?.label : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   const load = useCallback(async () => {
     if (!hasAccess) return;
@@ -580,33 +598,59 @@ export default function VideoEditView() {
                       value={subtitlePreset}
                       onChange={setSubtitlePreset}
                     />
-                    <PillPicker
-                      label="Шрифт"
-                      options={subtitleFonts}
-                      value={subtitleFont}
-                      onChange={setSubtitleFont}
-                    />
-                    <PillPicker
-                      label="Цвет"
-                      options={subtitleColors}
-                      value={subtitleColor}
-                      onChange={setSubtitleColor}
-                    />
-                    <PillPicker
-                      label="Размер"
-                      options={subtitleSizes}
-                      value={subtitleSize}
-                      onChange={setSubtitleSize}
-                    />
-                    {/* Placement is its own axis, not part of a style: the
-                        same typography belongs over the face on one clip and
-                        under it on the next. */}
-                    <PillPicker
-                      label="Положение"
-                      options={positions}
-                      value={subtitlePosition}
-                      onChange={setSubtitlePosition}
-                    />
+                    {/* The style is enough for most people; typeface, colour,
+                        size and placement are for those who want to tune it.
+                        Five rows of pills in a row ran to two phone screens
+                        of scrolling before the button. Folded, the closed
+                        row still says what has been changed, so nothing
+                        chosen is hidden from the person who chose it. */}
+                    <button
+                      type="button"
+                      className={styles.detailsToggle}
+                      aria-expanded={captionDetailsOpen}
+                      onClick={() => setCaptionDetailsOpen((open) => !open)}
+                    >
+                      <span className={styles.detailsTitle}>
+                        {captionDetailsOpen ? 'Скрыть настройки' : 'Шрифт, цвет, размер, положение'}
+                      </span>
+                      {!captionDetailsOpen && (
+                        <span className={styles.detailsSummary}>{captionDetailsSummary || 'Как в стиле'}</span>
+                      )}
+                      <span className={styles.detailsChevron} aria-hidden="true">
+                        {captionDetailsOpen ? '▴' : '▾'}
+                      </span>
+                    </button>
+                    {captionDetailsOpen && (
+                      <>
+                        <PillPicker
+                          label="Шрифт"
+                          options={subtitleFonts}
+                          value={subtitleFont}
+                          onChange={setSubtitleFont}
+                        />
+                        <PillPicker
+                          label="Цвет"
+                          options={subtitleColors}
+                          value={subtitleColor}
+                          onChange={setSubtitleColor}
+                        />
+                        <PillPicker
+                          label="Размер"
+                          options={subtitleSizes}
+                          value={subtitleSize}
+                          onChange={setSubtitleSize}
+                        />
+                        {/* Placement is its own axis, not part of a style: the
+                            same typography belongs over the face on one clip
+                            and under it on the next. */}
+                        <PillPicker
+                          label="Положение"
+                          options={positions}
+                          value={subtitlePosition}
+                          onChange={setSubtitlePosition}
+                        />
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -633,6 +677,13 @@ export default function VideoEditView() {
             </label>
           )}
 
+          {/* Levels 1 and 2 are still mocks — they hand back a link to a file
+              that does not exist. Offered to a customer, the choice is between
+              the real thing and nothing, and it sat last on the screen while
+              deciding which settings above even applied. So outside
+              development there is one template, and no picker at all. */}
+          {MOCK_PIPELINES_VISIBLE && (
+          <>
           <div className={styles.templateLabel}>
             <span className={styles.fieldLabel}>Шаблон монтажа</span>
           </div>
@@ -652,6 +703,8 @@ export default function VideoEditView() {
               </button>
             ))}
           </div>
+          </>
+          )}
 
           {/* On a phone this becomes a fixed bar at the bottom. It needs to be
               a real element with its own background: a bare fixed button lets
@@ -700,13 +753,21 @@ export default function VideoEditView() {
 
         <section className={styles.queue}>
           <div className={styles.queueHeader}>
-            <h2>Очередь рендеров</h2>
-            <span className={styles.queueCount}>{jobs.length} проектов</span>
+            {/* "Мои ролики", not "Очередь рендеров": a person looks here for
+                their videos, and "render queue" is how the system sees them. */}
+            <h2>Мои ролики</h2>
+            <span className={styles.queueCount}>{jobs.length}</span>
           </div>
-          <p className={styles.queueHint}>Без реальной очереди рендер продвигается по таймеру — эта кнопка не ждёт его.</p>
-          <button className={controls.buttonSecondary} onClick={tickNow}>
-            Продвинуть рендер сейчас
-          </button>
+          {/* A remote control for the mock pipelines, which advance on a
+              timer. To a customer it said only that something was unfinished. */}
+          {MOCK_PIPELINES_VISIBLE && (
+            <>
+              <p className={styles.queueHint}>Без реальной очереди рендер продвигается по таймеру — эта кнопка не ждёт его.</p>
+              <button className={controls.buttonSecondary} onClick={tickNow}>
+                Продвинуть рендер сейчас
+              </button>
+            </>
+          )}
 
           {jobs.length > 0 && (
             <div className={styles.jobList}>

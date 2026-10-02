@@ -194,8 +194,11 @@
     z-index: 20;
     display: flex;
     flex-direction: column-reverse;
-    gap: 6px;
-    padding: 10px 14px;
+    /* Tighter than it was: together with the tab bar this panel took close
+       to a quarter of a small phone's screen, all of it permanently over the
+       settings being scrolled. 46px still clears the 44px touch minimum. */
+    gap: 4px;
+    padding: 8px 14px;
     border-top: 1px solid var(--border);
     background: var(--background);
   }
@@ -203,13 +206,15 @@
   .submitButton {
     width: 100%;
     margin: 0;
-    min-height: 50px;
+    min-height: 46px;
     border-radius: var(--radius-lg);
     font-size: var(--text-base);
     font-weight: 650;
   }
 
-  .blockedHint { margin: 0; text-align: center; }
+  /* One line at phone width: at text-sm the account prompt wrapped onto
+     two and made the panel taller still. */
+  .blockedHint { margin: 0; text-align: center; font-size: var(--text-xs); }
 
   .queue { margin-top: 24px; }
   .jobCard { padding: 14px; }
@@ -407,3 +412,27 @@
 /* Each picker's own row scrolls, so a column of five of them still leaves
    the preview above as the biggest thing on the screen. */
 .pickers { display: flex; flex-direction: column; gap: 14px; }
+
+/* The folded row for typeface, colour, size and placement. A full-width row
+   rather than a link: on a phone it has to be hit by a thumb, and it carries
+   a summary of what is set beneath the title. */
+.detailsToggle {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'title chevron' 'summary chevron';
+  align-items: center;
+  gap: 2px 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.detailsToggle:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.detailsTitle { grid-area: title; font-size: var(--text-sm); font-weight: 650; }
+.detailsSummary { grid-area: summary; color: var(--foreground-muted); font-size: var(--text-xs); }
+.detailsChevron { grid-area: chevron; color: var(--foreground-muted); font-size: var(--text-sm); }
