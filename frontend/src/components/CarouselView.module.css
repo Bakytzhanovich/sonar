@@ -131,3 +131,8 @@ button.thumbActive { border-color: var(--accent); }
   .canvasStage { padding: 8px; }
   .emptyState { min-height: 260px; }
 }
+
+@media (pointer: coarse) {
+  /* Example topics are tapped, not clicked: give them a finger's height. */
+  button.example { min-height: 36px; padding: 6px 12px; }
+}

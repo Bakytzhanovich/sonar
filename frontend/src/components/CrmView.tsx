@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { plural } from '@/lib/plural';
+import { STAFF_BOOTSTRAP_AVAILABLE } from '@/lib/useApiAccess';
 import { api, type ConversationMessage, type LeadStatus, type Note, type Subscriber, type Tag } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import PageHeader from './PageHeader';
@@ -968,6 +969,8 @@ export default function CrmView() {
               </>
             )}
 
+            {/* Development only — see the same toggle in FlowEditor. */}
+            {STAFF_BOOTSTRAP_AVAILABLE && (
             <div className={styles.developerArea}>
               <button className={controls.devToggle} onClick={() => setDevMode(!devMode)}>
                 {devMode ? '▾' : '▸'} Режим разработчика
@@ -981,6 +984,7 @@ export default function CrmView() {
                 </div>
               )}
             </div>
+            )}
           </div>
         </main>
 

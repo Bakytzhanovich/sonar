@@ -403,7 +403,7 @@ export default function CarouselView() {
             <div className={styles.emptyState}>
               <div className={styles.emptyShape}>✦</div>
               <h2>Первая карусель — за минуту</h2>
-              <p>Напишите тему слева или нажмите на пример. ИИ напишет слайды, а вы поправите текст и скачаете картинки для Instagram.</p>
+              <p>Напишите тему или нажмите на пример. ИИ напишет слайды, а вы поправите текст и скачаете картинки для Instagram.</p>
             </div>
           ) : (
             <div className={styles.studio}>

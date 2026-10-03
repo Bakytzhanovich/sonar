@@ -420,7 +420,7 @@ export default function SchedulerView() {
               <PostRow post={p} account={accountName(p.platform_account_id)} config={config} accounts={accounts} onChanged={load} onMessage={setStatus} />
             </div>
           ))}
-          {posts.length === 0 && <div className={styles.emptyState}><div><div className={styles.emptyIcon}>↗</div><h2>Очередь свободна</h2><p>Выберите ролик слева, напишите текст и время — пост встанет сюда.</p></div></div>}
+          {posts.length === 0 && <div className={styles.emptyState}><div><div className={styles.emptyIcon}>↗</div><h2>Очередь свободна</h2><p>Выберите ролик, напишите текст и время — пост встанет сюда.</p></div></div>}
 
           <StatusMessage>{status}</StatusMessage>
         </div>

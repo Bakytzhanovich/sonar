@@ -215,3 +215,9 @@
 
 /* The inspector's pickers sit under their own labels. */
 .inspectorSelect { margin-top: 4px; }
+
+/* React Flow's zoom buttons are 26px — fine for a mouse, a miss for a finger. */
+@media (pointer: coarse) {
+  .canvasWrap :global(.react-flow__controls-button) { width: 36px; height: 36px; }
+  .canvasWrap :global(.react-flow__controls-button svg) { max-width: 14px; max-height: 14px; }
+}

@@ -538,11 +538,15 @@ export default function FlowEditor() {
 
           {status && <div className={styles.statusLine}>{status}</div>}
 
-          <button className={controls.devToggle} onClick={() => setDevMode(!devMode)}>
-            {devMode ? '▾' : '▸'} Режим разработчика
-          </button>
+          {/* Our tooling — raw ids and a tenant-creating shortcut — never the
+              customer's: it was showing on the production site. */}
+          {STAFF_BOOTSTRAP_AVAILABLE && (
+            <button className={controls.devToggle} onClick={() => setDevMode(!devMode)}>
+              {devMode ? '▾' : '▸'} Режим разработчика
+            </button>
+          )}
 
-          {devMode && (
+          {STAFF_BOOTSTRAP_AVAILABLE && devMode && (
             <div className={controls.devPanel}>
               <div className={styles.card}>
                 <h4 className={styles.cardTitle}>Подключение</h4>
