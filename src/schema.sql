@@ -384,6 +384,22 @@ CREATE TABLE content_plans (
   generated_at  TIMESTAMPTZ NOT NULL
 );
 
+-- Which topic is filmed on which day. A copy of the topic's title, segment
+-- and script, not only a reference: a rebuilt plan gives its topics new ids,
+-- and a laid-out week must not empty itself when that happens. day is a
+-- calendar date in the person's own time zone, chosen by the browser.
+CREATE TABLE content_calendar (
+  id          TEXT PRIMARY KEY,
+  tenant_id   TEXT NOT NULL REFERENCES tenants(id),
+  day         DATE NOT NULL,
+  topic_id    TEXT,
+  title       TEXT NOT NULL,
+  segment     TEXT NOT NULL,
+  script      TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_content_calendar_day ON content_calendar(tenant_id, day);
+
 -- ---- Module 8: Video editing, Levels 1-2 only (mocked Shotstack/Creatomate) --
 -- Level 3 (custom FFmpeg engine + AI upscaling) is explicitly its own R&D
 -- track per the ТЗ and out of scope here. source_video_url is just a

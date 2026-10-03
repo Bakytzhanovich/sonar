@@ -1,0 +1,68 @@
+/* The week. Seven columns on a laptop, a list of days on a phone — the same
+   order either way, Monday first. */
+
+.calendar { margin-bottom: 36px; }
+
+.head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.head h2 { margin: 0; font-size: var(--text-lg); }
+.nav { display: flex; align-items: center; gap: 8px; }
+.navButton {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--foreground);
+  background: transparent;
+  font-size: var(--text-lg);
+  cursor: pointer;
+}
+.navButton:hover { border-color: var(--accent); color: var(--accent); }
+.weekLabel { min-width: 130px; font-size: var(--text-sm); font-weight: 650; text-align: center; }
+.todayButton { padding: 4px 10px; border: 0; color: var(--accent); background: transparent; font-size: var(--text-xs); font-weight: 700; cursor: pointer; }
+
+.controls { display: flex; align-items: flex-end; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+
+.days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.day { display: flex; flex-direction: column; gap: 8px; min-height: 150px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--background); }
+.today { border-color: var(--accent); }
+.dayHead { display: flex; align-items: baseline; justify-content: space-between; color: var(--foreground-muted); font-size: var(--text-xs); }
+.dayHead strong { color: var(--foreground); font-size: var(--text-lg); }
+.today .dayHead strong { color: var(--accent); }
+.nothing { margin: auto; color: var(--border); }
+
+.entry { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 4px 10px 10px 10px; background: var(--surface); }
+.entryTitle { font-size: var(--text-xs); font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; }
+.segment { align-self: flex-start; padding: 1px 7px; border-radius: var(--radius-full); color: var(--accent); background: var(--accent-soft); font-size: 10px; font-weight: 700; }
+.entryActions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.linkButton { padding: 0; border: 0; color: var(--accent); background: transparent; font-size: 11px; font-weight: 650; text-align: left; cursor: pointer; }
+.linkButton:disabled { color: var(--foreground-muted); cursor: default; }
+.moveSelect { max-width: 70px; margin-left: auto; padding: 1px 2px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground-muted); background: transparent; font-size: 10px; }
+.removeButton { padding: 0 4px; border: 0; color: var(--foreground-muted); background: transparent; font-size: var(--text-sm); line-height: 1; cursor: pointer; }
+.removeButton:hover { color: var(--status-failed); }
+
+.script { display: flex; flex-direction: column; gap: 6px; }
+.script p { max-height: 220px; margin: 0; overflow-y: auto; font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+.scriptActions { display: flex; gap: 6px; flex-wrap: wrap; }
+.scriptActions > * { padding: 4px 8px !important; font-size: 11px !important; }
+
+.post { display: flex; align-items: center; gap: 6px; color: var(--foreground-muted); font-size: 11px; text-decoration: none; }
+.post:hover { color: var(--accent); }
+.postDot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--status-scheduled); }
+
+/* A column per day stops being readable below a laptop's width: each day
+   becomes a row, empty ones folded down to their date. */
+@media (max-width: 900px) {
+  .days { grid-template-columns: 1fr; }
+  .day { min-height: 0; flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+  .dayHead { flex-direction: column; align-items: center; justify-content: flex-start; width: 34px; flex: none; }
+  .entry, .post { flex: 1 1 220px; }
+  .dayEmpty .nothing { margin: 6px 0 0; }
+  .entryTitle { font-size: var(--text-sm); }
+  .linkButton { font-size: var(--text-xs); }
+  .moveSelect { max-width: none; font-size: var(--text-xs); padding: 3px 4px; }
+  .script p { font-size: var(--text-xs); }
+}
+
+.notice { margin: -4px 0 12px; padding: 8px 12px; border-radius: var(--radius-md); color: var(--foreground); background: var(--accent-soft); font-size: var(--text-sm); }

@@ -279,6 +279,18 @@ const MIGRATIONS: string[] = [
      source_hash   TEXT NOT NULL,
      generated_at  TIMESTAMPTZ NOT NULL
    )`,
+  // Module 6: the week the topics are filmed in (contentCalendar.ts).
+  `CREATE TABLE IF NOT EXISTS content_calendar (
+     id          TEXT PRIMARY KEY,
+     tenant_id   TEXT NOT NULL REFERENCES tenants(id),
+     day         DATE NOT NULL,
+     topic_id    TEXT,
+     title       TEXT NOT NULL,
+     segment     TEXT NOT NULL,
+     script      TEXT,
+     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_content_calendar_day ON content_calendar(tenant_id, day)`,
 ];
 
 async function applyMigrations(client: PoolClient): Promise<void> {

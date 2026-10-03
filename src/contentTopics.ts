@@ -320,16 +320,24 @@ export async function getContentPlan(db: Db, tenantId: string): Promise<ContentP
   return { topics: row.topics, generatedAt: row.generated_at, stale: row.source_hash !== (await sourceHash(db, tenantId)) };
 }
 
+/** A script for a topic — or for a calendar entry whose topic a rebuilt plan
+ *  no longer has, in which case there are no quotes to go on, only the title. */
+export async function scriptFor(
+  topic: { title: string; segment: string; why?: string; quotes?: string[] },
+  chat: ChatModel
+): Promise<string> {
+  const quotes = topic.quotes?.length ? topic.quotes.map((q) => `- ${q}`).join('\n') : '(нет)';
+  const user = `Тема: ${topic.title}\nСегмент: ${topic.segment}\nПочему: ${topic.why || '—'}\nВопросы покупателей:\n${quotes}`;
+  return parseScript(await chat(SCRIPT_SYSTEM, user));
+}
+
 /** A script for one topic, saved onto it so it survives a reload. */
 export async function writeTopicScript(db: Db, tenantId: string, topicId: string, chat: ChatModel): Promise<ContentTopic | null> {
   const plan = await queryOne<{ topics: ContentTopic[] }>(db, `SELECT topics FROM content_plans WHERE tenant_id = ?`, tenantId);
   const topic = plan?.topics.find((t) => t.id === topicId);
   if (!plan || !topic) return null;
 
-  const user =
-    `Тема: ${topic.title}\nСегмент: ${topic.segment}\nПочему: ${topic.why}\n` +
-    `Вопросы покупателей:\n${topic.quotes.map((q) => `- ${q}`).join('\n')}`;
-  const updated = { ...topic, script: parseScript(await chat(SCRIPT_SYSTEM, user)) };
+  const updated = { ...topic, script: await scriptFor(topic, chat) };
   // jsonb_set on the topic's position, under the same plan the topic was read
   // from: a plan regenerated meanwhile has other topic ids, and then this
   // write matches nothing rather than grafting a script onto the wrong topic.
@@ -344,5 +352,7 @@ export async function writeTopicScript(db: Db, tenantId: string, topicId: string
     index,
     topicId
   );
+  // The same topic laid out in the calendar shows the same script.
+  await exec(db, `UPDATE content_calendar SET script = ? WHERE tenant_id = ? AND topic_id = ?`, updated.script, tenantId, topicId);
   return updated;
 }

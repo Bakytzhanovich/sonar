@@ -48,7 +48,8 @@ import { PLATFORM_NAME, publishDuePosts } from './publisher';
 import { authorizeUrl, connectWithCode, instagramConfigFromEnv, signState, verifyState, type InstagramAppConfig } from './instagramAuth';
 import { listAccounts, saveConnectedAccount } from './platformAccounts';
 import { keyringFromEnv, type TokenKeyring } from './tokenVault';
-import { generateContentPlan, getContentPlan, NotEnoughDataError, planReadiness, writeTopicScript } from './contentTopics';
+import { generateContentPlan, getContentPlan, NotEnoughDataError, planReadiness, scriptFor, writeTopicScript } from './contentTopics';
+import { addDays, autoFillWeek, isDay, listEntries } from './contentCalendar';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
 import { assToRgb } from './assColour';
@@ -1880,6 +1881,78 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       const topic = await writeTopicScript(db, res.locals.tenantId as string, req.params.id, reelChat);
       if (!topic) return res.status(404).json({ error: 'topic not found' });
       res.json({ topic });
+    } catch (err) {
+      if (err instanceof ReelAnalysisError) return res.status(err.reason === 'llm_not_configured' ? 503 : 502).json({ error: err.reason });
+      throw err;
+    }
+  }));
+
+  // ---- Module 6: the calendar ------------------------------------------
+  // Dates are the browser's: see contentCalendar.ts.
+
+  app.get('/api/content-calendar', asyncHandler(async (req, res) => {
+    const { from, to } = req.query;
+    if (!isDay(from) || !isDay(to) || to < from) return res.status(400).json({ error: 'from and to must be YYYY-MM-DD, from first' });
+    // A couple of months at most: the screen shows a week, and an unbounded
+    // range is a full-table read on request.
+    if (addDays(from, 62) < to) return res.status(400).json({ error: 'range too long' });
+    res.json({ entries: await listEntries(db, res.locals.tenantId as string, from, to) });
+  }));
+
+  app.post('/api/content-calendar/auto', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const weekStart = req.body?.weekStart;
+    const perWeek = Number(req.body?.perWeek ?? 3);
+    if (!isDay(weekStart)) return res.status(400).json({ error: 'weekStart must be YYYY-MM-DD' });
+    if (!Number.isInteger(perWeek) || perWeek < 1 || perWeek > 7) return res.status(400).json({ error: 'perWeek must be 1..7' });
+    // The browser's today, for the same reason the days are the browser's.
+    const today = isDay(req.body?.today) ? req.body.today : undefined;
+    const plan = await getContentPlan(db, tenantId);
+    if (!plan || plan.topics.length === 0) return res.status(409).json({ error: 'no_plan' });
+    res.json({ entries: await autoFillWeek(db, tenantId, plan.topics, weekStart, perWeek, today) });
+  }));
+
+  app.patch('/api/content-calendar/:id', asyncHandler(async (req, res) => {
+    if (!isDay(req.body?.day)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
+    const moved = await queryOne<{ id: string }>(
+      db,
+      `UPDATE content_calendar SET day = ?::date WHERE id = ? AND tenant_id = ? RETURNING id`,
+      req.body.day,
+      req.params.id,
+      res.locals.tenantId
+    );
+    if (!moved) return res.status(404).json({ error: 'entry not found' });
+    res.json({ ok: true });
+  }));
+
+  app.delete('/api/content-calendar/:id', asyncHandler(async (req, res) => {
+    const removed = await queryOne<{ id: string }>(
+      db,
+      `DELETE FROM content_calendar WHERE id = ? AND tenant_id = ? RETURNING id`,
+      req.params.id,
+      res.locals.tenantId
+    );
+    if (!removed) return res.status(404).json({ error: 'entry not found' });
+    res.status(204).end();
+  }));
+
+  // A script for an entry. Through its topic when the plan still has it, so
+  // the topic card shows the script too; from the entry's own words when a
+  // rebuilt plan no longer does.
+  app.post('/api/content-calendar/:id/script', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const entry = await queryOne<{ id: string; topic_id: string | null; title: string; segment: string }>(
+      db,
+      `SELECT id, topic_id, title, segment FROM content_calendar WHERE id = ? AND tenant_id = ?`,
+      req.params.id,
+      tenantId
+    );
+    if (!entry) return res.status(404).json({ error: 'entry not found' });
+    try {
+      const viaTopic = entry.topic_id ? await writeTopicScript(db, tenantId, entry.topic_id, reelChat) : null;
+      const script = viaTopic?.script ?? (await scriptFor(entry, reelChat));
+      if (!viaTopic) await exec(db, `UPDATE content_calendar SET script = ? WHERE id = ?`, script, entry.id);
+      res.json({ script });
     } catch (err) {
       if (err instanceof ReelAnalysisError) return res.status(err.reason === 'llm_not_configured' ? 503 : 502).json({ error: err.reason });
       throw err;

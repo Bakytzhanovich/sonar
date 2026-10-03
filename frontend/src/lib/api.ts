@@ -415,6 +415,18 @@ export interface ContentPlan {
   stale: boolean;
 }
 
+/** A topic laid on a day. `day` is a calendar date in the viewer's own zone. */
+export interface CalendarEntry {
+  id: string;
+  day: string;
+  /** Null-ish once the plan it came from has been rebuilt. */
+  topic_id: string | null;
+  title: string;
+  segment: string;
+  script: string | null;
+  created_at: string;
+}
+
 export interface PlanReadiness {
   instagramConnected: boolean;
   inboundMessages: number;
@@ -708,6 +720,21 @@ export const api = {
 
   writeTopicScript: (config: ApiConfig, topicId: string) =>
     apiRequest(config, 'POST', `/api/content-plan/topics/${encodeURIComponent(topicId)}/script`) as Promise<{ topic: ContentTopic }>,
+
+  listCalendar: (config: ApiConfig, from: string, to: string) =>
+    apiRequest(config, 'GET', `/api/content-calendar?from=${from}&to=${to}`) as Promise<{ entries: CalendarEntry[] }>,
+
+  /** `today` is the viewer's own date: days before it are left empty. */
+  autoFillWeek: (config: ApiConfig, weekStart: string, perWeek: number, today: string) =>
+    apiRequest(config, 'POST', '/api/content-calendar/auto', { weekStart, perWeek, today }) as Promise<{ entries: CalendarEntry[] }>,
+
+  moveCalendarEntry: (config: ApiConfig, id: string, day: string) =>
+    apiRequest(config, 'PATCH', `/api/content-calendar/${encodeURIComponent(id)}`, { day }),
+
+  removeCalendarEntry: (config: ApiConfig, id: string) => apiRequest(config, 'DELETE', `/api/content-calendar/${encodeURIComponent(id)}`),
+
+  writeCalendarScript: (config: ApiConfig, id: string) =>
+    apiRequest(config, 'POST', `/api/content-calendar/${encodeURIComponent(id)}/script`) as Promise<{ script: string }>,
 
   // ---- Module 8: Video editing, Levels 1-2 (mocked) -----------------------
 

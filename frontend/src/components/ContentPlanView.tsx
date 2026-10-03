@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { api, type ContentPlan, type ContentRecommendation, type ContentTopic, type PlanReadiness } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
+import ContentCalendar from './ContentCalendar';
 import ModuleNav from './ModuleNav';
 import TabBar from './TabBar';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
@@ -69,6 +70,7 @@ export default function ContentPlanView() {
   const [plan, setPlan] = useState<ContentPlan | null>(null);
   const [readiness, setReadiness] = useState<PlanReadiness | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [calendarRefresh, setCalendarRefresh] = useState(0);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
@@ -123,8 +125,18 @@ export default function ContentPlanView() {
     }
   }
 
+  async function reloadPlan() {
+    try {
+      setPlan((await api.getContentPlan(config)).plan);
+    } catch {
+      // The calendar already shows the script; the card catches up on reload.
+    }
+  }
+
   function topicUpdated(topic: ContentTopic) {
     setPlan((current) => current && { ...current, topics: current.topics.map((t) => (t.id === topic.id ? topic : t)) });
+    // The calendar keeps its own copy of the script; ask it to read again.
+    setCalendarRefresh((n) => n + 1);
   }
 
   useEffect(() => {
@@ -198,6 +210,10 @@ export default function ContentPlanView() {
             onTopicUpdated={topicUpdated}
             onMessage={setStatus}
           />
+        )}
+
+        {!onboarding && hasLoaded && hasAccess && plan && (
+          <ContentCalendar config={config} hasPlan={plan.topics.length > 0} onMessage={setStatus} onScriptWritten={reloadPlan} refreshKey={calendarRefresh} />
         )}
 
         {allRecommendations.length > 0 && (
