@@ -762,8 +762,9 @@ export const api = {
 
   // ---- Module 8, Level 3: own ffmpeg engine ------------------------------
 
-  createVideoUpload: (config: ApiConfig, contentType: string) =>
-    apiRequest(config, 'POST', '/api/video-uploads', { contentType }) as Promise<VideoUploadTicket>,
+  /** `size` lets the server refuse an oversized file before it is uploaded. */
+  createVideoUpload: (config: ApiConfig, contentType: string, size?: number) =>
+    apiRequest(config, 'POST', '/api/video-uploads', { contentType, size }) as Promise<VideoUploadTicket>,
 
   // No denoise/review flags: the pipeline measures the recording and decides.
   listSubtitlePresets: (config: ApiConfig) =>

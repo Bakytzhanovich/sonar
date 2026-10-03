@@ -1,7 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import fs from 'node:fs/promises';
-import { Readable } from 'node:stream';
+import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 // S3-compatible object storage (Cloudflare R2 by default, plain S3 or MinIO
@@ -211,10 +211,50 @@ export function downloadUrlFor(config: StorageConfig, key: string, filename: str
   return presign(config, { method: 'GET', key, expiresInSec: RENDER_URL_TTL_SEC, downloadFilename: filename });
 }
 
-export async function downloadToFile(config: StorageConfig, key: string, destPath: string): Promise<void> {
+/**
+ * The largest source the worker will take. A presigned PUT cannot cap what
+ * is uploaded through it, so the cap is enforced where it matters — before
+ * the bytes reach the worker's disk. A multi-gigabyte upload otherwise
+ * filled that disk and stopped every customer's edit queued behind it.
+ */
+export const MAX_SOURCE_BYTES = 600 * 1024 * 1024;
+
+export class SourceTooLargeError extends Error {
+  constructor(bytes: number) {
+    super(`source is ${Math.round(bytes / 1024 / 1024)} MB, over the ${MAX_SOURCE_BYTES / 1024 / 1024} MB limit`);
+    this.name = 'SourceTooLargeError';
+  }
+}
+
+/** Passes bytes through, and fails the stream the moment there are too many. */
+function byteCap(max: number): Transform {
+  let seen = 0;
+  return new Transform({
+    transform(chunk: Buffer, _enc, done) {
+      seen += chunk.length;
+      if (seen > max) return done(new SourceTooLargeError(seen));
+      done(null, chunk);
+    },
+  });
+}
+
+export async function downloadToFile(config: StorageConfig, key: string, destPath: string, maxBytes = MAX_SOURCE_BYTES): Promise<void> {
   const response = await fetch(presign(config, { method: 'GET', key }));
   if (!response.ok || !response.body) throw new Error(`storage GET failed with ${response.status}`);
-  await pipeline(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]), createWriteStream(destPath));
+  // Refused up front when the size is declared; counted as it streams when it
+  // is not, or when the declaration is wrong.
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body.cancel();
+    throw new SourceTooLargeError(declared);
+  }
+  try {
+    await pipeline(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]), byteCap(maxBytes), createWriteStream(destPath));
+  } catch (err) {
+    // A half-written oversized file is exactly the disk use this prevents.
+    await fs.rm(destPath, { force: true });
+    throw err;
+  }
 }
 
 export async function uploadFile(config: StorageConfig, key: string, sourcePath: string, contentType: string): Promise<void> {

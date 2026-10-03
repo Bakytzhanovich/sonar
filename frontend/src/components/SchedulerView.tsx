@@ -215,7 +215,7 @@ export default function SchedulerView() {
     try {
       let video: { videoJobId?: string; videoObjectKey?: string };
       if (source === 'upload' && file) {
-        const ticket = await api.createVideoUpload(config, file.type || 'video/mp4');
+        const ticket = await api.createVideoUpload(config, file.type || 'video/mp4', file.size);
         await api.uploadVideoFile(ticket, file);
         video = { videoObjectKey: ticket.objectKey };
       } else {

@@ -59,7 +59,7 @@ import { REFERENCE_FRAME } from './aspect';
 import { pickPreviewWindow } from './previewWindow';
 import { adaptReelScript, openAiChatFromEnv, ReelAnalysisError, type ChatModel } from './reelLlm';
 import { normalizeManualSegments } from './smartCut';
-import { deleteObject, downloadUrlFor, presign, storageConfigFromEnv } from './storage';
+import { deleteObject, downloadUrlFor, MAX_SOURCE_BYTES, presign, storageConfigFromEnv } from './storage';
 import { localMediaConfigFromEnv, resolveKeyPath, signLocalUrl, verifyLocalUrl } from './localMedia';
 import { notify, listNotifications } from './notifications';
 import { getOrCreateVapidKeys } from './vapidKeys';
@@ -107,7 +107,8 @@ const PREVIEW_SECONDS = 4;
 // Ceiling for a single upload through the local dev store. A reel is a few
 // hundred megabytes at most; without a cap one request can exhaust the
 // process's memory, since express.raw buffers the whole body.
-const MAX_UPLOAD_BYTES = 600 * 1024 * 1024;
+// The local store's own ceiling — the same one the worker holds R2 sources to.
+const MAX_UPLOAD_BYTES = MAX_SOURCE_BYTES;
 
 const DEMO_BOT_NAME = 'Sonar Demo';
 const DEMO_EXTERNAL_USER_ID = 'sonar-demo-contact';
@@ -185,6 +186,31 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     legacyHeaders: false,
     message: { error: 'too_many_requests' },
   });
+
+  // Per workspace, not per address, and only on what costs money: every one
+  // of these calls a paid model or transcription. Sign-up is open, so without
+  // a ceiling anyone could register and loop a generate button into the
+  // model bill. The ceilings are far above what a person does in an hour and
+  // far below what a script does in a minute. Keyed on the tenant — these
+  // routes sit behind requireProductCredential, which sets it.
+  const perTenant = (limit: number, windowMs: number, message: string) =>
+    rateLimit({
+      windowMs,
+      limit,
+      standardHeaders: true,
+      legacyHeaders: false,
+      keyGenerator: (_req, res) => `tenant:${String(res.locals.tenantId)}`,
+      message: { error: message },
+    });
+  const HOUR = 60 * 60 * 1000;
+  // Text from the model: carousels, plans, scripts.
+  const aiRateLimit = perTenant(30, HOUR, 'Слишком много запросов к ИИ за час — подождите немного и попробуйте снова');
+  // Work that transcribes a recording: a reel analysis, a new edit, a re-edit.
+  const mediaRateLimit = perTenant(20, HOUR, 'Слишком много роликов за час — подождите немного и попробуйте снова');
+  // A few seconds of ffmpeg each, but each is a worker job.
+  const previewRateLimit = perTenant(60, HOUR, 'Слишком много предпросмотров за час — подождите немного');
+  // Upload tickets: each one is room in the bucket.
+  const uploadRateLimit = perTenant(40, HOUR, 'Слишком много загрузок за час — подождите немного');
 
   // The mock webhook authenticates with a shared secret rather than a
   // tenant credential, so it gets its own limiter: without one, a caller
@@ -1335,7 +1361,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // has the file anyway. The row is created here and filled in by the worker
   // (reelPipeline.ts) — transcription and a model call are not something to
   // hold a request open for.
-  app.post('/api/reel-analyses', asyncHandler(async (req, res) => {
+  app.post('/api/reel-analyses', mediaRateLimit, asyncHandler(async (req, res) => {
     const tenantId = res.locals.tenantId as string;
     const sourceObjectKey = typeof req.body?.sourceObjectKey === 'string' ? req.body.sourceObjectKey.trim() : '';
     if (!sourceObjectKey) return res.status(400).json({ error: 'sourceObjectKey is required' });
@@ -1440,7 +1466,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // attempt can change the answer: a reel with no speech, no sound or three
   // minutes too many will fail the same way, and each retry would be another
   // transcription bill for the same outcome.
-  app.post('/api/reel-analyses/:id/retry', asyncHandler(async (req, res) => {
+  app.post('/api/reel-analyses/:id/retry', mediaRateLimit, asyncHandler(async (req, res) => {
     const tenantId = res.locals.tenantId as string;
     const analysis = await getAnalysisForTenant(db, req.params.id, tenantId);
     if (!analysis) return res.status(404).json({ error: 'analysis not found' });
@@ -1460,7 +1486,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     res.json({ analysis: await getAnalysisForTenant(db, analysis.id, tenantId) });
   }));
 
-  app.post('/api/reel-analyses/:id/scripts', asyncHandler(async (req, res) => {
+  app.post('/api/reel-analyses/:id/scripts', aiRateLimit, asyncHandler(async (req, res) => {
     const analysis = await getAnalysisForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!analysis) return res.status(404).json({ error: 'analysis not found' });
 
@@ -1557,7 +1583,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // anything written: a model that fails must not leave an empty carousel in
   // the library. And when it does fail, the person is told — never handed
   // template slides as if they were generated (see carouselGeneration.ts).
-  app.post('/api/carousels', asyncHandler(async (req, res) => {
+  app.post('/api/carousels', aiRateLimit, asyncHandler(async (req, res) => {
     const tenantId = res.locals.tenantId as string;
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
     if (!prompt) return res.status(400).json({ error: 'prompt is required' });
@@ -2058,7 +2084,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
 
   // Made on request, not on view — a model call per page load would be paid
   // for by every refresh. Same model as the reel scripts.
-  app.post('/api/content-plan', asyncHandler(async (_req, res) => {
+  app.post('/api/content-plan', aiRateLimit, asyncHandler(async (_req, res) => {
     try {
       res.json({ plan: await generateContentPlan(db, res.locals.tenantId as string, reelChat) });
     } catch (err) {
@@ -2068,7 +2094,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     }
   }));
 
-  app.post('/api/content-plan/topics/:id/script', asyncHandler(async (req, res) => {
+  app.post('/api/content-plan/topics/:id/script', aiRateLimit, asyncHandler(async (req, res) => {
     try {
       const topic = await writeTopicScript(db, res.locals.tenantId as string, req.params.id, reelChat);
       if (!topic) return res.status(404).json({ error: 'topic not found' });
@@ -2131,7 +2157,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // A script for an entry. Through its topic when the plan still has it, so
   // the topic card shows the script too; from the entry's own words when a
   // rebuilt plan no longer does.
-  app.post('/api/content-calendar/:id/script', asyncHandler(async (req, res) => {
+  app.post('/api/content-calendar/:id/script', aiRateLimit, asyncHandler(async (req, res) => {
     const tenantId = res.locals.tenantId as string;
     const entry = await queryOne<{ id: string; topic_id: string | null; title: string; segment: string }>(
       db,
@@ -2160,13 +2186,20 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // with this presigned URL — the API never sees the bytes, because proxying
   // a few hundred megabytes of video through an Express process on a small
   // instance is what takes the whole API down.
-  app.post('/api/video-uploads', asyncHandler(async (req, res) => {
+  app.post('/api/video-uploads', uploadRateLimit, asyncHandler(async (req, res) => {
     const storage = storageConfigFromEnv();
     if (!storage && !localMedia) return res.status(503).json({ error: 'storage_not_configured' });
 
     const contentType = typeof req.body?.contentType === 'string' ? req.body.contentType : '';
     if (!UPLOAD_CONTENT_TYPES.includes(contentType)) {
       return res.status(400).json({ error: `contentType must be one of: ${UPLOAD_CONTENT_TYPES.join(', ')}` });
+    }
+    // Said at once, before minutes of uploading. Only a courtesy: a presigned
+    // PUT cannot hold the browser to the size it declares, which is why the
+    // worker enforces the same ceiling as it downloads (storage.ts).
+    const size = Number(req.body?.size);
+    if (Number.isFinite(size) && size > MAX_SOURCE_BYTES) {
+      return res.status(413).json({ error: `Файл больше ${MAX_SOURCE_BYTES / 1024 / 1024} МБ — загрузите ролик покороче или сожмите его` });
     }
 
     // The key is derived server-side and namespaced by tenant; a
@@ -2190,7 +2223,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     });
   }));
 
-  app.post('/api/video-edit-jobs', asyncHandler(async (req, res) => {
+  app.post('/api/video-edit-jobs', mediaRateLimit, asyncHandler(async (req, res) => {
     const template = req.body?.template;
     if (!VIDEO_TEMPLATES.includes(template)) return res.status(400).json({ error: `template must be one of: ${VIDEO_TEMPLATES.join(', ')}` });
 
@@ -2472,7 +2505,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   //
   // Costs no transcription. The parent's is inherited, so this is a few
   // seconds of ffmpeg and nothing else.
-  app.post('/api/video-edit-jobs/:id/preview', asyncHandler(async (req, res) => {
+  app.post('/api/video-edit-jobs/:id/preview', previewRateLimit, asyncHandler(async (req, res) => {
     const tenantId = res.locals.tenantId as string;
     const parent = await queryOne<VideoEditJob>(
       db,
@@ -2546,7 +2579,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // the cuts actually go. Creates a NEW job rather than re-running this one —
   // the render they are looking at stays downloadable while the revision
   // works, and survives one that comes out worse or fails.
-  app.post('/api/video-edit-jobs/:id/revise', asyncHandler(async (req, res) => {
+  app.post('/api/video-edit-jobs/:id/revise', mediaRateLimit, asyncHandler(async (req, res) => {
     const tenantId = res.locals.tenantId as string;
     const parent = await queryOne<VideoEditJob>(
       db,

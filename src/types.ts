@@ -310,6 +310,7 @@ export type VideoFailureReason =
   | 'ffmpeg_not_available'
   | 'source_unreadable'
   | 'source_missing'
+  | 'source_too_large'
   | 'no_audio_track'
   | 'video_too_long'
   | 'transcription_not_configured'

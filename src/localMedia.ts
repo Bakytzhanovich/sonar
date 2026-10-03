@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { StorageIo } from './videoPipeline';
+import { MAX_SOURCE_BYTES, SourceTooLargeError } from './storage';
 
 // A filesystem stand-in for S3/R2, so the Level-3 pipeline can be run and
 // watched end to end on a laptop with no cloud account.
@@ -110,7 +111,12 @@ export function verifyLocalUrl(
 export function localStorageIo(config: LocalMediaConfig): StorageIo {
   return {
     async download(key, destPath) {
-      await fs.copyFile(resolveKeyPath(config, key), destPath);
+      const source = resolveKeyPath(config, key);
+      // The same ceiling as the R2 path (storage.ts), so development behaves
+      // like production.
+      const { size } = await fs.stat(source);
+      if (size > MAX_SOURCE_BYTES) throw new SourceTooLargeError(size);
+      await fs.copyFile(source, destPath);
     },
     async upload(key, sourcePath) {
       const target = resolveKeyPath(config, key);

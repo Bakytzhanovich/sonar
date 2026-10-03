@@ -90,6 +90,7 @@ const STAGE_LABEL: Record<string, string> = {
 // change without a data migration.
 const FAILURE_LABEL: Record<string, string> = {
   no_audio_track: 'В файле нет звуковой дорожки',
+  source_too_large: 'Файл больше 600 МБ — загрузите ролик покороче или сожмите его',
   video_too_long: 'Видео длиннее 20 минут',
   source_unreadable: 'Не удалось прочитать файл',
   transcription_not_configured: 'Не задан OPENAI_API_KEY — расшифровка недоступна',
@@ -320,7 +321,7 @@ export default function VideoEditView() {
     setUploading(true);
     try {
       setStatus('Запрашиваю ссылку для загрузки…');
-      const ticket = await api.createVideoUpload(config, file.type || 'video/mp4');
+      const ticket = await api.createVideoUpload(config, file.type || 'video/mp4', file.size);
 
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);

@@ -5,6 +5,7 @@ import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
 import { analyzeReelTranscript, ReelAnalysisError, type ChatModel } from './reelLlm';
 import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './transcriptCache';
+import { SourceTooLargeError } from './storage';
 import { TranscriptionError } from './transcription';
 import type { ReelAnalysis } from './types';
 import type { PipelineDeps } from './videoPipeline';
@@ -43,6 +44,7 @@ const PERMANENT = new Set([
   'llm_not_configured',
   'transcription_not_configured',
   'audio_too_large',
+  'source_too_large',
 ]);
 
 class ReelPipelineError extends Error {
@@ -83,7 +85,12 @@ export async function processReelJob(db: Db, job: ReelAnalysis, deps: ReelDeps):
 
     await setStage(db, job.id, 'probe');
     const sourcePath = path.join(workDir, 'source');
-    await deps.storage.download(job.source_object_key, sourcePath);
+    try {
+      await deps.storage.download(job.source_object_key, sourcePath);
+    } catch (err) {
+      if (err instanceof SourceTooLargeError) throw new ReelPipelineError('source_too_large', err.message);
+      throw err;
+    }
     let probed;
     try {
       probed = await deps.ffmpeg.probe(sourcePath);

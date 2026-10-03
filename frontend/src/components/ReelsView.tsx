@@ -32,6 +32,7 @@ const FAILURE_LABEL: Record<string, string> = {
   video_too_long: 'Слишком длинное видео — разбираем ролики до 3 минут.',
   source_unreadable: 'Не получилось открыть файл. Попробуйте MP4.',
   audio_too_large: 'Слишком большой файл для расшифровки.',
+  source_too_large: 'Файл больше 600 МБ — для рилса это слишком много.',
   transcription_failed: 'Не получилось расшифровать речь. Попробуйте ещё раз.',
   transcription_quota_exhausted: 'Закончился лимит расшифровки. Попробуйте позже.',
   transcription_not_configured: 'Расшифровка не настроена на сервере.',
@@ -160,7 +161,7 @@ export default function ReelsView() {
     setUploading(true);
     setStatus('');
     try {
-      const ticket = await api.createVideoUpload(config, file.type || 'video/mp4');
+      const ticket = await api.createVideoUpload(config, file.type || 'video/mp4', file.size);
       await api.uploadVideoFile(ticket, file);
       const res = await api.createAnalysis(config, ticket.objectKey);
       await loadAnalyses();

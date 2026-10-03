@@ -103,6 +103,20 @@ describe('carousel API', () => {
     expect((await request(app).patch(`/api/carousels/${made.id}`).set('Authorization', `Bearer ${other.apiKey}`).send({ presetId: null })).status).toBe(404);
   });
 
+  // Sign-up is open, so a paid model call needs a ceiling per workspace —
+  // and one workspace hitting it must not slow down any other.
+  it('caps model calls per workspace per hour, without touching other workspaces', async () => {
+    const { apiKey } = await createTenant(app, 'busy@example.com');
+    const other = await createTenant(app, 'calm@example.com');
+    const make = (key: string) => request(app).post('/api/carousels').set('Authorization', `Bearer ${key}`).send({ prompt: 'тема' });
+    for (let i = 0; i < 30; i++) expect((await make(apiKey)).status).toBe(201);
+
+    const over = await make(apiKey);
+    expect(over.status).toBe(429);
+    expect(over.body.error).toMatch(/Слишком много запросов к ИИ/);
+    expect((await make(other.apiKey)).status).toBe(201);
+  });
+
   it('rejects an unknown presetId', async () => {
     const { apiKey } = await createTenant(app);
     const res = await request(app)

@@ -27,7 +27,7 @@ import { hashAudioFile, readCachedTranscript, writeCachedTranscript } from './tr
 import { summarizeUsage } from './usage';
 import { CLAIM_LEASE_MS } from './jobLease';
 import { transcribeWithWhisper, TranscriptionError, type Transcriber } from './transcription';
-import { deleteObject, downloadToFile, publicUrlFor, storageConfigFromEnv, uploadFile } from './storage';
+import { deleteObject, downloadToFile, publicUrlFor, SourceTooLargeError, storageConfigFromEnv, uploadFile } from './storage';
 import { localMediaConfigFromEnv, localStorageIo } from './localMedia';
 import { deriveKey } from './auth';
 import type { VideoEditJob, VideoFailureReason, VideoJobArtifacts, VideoStage } from './types';
@@ -338,6 +338,9 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   try {
     await storage.download(job.source_object_key, sourcePath);
   } catch (err) {
+    // A fact about the file, not a blip: not retried (RETRYABLE), because a
+    // second attempt would download the same too-large file again.
+    if (err instanceof SourceTooLargeError) throw new PipelineError('source_too_large', err.message);
     throw new PipelineError('source_unreadable', err instanceof Error ? err.message : String(err));
   }
 
