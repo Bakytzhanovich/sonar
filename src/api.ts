@@ -1032,9 +1032,16 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     const bot = await getBotForTenant(db, req.params.botId, res.locals.tenantId as string);
     if (!bot) return res.status(404).json({ error: 'bot not found' });
 
-    const { keyword, matchType, flowId, flowVersion } = req.body ?? {};
-    if (!keyword || !flowId || !flowVersion) {
+    const { keyword, matchType, flowId } = req.body ?? {};
+    // Types checked, not only presence: an object for the keyword crashed
+    // its normalisation, and a non-numeric version reached Postgres as an
+    // integer comparison — both answered 500 for what is a bad request.
+    const flowVersion = parsePositiveInt(req.body?.flowVersion);
+    if (typeof keyword !== 'string' || !keyword.trim() || typeof flowId !== 'string' || !flowId || flowVersion === undefined) {
       return res.status(400).json({ error: 'keyword, flowId and flowVersion are required' });
+    }
+    if (matchType !== undefined && matchType !== 'contains' && matchType !== 'exact') {
+      return res.status(400).json({ error: 'matchType must be contains or exact' });
     }
 
     const flow = await queryOne<{ status: string }>(db, `SELECT status FROM flows WHERE id = ? AND version = ? AND bot_id = ?`, flowId, flowVersion, bot.id);
@@ -1128,7 +1135,9 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     if (!bot) return res.status(404).json({ error: 'bot not found' });
 
     const { externalUserId, messageText } = req.body ?? {};
-    if (!externalUserId || !messageText) {
+    // Strings, not merely present: a number for the message crashed keyword
+    // matching (text.trim) and answered 500.
+    if (typeof externalUserId !== 'string' || !externalUserId || typeof messageText !== 'string' || !messageText) {
       return res.status(400).json({ error: 'externalUserId and messageText are required' });
     }
 
@@ -1807,6 +1816,11 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // status and/or date range.
   app.get('/api/scheduled-posts', asyncHandler(async (req, res) => {
     const { status, from, to } = req.query as { status?: string; from?: string; to?: string };
+    // new Date('nonsense').toISOString() throws, which surfaced a typo in a
+    // filter as a 500.
+    if ((from && Number.isNaN(Date.parse(from))) || (to && Number.isNaN(Date.parse(to)))) {
+      return res.status(400).json({ error: 'from and to must be dates' });
+    }
     const conditions = ['tenant_id = ?'];
     const params: unknown[] = [res.locals.tenantId];
 
@@ -2882,6 +2896,12 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
 // must keep the full logging path below.
 function clientErrorStatus(err: unknown): number | undefined {
   if (typeof err !== 'object' || err === null) return undefined;
+  // Postgres class 22 — data exceptions: text where a number was expected, a
+  // number out of range, an impossible date. Each is a value the caller sent
+  // that a route did not check, and so the caller's error, not the server's.
+  // The backstop for the routes the input checks above do not yet cover.
+  const pgCode = (err as { code?: unknown }).code;
+  if (typeof pgCode === 'string' && /^22[0-9A-Z]{3}$/.test(pgCode)) return 400;
   const candidate = (err as { status?: unknown; statusCode?: unknown });
   const raw = typeof candidate.status === 'number' ? candidate.status : candidate.statusCode;
   if (typeof raw !== 'number' || raw < 400 || raw >= 500) return undefined;
