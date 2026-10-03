@@ -1,47 +1,122 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Canvas, Rect, Textbox } from 'fabric';
+import { Canvas, Rect, StaticCanvas, Textbox, type StaticCanvas as StaticCanvasType } from 'fabric';
 import { count } from '@/lib/plural';
 import { api, type BrandPreset, type Carousel, type CarouselSlide } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
 import PageHeader from './PageHeader';
 import TabBar from './TabBar';
-import Select from './Select';
+import PillPicker from './PillPicker';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import StatusMessage from './StatusMessage';
 import controls from './Controls.module.css';
 import styles from './CarouselView.module.css';
 import layout from './Layout.module.css';
 
-const CANVAS_W = 360;
-const CANVAS_H = 450;
+// Module 4 — a carousel from one topic.
+//
+// The slide is drawn at 4:5, Instagram's carousel shape, and downloaded at
+// 1080×1350 — the size Instagram shows it at. Text is edited in plain fields
+// beside the slide and saved as you type: editing on the canvas itself meant
+// knowing to double-click, then remembering a separate save button.
 
-// The preset's actual primary/secondary colors, made visible wherever a
-// preset is referenced — real per-preset data, not a placeholder icon.
-function Swatch({ preset }: { preset: BrandPreset | null }) {
-  if (!preset) return null;
-  return (
-    <span className={styles.swatch} title={preset.name}>
-      <span className={styles.swatchHalf} style={{ background: preset.primary_color }} />
-      <span className={styles.swatchHalf} style={{ background: preset.secondary_color }} />
-    </span>
-  );
-}
+const CANVAS_W = 432;
+const CANVAS_H = 540;
+const EXPORT_MULTIPLIER = 1080 / CANVAS_W;
+const SAVE_DELAY_MS = 700;
 
-// A failed generation says it failed — the server no longer hands out
-// template slides as if they were written by the model.
+const EXAMPLES = ['5 ошибок новичков в спорте', 'Как выбрать курс и не пожалеть', '3 мифа о правильном питании'];
+
 const GENERATE_ERRORS: Record<string, string> = {
   llm_not_configured: 'ИИ сейчас не подключён — карусель не создать',
   llm_invalid_answer: 'ИИ ответил что-то не то — нажмите «Сгенерировать» ещё раз',
   llm_failed: 'ИИ не ответил — попробуйте ещё раз через минуту',
 };
 
-function generateErrorText(err: unknown): string {
+function errorText(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   const code = Object.keys(GENERATE_ERRORS).find((key) => message.includes(key));
   return code ? GENERATE_ERRORS[code] : message;
+}
+
+interface Look {
+  background: string;
+  text: string;
+  font: string;
+}
+
+function lookOf(preset: BrandPreset | null): Look {
+  return {
+    background: preset?.secondary_color ?? '#ffffff',
+    text: preset?.primary_color ?? '#111111',
+    font: preset?.font_family && preset.font_family !== 'system-ui' ? preset.font_family : 'Geist, system-ui, sans-serif',
+  };
+}
+
+/**
+ * Draws one slide. The same function feeds the live preview and the
+ * download, so what is downloaded is what was on screen.
+ *
+ * The first slide is the cover: a larger headline, lower on the slide.
+ */
+function drawSlide(canvas: StaticCanvasType, slide: Pick<CarouselSlide, 'headline' | 'body'>, index: number, total: number, look: Look) {
+  canvas.clear();
+  const pad = 36;
+  const cover = index === 0;
+  // Fabric 7 places objects by their centre unless told otherwise; every
+  // coordinate below is a top-left corner. Without this the background
+  // filled a quarter of the slide and the text hung off its left edge.
+  const fixed = { selectable: false, evented: false, originX: 'left', originY: 'top' } as const;
+  canvas.add(new Rect({ left: 0, top: 0, width: CANVAS_W, height: CANVAS_H, fill: look.background, ...fixed }));
+
+  const headline = new Textbox(slide.headline, {
+    left: pad,
+    top: cover ? 150 : 64,
+    width: CANVAS_W - pad * 2,
+    fontSize: cover ? 40 : 30,
+    fontWeight: 'bold',
+    lineHeight: 1.12,
+    fill: look.text,
+    fontFamily: look.font,
+    ...fixed,
+  });
+  canvas.add(headline);
+  canvas.add(
+    new Textbox(slide.body, {
+      left: pad,
+      top: headline.top + headline.height + 22,
+      width: CANVAS_W - pad * 2,
+      fontSize: cover ? 19 : 18,
+      lineHeight: 1.35,
+      fill: look.text,
+      fontFamily: look.font,
+      ...fixed,
+    })
+  );
+  // Where this slide sits in the carousel — the swipe cue a reader expects.
+  canvas.add(
+    new Textbox(`${index + 1}/${total}`, {
+      left: CANVAS_W - pad - 80,
+      top: CANVAS_H - pad - 16,
+      width: 80,
+      textAlign: 'right',
+      fontSize: 14,
+      opacity: 0.55,
+      fill: look.text,
+      fontFamily: look.font,
+      ...fixed,
+    })
+  );
+  canvas.renderAll();
+}
+
+function download(dataUrl: string, name: string) {
+  const link = document.createElement('a');
+  link.href = dataUrl;
+  link.download = name;
+  link.click();
 }
 
 export default function CarouselView() {
@@ -52,97 +127,114 @@ export default function CarouselView() {
   // this code cannot read.
   const { hasAccess } = useApiAccess();
 
-  const [prompt, setPrompt] = useState('5 привычек продуктивности');
+  const [prompt, setPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [presets, setPresets] = useState<BrandPreset[]>([]);
   const [presetId, setPresetId] = useState('');
-  const [presetName, setPresetName] = useState('Мой бренд');
-  const [presetColor, setPresetColor] = useState('#1a1a2e');
+  const [styleName, setStyleName] = useState('');
+  const [styleText, setStyleText] = useState('#111111');
+  const [styleBackground, setStyleBackground] = useState('#f5efe6');
 
   const [carousels, setCarousels] = useState<Carousel[]>([]);
-  const [selectedCarousel, setSelectedCarousel] = useState<Carousel | null>(null);
+  const [selected, setSelected] = useState<Carousel | null>(null);
   const [slides, setSlides] = useState<CarouselSlide[]>([]);
   const [slideIndex, setSlideIndex] = useState(0);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [status, setStatus] = useState('');
 
   const canvasElRef = useRef<HTMLCanvasElement>(null);
-  const fabricCanvasRef = useRef<Canvas | null>(null);
-  const headlineBoxRef = useRef<Textbox | null>(null);
-  const bodyBoxRef = useRef<Textbox | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const fabricRef = useRef<Canvas | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openedFirst = useRef(false);
 
   const activePreset = presets.find((p) => p.id === presetId) ?? null;
-  const currentSlide = slides[slideIndex] ?? null;
+  const look = lookOf(activePreset);
+  const current = slides[slideIndex] ?? null;
+
+  const openCarousel = useCallback(
+    async (c: Carousel) => {
+      try {
+        const res = await api.getCarousel(config, c.id);
+        setSelected(res.carousel);
+        setSlides(res.slides);
+        setSlideIndex(0);
+        setPresetId(res.carousel.preset_id ?? '');
+        setSaveState('idle');
+      } catch (err) {
+        setStatus(err instanceof Error ? err.message : String(err));
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [apiKey, baseUrl]
+  );
 
   const loadLibrary = useCallback(async () => {
-    if (!hasAccess) return;
+    if (!hasAccess) return [];
     try {
       const [c, p] = await Promise.all([api.listCarousels(config), api.listBrandPresets(config)]);
       setCarousels(c.carousels);
       setPresets(p.presets);
+      return c.carousels;
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
+      return [];
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, baseUrl]);
+  }, [apiKey, baseUrl, hasAccess]);
 
+  // Coming back to the screen opens the newest carousel: an empty studio
+  // next to a list of finished work read as if the work had gone missing.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadLibrary();
-  }, [loadLibrary]);
+    void loadLibrary().then((list) => {
+      if (!openedFirst.current && list.length > 0) {
+        openedFirst.current = true;
+        void openCarousel(list[0]);
+      }
+    });
+  }, [loadLibrary, openCarousel]);
 
-  // Unmount-only cleanup — creation happens lazily in the effect below
-  // instead of here, because the <canvas> element only exists in the DOM
-  // once selectedCarousel is set (it's behind that conditional in the JSX).
-  // A mount-time-only effect (empty deps) runs before that's ever true, so
-  // canvasElRef.current was always null and fabricCanvasRef.current never
-  // got set — the canvas silently stayed at the browser's 300x150 default
-  // and nothing ever drew onto it.
-  useEffect(() => {
-    return () => {
-      fabricCanvasRef.current?.dispose();
-      fabricCanvasRef.current = null;
-    };
-  }, []);
+  useEffect(
+    () => () => {
+      fabricRef.current?.dispose();
+      fabricRef.current = null;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    },
+    []
+  );
 
+  // The <canvas> exists only once a carousel is open, so the Fabric canvas is
+  // created lazily here rather than on mount.
   useEffect(() => {
-    if (!canvasElRef.current || !currentSlide) return;
-    if (!fabricCanvasRef.current) {
-      fabricCanvasRef.current = new Canvas(canvasElRef.current, { width: CANVAS_W, height: CANVAS_H });
+    if (!canvasElRef.current || !current) return;
+    if (!fabricRef.current) {
+      fabricRef.current = new Canvas(canvasElRef.current, { width: CANVAS_W, height: CANVAS_H, selection: false });
     }
-    const canvas = fabricCanvasRef.current;
+    drawSlide(fabricRef.current, current, slideIndex, slides.length, look);
+  }, [current, slideIndex, slides.length, look.background, look.text, look.font]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    canvas.clear();
-    const bg = new Rect({
-      left: 0,
-      top: 0,
-      width: CANVAS_W,
-      height: CANVAS_H,
-      fill: activePreset?.secondary_color ?? '#ffffff',
-      selectable: false,
-    });
-    const headline = new Textbox(currentSlide.headline, {
-      left: 24,
-      top: 40,
-      width: CANVAS_W - 48,
-      fontSize: 28,
-      fontWeight: 'bold',
-      fill: activePreset?.primary_color ?? '#111111',
-      fontFamily: activePreset?.font_family ?? 'system-ui',
-    });
-    const body = new Textbox(currentSlide.body, {
-      left: 24,
-      top: 200,
-      width: CANVAS_W - 48,
-      fontSize: 16,
-      fill: activePreset?.primary_color ?? '#111111',
-      fontFamily: activePreset?.font_family ?? 'system-ui',
-    });
-
-    canvas.add(bg, headline, body);
-    canvas.renderAll();
-    headlineBoxRef.current = headline;
-    bodyBoxRef.current = body;
-  }, [currentSlide, activePreset]);
+  // Shown smaller on a narrow screen, through Fabric rather than CSS: Fabric
+  // draws on two stacked canvases inside its own wrapper, and resizing the
+  // canvas elements from outside pulled them apart — the slide showed
+  // cropped and shifted. cssOnly keeps the drawing resolution, so the
+  // download is unaffected.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage || !selected) return;
+    const fit = () => {
+      const canvas = fabricRef.current;
+      if (!canvas) return;
+      const style = getComputedStyle(stage);
+      const room = stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const width = Math.max(200, Math.min(CANVAS_W, room));
+      canvas.setDimensions({ width: `${width}px`, height: `${(width * CANVAS_H) / CANVAS_W}px` }, { cssOnly: true });
+    };
+    const observer = new ResizeObserver(fit);
+    observer.observe(stage);
+    fit();
+    return () => observer.disconnect();
+  }, [selected, current]);
 
   async function generate() {
     if (!prompt.trim() || generating) return;
@@ -150,148 +242,236 @@ export default function CarouselView() {
     setStatus('');
     try {
       const res = await api.createCarousel(config, prompt.trim(), presetId || undefined);
-      await loadLibrary();
-      setSelectedCarousel(res.carousel);
+      setSelected(res.carousel);
       setSlides(res.slides);
       setSlideIndex(0);
-      setStatus(`Готово: ${count(res.slides.length, ['слайд', 'слайда', 'слайдов'])}. Текст можно поправить прямо на слайде.`);
+      setSaveState('idle');
+      setPrompt('');
+      await loadLibrary();
+      setStatus(`Готово: ${count(res.slides.length, ['слайд', 'слайда', 'слайдов'])}. Текст правится справа от слайда.`);
     } catch (err) {
-      setStatus(generateErrorText(err));
+      setStatus(errorText(err));
     } finally {
       setGenerating(false);
     }
   }
 
-  async function openCarousel(c: Carousel) {
-    try {
-      const res = await api.getCarousel(config, c.id);
-      setSelectedCarousel(res.carousel);
-      setSlides(res.slides);
-      setSlideIndex(0);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
-    }
+  // Typed text shows on the slide at once and is saved a moment after the
+  // typing stops — no button to forget.
+  function edit(field: 'headline' | 'body', value: string) {
+    if (!selected || !current) return;
+    const slideId = current.id;
+    const next = { ...current, [field]: value };
+    setSlides((prev) => prev.map((s) => (s.id === slideId ? next : s)));
+    setSaveState('saving');
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    const carouselId = selected.id;
+    saveTimer.current = setTimeout(async () => {
+      try {
+        await api.updateSlide(config, carouselId, slideId, { headline: next.headline, body: next.body });
+        setSaveState('saved');
+      } catch (err) {
+        setSaveState('idle');
+        setStatus(err instanceof Error ? err.message : String(err));
+      }
+    }, SAVE_DELAY_MS);
   }
 
-  async function createPreset() {
-    if (!presetName.trim()) return;
-    try {
-      await api.createBrandPreset(config, presetName.trim(), { primary_color: presetColor });
-      await loadLibrary();
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  // Double-click a text block on the canvas to edit it directly (Fabric's
-  // Textbox is editable by default) — this reads back whatever the user
-  // typed and persists it. Dragged positions are intentionally not saved,
-  // only text content — see the note in schema.sql.
-  async function saveEdits() {
-    if (!selectedCarousel || !currentSlide || !headlineBoxRef.current || !bodyBoxRef.current) return;
-    try {
-      const res = await api.updateSlide(config, selectedCarousel.id, currentSlide.id, {
-        headline: headlineBoxRef.current.text,
-        body: bodyBoxRef.current.text,
-      });
-      setSlides((prev) => prev.map((s, i) => (i === slideIndex ? res.slide : s)));
-      setStatus('Изменения сохранены');
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  function exportPng() {
-    const canvas = fabricCanvasRef.current;
+  function downloadCurrent() {
+    const canvas = fabricRef.current;
     if (!canvas) return;
-    const dataUrl = canvas.toDataURL({ format: 'png', multiplier: 1 });
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = `slide-${slideIndex + 1}.png`;
-    link.click();
+    download(canvas.toDataURL({ format: 'png', multiplier: EXPORT_MULTIPLIER }), `slide-${slideIndex + 1}.png`);
   }
+
+  // Every slide, drawn off screen with the same function as the preview.
+  async function downloadAll() {
+    const offscreen = new StaticCanvas(undefined, { width: CANVAS_W, height: CANVAS_H });
+    for (let i = 0; i < slides.length; i++) {
+      drawSlide(offscreen, slides[i], i, slides.length, look);
+      download(offscreen.toDataURL({ format: 'png', multiplier: EXPORT_MULTIPLIER }), `slide-${i + 1}.png`);
+      // Browsers drop downloads fired in the same instant.
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    offscreen.dispose();
+  }
+
+  // Picking a style while a carousel is open restyles that carousel, and it
+  // stays restyled; with nothing open it is the style for the next one.
+  function chooseStyle(id: string) {
+    setPresetId(id);
+    if (!selected) return;
+    setSelected({ ...selected, preset_id: id || null });
+    api.setCarouselStyle(config, selected.id, id || null).catch((err) => setStatus(err instanceof Error ? err.message : String(err)));
+  }
+
+  async function saveStyle() {
+    if (!styleName.trim()) return setStatus('Назовите стиль — например, по названию блога');
+    try {
+      const res = await api.createBrandPreset(config, styleName.trim(), { primary_color: styleText, secondary_color: styleBackground });
+      await loadLibrary();
+      if (res?.preset?.id) chooseStyle(res.preset.id);
+      setStyleName('');
+      setStatus('Стиль сохранён и выбран');
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const styleOptions = [
+    { id: '', label: 'Обычный', hex: '#ffffff' },
+    ...presets.map((p) => ({ id: p.id, label: p.name, hex: p.secondary_color })),
+  ];
 
   return (
     <div className={styles.page}>
       <PageHeader section="Студия контента" title="Карусели" current="/carousels" />
 
-      <div className={`${layout.twoPane} ${styles.workspace}`}>
-        <div className={`${layout.sidebar} ${styles.sidebar}`}>
+      <div className={`${layout.twoPane} ${styles.workspace} ${selected ? styles.workspaceOpen : ''}`}>
+        <aside className={`${layout.sidebar} ${styles.sidebar}`}>
           {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
-          {/* The placeholder says what the field is; three stacked headings
-              above it said it three more times. */}
-          <input
-            className={controls.input}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="О чём карусель?"
-          />
-          <div className={styles.presetRow}>
-            <Select
-              value={presetId}
-              onChange={setPresetId}
-              aria-label="Визуальный пресет"
-              options={[{ value: '', label: 'без пресета' }, ...presets.map((preset) => ({ value: preset.id, label: preset.name }))]}
+
+          <section className={styles.block}>
+            <h2 className={styles.blockTitle}>Новая карусель</h2>
+            <textarea
+              className={`${controls.input} ${styles.topic}`}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              rows={3}
+              placeholder="О чём карусель? Например: 5 ошибок новичков в йоге"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void generate();
+              }}
             />
-            <Swatch preset={activePreset} />
-          </div>
-          <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={generate} disabled={generating}>
-            {generating ? 'Генерирую…' : 'Сгенерировать'}
-          </button>
-
-          <div className={styles.sectionLabel}>Бренд</div>
-          <input className={controls.input} value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="Название пресета" />
-          {/* The whole row is the target: a bare colour input is a ~20px
-              square, which is not something a finger hits on purpose. */}
-          <label className={styles.colorRow}>
-            <input type="color" value={presetColor} onChange={(e) => setPresetColor(e.target.value)} />
-            <span>Основной цвет</span>
-          </label>
-          <button className={`${controls.buttonSecondary} ${styles.fullButton}`} onClick={createPreset}>Сохранить пресет</button>
-
-          {carousels.length > 0 && <div className={styles.sectionLabel}>Последние карусели</div>}
-          {carousels.map((c) => (
-            <div
-              key={c.id}
-              onClick={() => openCarousel(c)}
-              className={`${styles.libraryItem} ${c.id === selectedCarousel?.id ? styles.libraryItemActive : ''}`}
-            >
-              <Swatch preset={presets.find((p) => p.id === c.preset_id) ?? null} />
-              <span className={styles.libraryItemPrompt}>{c.prompt}</span>
+            <div className={styles.examples}>
+              {EXAMPLES.map((example) => (
+                <button key={example} type="button" className={styles.example} onClick={() => setPrompt(example)}>
+                  {example}
+                </button>
+              ))}
             </div>
-          ))}
-        </div>
+            <PillPicker label="Стиль" options={styleOptions} value={presetId} onChange={chooseStyle} />
+            <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={generate} disabled={generating || !prompt.trim() || !hasAccess}>
+              {generating ? 'Пишу слайды…' : 'Сгенерировать'}
+            </button>
+          </section>
 
-        <div className={`${layout.main} ${styles.main}`}>
-          {!selectedCarousel ? (
-            <div className={styles.emptyState}><div className={styles.emptyShape}>✦</div><span className={styles.panelEyebrow}>ПУСТАЯ СТУДИЯ</span><h2>Здесь появится твоя карусель</h2><p>Сформулируй тему слева или выбери готовый проект из библиотеки.</p></div>
+          {carousels.length > 0 && (
+            <section className={styles.block}>
+              <h2 className={styles.blockTitle}>Мои карусели</h2>
+              <ul className={styles.library}>
+                {carousels.map((c) => (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      className={`${styles.libraryItem} ${c.id === selected?.id ? styles.libraryItemActive : ''}`}
+                      onClick={() => openCarousel(c)}
+                    >
+                      <span className={styles.libraryPrompt}>{c.prompt}</span>
+                      <span className={styles.libraryDate}>{new Date(c.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          <section className={styles.block}>
+            <h2 className={styles.blockTitle}>Стиль бренда</h2>
+            <p className={styles.blockHint}>Ваши цвета для всех каруселей — сохраните один раз.</p>
+            <input className={controls.input} value={styleName} onChange={(e) => setStyleName(e.target.value)} placeholder="Название, например «Мой блог»" />
+            <div className={styles.colors}>
+              {/* The whole row is the target: a bare colour input is a ~20px
+                  square, which is not something a finger hits on purpose. */}
+              <label className={styles.colorRow}>
+                <input type="color" value={styleBackground} onChange={(e) => setStyleBackground(e.target.value)} />
+                <span>Фон</span>
+              </label>
+              <label className={styles.colorRow}>
+                <input type="color" value={styleText} onChange={(e) => setStyleText(e.target.value)} />
+                <span>Текст</span>
+              </label>
+              <span className={styles.stylePreview} style={{ background: styleBackground, color: styleText }} aria-hidden="true">Аа</span>
+            </div>
+            <button className={`${controls.buttonSecondary} ${styles.fullButton}`} onClick={saveStyle} disabled={!hasAccess}>
+              Сохранить стиль
+            </button>
+          </section>
+        </aside>
+
+        <main className={`${layout.main} ${styles.main}`}>
+          {!selected ? (
+            <div className={styles.emptyState}>
+              <div className={styles.emptyShape}>✦</div>
+              <h2>Первая карусель — за минуту</h2>
+              <p>Напишите тему слева или нажмите на пример. ИИ напишет слайды, а вы поправите текст и скачаете картинки для Instagram.</p>
+            </div>
           ) : (
-            <>
-              <div className={styles.toolbar}>
-                <button className={controls.buttonSecondary} disabled={slideIndex === 0} onClick={() => setSlideIndex((i) => i - 1)}>
-                  ← слайд
-                </button>
-                {/* Real position among this carousel's actual slides, not a
-                    decorative row — one dot per slide, exactly slides.length
-                    of them. */}
-                <span className={styles.dots}>
-                  {slides.map((s, i) => (
-                    <span key={s.id} className={`${styles.dot} ${i === slideIndex ? styles.dotActive : ''}`} />
-                  ))}
-                </span>
-                <button className={controls.buttonSecondary} disabled={slideIndex === slides.length - 1} onClick={() => setSlideIndex((i) => i + 1)}>
-                  слайд →
-                </button>
-                <button className={controls.buttonPrimary} onClick={saveEdits}>Сохранить правки</button>
-                <button className={controls.buttonSecondary} onClick={exportPng}>Экспорт PNG</button>
+            <div className={styles.studio}>
+              <div className={styles.studioHead}>
+                <div>
+                  <h2>{selected.prompt}</h2>
+                  <span className={styles.meta}>
+                    {count(slides.length, ['слайд', 'слайда', 'слайдов'])} · 1080×1350
+                    {saveState === 'saving' && ' · сохраняю…'}
+                    {saveState === 'saved' && ' · сохранено ✓'}
+                  </span>
+                </div>
+                <div className={styles.downloads}>
+                  <button className={controls.buttonSecondary} onClick={downloadCurrent}>Скачать слайд</button>
+                  <button className={controls.buttonPrimary} onClick={downloadAll}>Скачать все</button>
+                </div>
               </div>
-              <p className={styles.helper}>Дважды кликни по тексту на канвасе, чтобы отредактировать его.</p>
-              <div className={styles.canvasStage}><canvas ref={canvasElRef} /></div>
-            </>
+
+              <div className={styles.editor}>
+                <div className={styles.slideColumn}>
+                  <div className={styles.canvasStage} ref={stageRef}>
+                    <canvas ref={canvasElRef} />
+                  </div>
+                  <div className={styles.slideNav}>
+                    <button type="button" className={styles.navButton} disabled={slideIndex === 0} onClick={() => setSlideIndex((i) => i - 1)} aria-label="Предыдущий слайд">‹</button>
+                    <span>{slideIndex + 1} из {slides.length}</span>
+                    <button type="button" className={styles.navButton} disabled={slideIndex === slides.length - 1} onClick={() => setSlideIndex((i) => i + 1)} aria-label="Следующий слайд">›</button>
+                  </div>
+                </div>
+
+                {current && (
+                  <div className={styles.fields}>
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Заголовок слайда {slideIndex + 1}</span>
+                      <input className={controls.input} value={current.headline} onChange={(e) => edit('headline', e.target.value)} />
+                    </label>
+                    <label className={styles.field}>
+                      <span className={styles.fieldLabel}>Текст</span>
+                      <textarea className={controls.input} value={current.body} onChange={(e) => edit('body', e.target.value)} rows={6} />
+                    </label>
+                    <PillPicker label="Стиль" options={styleOptions} value={presetId} onChange={chooseStyle} />
+                  </div>
+                )}
+              </div>
+
+              {/* Every slide at a glance — the dots this replaced said only
+                  how many there were, not what was on them. */}
+              <ol className={styles.thumbs}>
+                {slides.map((s, i) => (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      className={`${styles.thumb} ${i === slideIndex ? styles.thumbActive : ''}`}
+                      style={{ background: look.background, color: look.text }}
+                      onClick={() => setSlideIndex(i)}
+                      aria-label={`Слайд ${i + 1}: ${s.headline}`}
+                    >
+                      <span className={styles.thumbNumber}>{i + 1}</span>
+                      <span className={styles.thumbText}>{s.headline}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </div>
           )}
 
           <StatusMessage>{status}</StatusMessage>
-        </div>
+        </main>
       </div>
       <TabBar current="/carousels" />
     </div>

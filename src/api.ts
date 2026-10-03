@@ -1614,6 +1614,27 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // редактирование слайдов после генерации"). Only text content is
   // persisted, not exact dragged element positions — a documented MVP
   // simplification, not an oversight.
+  // The brand style a carousel is shown and downloaded in. Kept on the
+  // carousel, so coming back to it does not quietly fall back to plain.
+  app.patch('/api/carousels/:id', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const presetId = req.body?.presetId ?? null;
+    if (presetId !== null && typeof presetId !== 'string') return res.status(400).json({ error: 'presetId must be a string or null' });
+    if (presetId) {
+      const preset = await queryOne(db, `SELECT id FROM brand_presets WHERE id = ? AND tenant_id = ?`, presetId, tenantId);
+      if (!preset) return res.status(404).json({ error: 'preset not found' });
+    }
+    const updated = await queryOne<{ id: string }>(
+      db,
+      `UPDATE carousels SET preset_id = ? WHERE id = ? AND tenant_id = ? RETURNING id`,
+      presetId,
+      req.params.id,
+      tenantId
+    );
+    if (!updated) return res.status(404).json({ error: 'carousel not found' });
+    res.json({ carousel: await getCarouselForTenant(db, req.params.id, tenantId) });
+  }));
+
   app.patch('/api/carousels/:carouselId/slides/:slideId', asyncHandler(async (req, res) => {
     const carousel = await getCarouselForTenant(db, req.params.carouselId, res.locals.tenantId as string);
     if (!carousel) return res.status(404).json({ error: 'carousel not found' });

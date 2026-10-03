@@ -666,6 +666,9 @@ export const api = {
   getCarousel: (config: ApiConfig, id: string) =>
     apiRequest(config, 'GET', `/api/carousels/${id}`) as Promise<{ carousel: Carousel; slides: CarouselSlide[] }>,
 
+  setCarouselStyle: (config: ApiConfig, carouselId: string, presetId: string | null) =>
+    apiRequest(config, 'PATCH', `/api/carousels/${encodeURIComponent(carouselId)}`, { presetId }) as Promise<{ carousel: Carousel }>,
+
   updateSlide: (config: ApiConfig, carouselId: string, slideId: string, fields: { headline?: string; body?: string }) =>
     apiRequest(config, 'PATCH', `/api/carousels/${carouselId}/slides/${slideId}`, fields) as Promise<{ slide: CarouselSlide }>,
 

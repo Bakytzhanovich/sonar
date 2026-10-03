@@ -88,6 +88,21 @@ describe('carousel API', () => {
     expect(await queryAll(db, `SELECT id FROM carousels`)).toHaveLength(0);
   });
 
+  it('keeps the style picked for a carousel, and only this account\'s styles', async () => {
+    const { apiKey } = await createTenant(app);
+    const preset = (await request(app).post('/api/brand-presets').set('Authorization', `Bearer ${apiKey}`).send({ name: 'Блог' })).body.preset;
+    const made = (await request(app).post('/api/carousels').set('Authorization', `Bearer ${apiKey}`).send({ prompt: 'тема' })).body.carousel;
+
+    const res = await request(app).patch(`/api/carousels/${made.id}`).set('Authorization', `Bearer ${apiKey}`).send({ presetId: preset.id });
+    expect(res.status).toBe(200);
+    expect((await request(app).get(`/api/carousels/${made.id}`).set('Authorization', `Bearer ${apiKey}`)).body.carousel.preset_id).toBe(preset.id);
+
+    const other = await createTenant(app, 'other-carousel@example.com');
+    const theirs = (await request(app).post('/api/brand-presets').set('Authorization', `Bearer ${other.apiKey}`).send({ name: 'Чужой' })).body.preset;
+    expect((await request(app).patch(`/api/carousels/${made.id}`).set('Authorization', `Bearer ${apiKey}`).send({ presetId: theirs.id })).status).toBe(404);
+    expect((await request(app).patch(`/api/carousels/${made.id}`).set('Authorization', `Bearer ${other.apiKey}`).send({ presetId: null })).status).toBe(404);
+  });
+
   it('rejects an unknown presetId', async () => {
     const { apiKey } = await createTenant(app);
     const res = await request(app)
