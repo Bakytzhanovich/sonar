@@ -120,7 +120,13 @@ export async function createDb(options: DbOptions = {}): Promise<Db> {
 
   const client = await pool.connect();
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_INIT_LOCK_ID]);
+    // Keyed by schema as well: two instances on the SAME schema (replicas
+    // booting together) still queue, which is what the lock is for, while
+    // different schemas — every test has its own — no longer wait on each
+    // other. A single database-wide key made every test file's setup queue
+    // behind every other's, and under a full parallel run a setup could
+    // wait out a test's whole five-second timeout.
+    await client.query('SELECT pg_advisory_lock($1, hashtext(current_schema()))', [SCHEMA_INIT_LOCK_ID]);
     const { rows } = await client.query(
       `SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'tenants'`
     );
@@ -131,7 +137,7 @@ export async function createDb(options: DbOptions = {}): Promise<Db> {
       await applyMigrations(client);
     }
   } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_INIT_LOCK_ID]);
+    await client.query('SELECT pg_advisory_unlock($1, hashtext(current_schema()))', [SCHEMA_INIT_LOCK_ID]);
     client.release();
   }
 
