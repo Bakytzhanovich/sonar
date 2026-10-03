@@ -53,6 +53,14 @@ const FAILURE_LABEL: Record<string, string> = {
   rejected_by_platform: 'Платформа отклонила публикацию',
   rate_limited: 'Слишком много публикаций подряд — платформа просит подождать',
   no_video: 'К посту не прикреплено видео',
+  processing_failed: 'Instagram не смог обработать видео',
+  processing_timeout: 'Instagram слишком долго обрабатывал видео — попробуйте запланировать ещё раз',
+  publish_failed: 'Instagram не отвечал несколько раз подряд — попробуйте запланировать ещё раз',
+  account_unavailable: 'Аккаунт отключён или недоступен — подключите его снова',
+};
+const WAITING_LABEL: Record<string, string> = {
+  pace: 'Ждёт паузы между публикациями — так аккаунт не выглядит как бот',
+  instagram_limit: 'Дневной лимит Instagram исчерпан — пост выйдет, как только он обновится',
 };
 const CREATE_ERRORS: Record<string, string> = {
   video_not_ready: 'Этот ролик ещё не готов — дождитесь конца монтажа',
@@ -133,6 +141,8 @@ export default function SchedulerView() {
   const [scheduledAt, setScheduledAt] = useState(() => toLocalInputValue(new Date(Date.now() + 60 * 60 * 1000)));
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [posts, setPosts] = useState<ScheduledPost[]>([]);
+  const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
+  const [accountId, setAccountId] = useState('');
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState(connectOutcomeFromAddress);
 
@@ -172,6 +182,16 @@ export default function SchedulerView() {
 
   useEffect(forgetConnectOutcome, []);
 
+  // The accounts a post on this platform can go to. None: the post goes
+  // through the test publisher, which the notice on the right says plainly.
+  const usableAccounts = accounts.filter((a) => a.platform === platform && a.status === 'active');
+  const chosenAccount = usableAccounts.find((a) => a.id === accountId) ?? usableAccounts[0];
+  const hasRealAccount = accounts.some((a) => !a.is_test && a.status === 'active');
+  const accountName = (id: string | null) => {
+    const a = accounts.find((x) => x.id === id);
+    return a ? `@${a.username ?? 'аккаунт'}` : null;
+  };
+
   const videoChosen = source === 'render' ? Boolean(jobId && renders.some((r) => r.id === jobId)) : Boolean(file);
 
   async function createPost() {
@@ -195,6 +215,7 @@ export default function SchedulerView() {
         caption: caption.trim(),
         scheduledAt: when.toISOString(),
         requiresApproval,
+        ...(chosenAccount ? { platformAccountId: chosenAccount.id } : {}),
         ...video,
       });
       await load();
@@ -298,6 +319,18 @@ export default function SchedulerView() {
 
           <PillPicker label="Куда" options={PLATFORMS} value={platform} onChange={(id) => setPlatform(id as PostingPlatform)} />
 
+          {usableAccounts.length > 1 && (
+            <PillPicker
+              label="Аккаунт"
+              options={usableAccounts.map((a) => ({ id: a.id, label: `@${a.username ?? 'аккаунт'}`, badge: a.is_test ? 'тест' : undefined }))}
+              value={chosenAccount?.id ?? ''}
+              onChange={setAccountId}
+            />
+          )}
+          {usableAccounts.length === 1 && chosenAccount && (
+            <p className={styles.hint}>Уйдёт в @{chosenAccount.username ?? 'аккаунт'}{chosenAccount.is_test ? ' (тестовый)' : ''}</p>
+          )}
+
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Текст поста</span>
             <textarea
@@ -347,10 +380,14 @@ export default function SchedulerView() {
           {/* Said plainly: until an account is connected through the
               platform's own review, nothing here reaches a real feed, and a
               post marked "Опубликовано" must not be mistaken for one that is. */}
-          <AccountsPanel config={config} hasAccess={hasAccess} onMessage={setStatus} />
+          <AccountsPanel config={config} hasAccess={hasAccess} onMessage={setStatus} onAccounts={setAccounts} />
 
+          {/* Said plainly where nothing reaches a real feed, so "Опубликовано"
+              on a test post is never mistaken for a real one. */}
           <NoticeBanner>
-            Публикация в соцсети подключается: сейчас посты проходят очередь и расписание, но в аккаунт не уходят.
+            {hasRealAccount
+              ? 'В Instagram посты уходят по-настоящему. TikTok и YouTube Shorts пока в тестовом режиме: туда посты не уходят.'
+              : 'Пока не подключён Instagram, посты проходят очередь и расписание, но в аккаунт не уходят.'}
           </NoticeBanner>
 
           {pending.length > 0 && (
@@ -358,7 +395,7 @@ export default function SchedulerView() {
               <h3>Ждут согласования</h3>
               {pending.map((p) => (
                 <div key={p.id} className={styles.postCard} style={{ borderLeftColor: STATUS_COLOR[p.status] }}>
-                  <PostRow post={p} />
+                  <PostRow post={p} account={accountName(p.platform_account_id)} />
                   <div className={controls.decisionPair}>
                     <button className={controls.buttonPrimary} onClick={() => decide(p.id, 'approve')}>Одобрить</button>
                     <button className={controls.buttonSecondary} onClick={() => decide(p.id, 'reject')}>Отклонить</button>
@@ -371,7 +408,7 @@ export default function SchedulerView() {
           <div className={styles.queueHeader}><h2>Очередь</h2><span className={styles.queueCount}>{posts.length} публикаций</span></div>
           {rest.map((p) => (
             <div key={p.id} className={styles.postCard} style={{ borderLeftColor: STATUS_COLOR[p.status] }}>
-              <PostRow post={p} />
+              <PostRow post={p} account={accountName(p.platform_account_id)} />
             </div>
           ))}
           {posts.length === 0 && <div className={styles.emptyState}><div><div className={styles.emptyIcon}>↗</div><h2>Очередь свободна</h2><p>Выберите ролик слева, напишите текст и время — пост встанет сюда.</p></div></div>}
@@ -384,7 +421,7 @@ export default function SchedulerView() {
   );
 }
 
-function PostRow({ post }: { post: ScheduledPost }) {
+function PostRow({ post, account }: { post: ScheduledPost; account: string | null }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   // The mock publisher's links point at a host that does not exist.
   const realLink = post.external_post_url && !/\.mock\//.test(post.external_post_url) ? post.external_post_url : null;
@@ -410,7 +447,10 @@ function PostRow({ post }: { post: ScheduledPost }) {
       )}
       <div className={styles.postBody}>
         <div className={styles.postHeader}>
-          <span className={styles.platformLabel}>{PLATFORM_LABEL[post.platform] ?? post.platform}</span>
+          <span className={styles.platformLabel}>
+            {PLATFORM_LABEL[post.platform] ?? post.platform}
+            {account && <span className={styles.accountLabel}> · {account}</span>}
+          </span>
           <span className={styles.statusBadge} style={{ '--status-color': STATUS_COLOR[post.status] } as React.CSSProperties}>
             {STATUS_LABEL[post.status]}
           </span>
@@ -421,7 +461,15 @@ function PostRow({ post }: { post: ScheduledPost }) {
             ? <>опубликовано {new Date(post.published_at).toLocaleString()}</>
             : <>на {new Date(post.scheduled_at).toLocaleString()}</>}
         </div>
-        {post.failure_reason && <div className={styles.postFailure}>{FAILURE_LABEL[post.failure_reason] ?? post.failure_reason}</div>}
+        {post.status === 'publishing' && post.waiting_reason && <div className={styles.postMeta}>{WAITING_LABEL[post.waiting_reason]}</div>}
+        {post.status === 'failed' && post.failure_reason && (
+          <div className={styles.postFailure}>
+            {FAILURE_LABEL[post.failure_reason] ?? post.failure_reason}
+            {/* Instagram's own words, when it gave a reason: "video too long"
+                is the fix, not just the fault. */}
+            {post.failure_detail && <>: «{post.failure_detail}»</>}
+          </div>
+        )}
         {realLink && (
           <a href={realLink} target="_blank" rel="noreferrer">Открыть публикацию</a>
         )}
@@ -437,10 +485,13 @@ function AccountsPanel({
   config,
   hasAccess,
   onMessage,
+  onAccounts,
 }: {
   config: { baseUrl: string; apiKey: string };
   hasAccess: boolean;
   onMessage: (message: string) => void;
+  /** The form above picks from the same list. */
+  onAccounts: (accounts: PlatformAccount[]) => void;
 }) {
   const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
   const [instagramAvailable, setInstagramAvailable] = useState(false);
@@ -452,6 +503,7 @@ function AccountsPanel({
     try {
       const res = await api.listPlatformAccounts(config);
       setAccounts(res.accounts);
+      onAccounts(res.accounts);
       setInstagramAvailable(res.instagramAvailable);
       setTestAvailable(res.testConnectAvailable);
     } catch {

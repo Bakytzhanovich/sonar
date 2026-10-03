@@ -340,6 +340,27 @@ CREATE TABLE scheduled_posts (
   -- job belongs to the tenant and is a finished, non-preview render, and
   -- renders are never deleted (only previews are, and those are refused).
   video_job_id       TEXT,
+  -- The connected account it goes to (platform_accounts). Null, or a test
+  -- account, publishes through the mock — there is nothing real to post to.
+  platform_account_id TEXT,
+  -- Instagram's container flow spans several publisher passes:
+  --   publish_stage NULL → 'container' (created, Instagram transcoding)
+  --   → 'publishing' (media_publish called) → status 'published'.
+  -- 'publishing' is written BEFORE the irreversible call, so a pass that
+  -- finds it asks Instagram whether the container is already published
+  -- instead of publishing it a second time.
+  ig_container_id    TEXT,
+  publish_stage      TEXT,
+  container_created_at TIMESTAMPTZ,
+  -- When a released row should be picked up again: polling a container, a
+  -- retry after a network error, or waiting out a rate limit.
+  next_attempt_at    TIMESTAMPTZ,
+  attempts           INTEGER NOT NULL DEFAULT 0,
+  -- Why a post is waiting rather than failing (our pace, Instagram's daily
+  -- limit). Shown on the card; cleared once it moves on.
+  waiting_reason     TEXT,
+  -- Instagram's own words when it refuses a post ("video too long").
+  failure_detail     TEXT,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -365,6 +386,10 @@ CREATE TABLE platform_accounts (
   is_test           BOOLEAN NOT NULL DEFAULT false,
   connected_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   refreshed_at      TIMESTAMPTZ,
+  -- When this account last started a publish. publisher.ts claims it with
+  -- one conditional UPDATE, so posts to one account stay spaced out even
+  -- when several are due at once.
+  last_publish_slot_at TIMESTAMPTZ,
   UNIQUE (tenant_id, platform, external_user_id)
 );
 -- What the refresh sweep scans.

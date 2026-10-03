@@ -1667,7 +1667,18 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // The stored key never leaves the server; what does is a link the queue
   // can play, signed for as long as an editor session.
   function postForClient(post: ScheduledPost) {
-    const { video_object_key, ...rest } = toPublicScheduledPost(post);
+    // The storage key, and the machinery of Instagram's container flow, stay
+    // here. What the screen gets is the state, the reason it is waiting or
+    // failed, and a link to play.
+    const {
+      video_object_key,
+      ig_container_id: _container,
+      publish_stage: _stage,
+      container_created_at: _created,
+      next_attempt_at: _next,
+      attempts: _attempts,
+      ...rest
+    } = toPublicScheduledPost(post);
     let videoUrl: string | null = null;
     if (video_object_key) {
       const storage = storageConfigFromEnv();
@@ -1689,12 +1700,28 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     const video = await resolvePostVideo(tenantId, req.body ?? {});
     if ('error' in video) return res.status(video.status).json({ error: video.error });
 
+    // Which connected account it goes to. Optional — with none, the post
+    // goes through the mock (there is nothing real to post to) — but when
+    // given it must be this workspace's, for this platform, and working.
+    const accountId = typeof req.body?.platformAccountId === 'string' ? req.body.platformAccountId : null;
+    if (accountId) {
+      const account = await queryOne<{ platform: string; status: string }>(
+        db,
+        `SELECT platform, status FROM platform_accounts WHERE id = ? AND tenant_id = ?`,
+        accountId,
+        tenantId
+      );
+      if (!account) return res.status(404).json({ error: 'account not found' });
+      if (account.platform !== platform) return res.status(400).json({ error: 'account is for another platform' });
+      if (account.status !== 'active') return res.status(409).json({ error: 'account_needs_reconnect' });
+    }
+
     const id = randomUUID();
     const status = requiresApproval ? 'pending_approval' : 'scheduled';
     await exec(
       db,
-      `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, requires_approval, status, video_object_key, video_job_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, requires_approval, status, video_object_key, video_job_id, platform_account_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       tenantId,
       platform,
@@ -1703,7 +1730,8 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       Boolean(requiresApproval),
       status,
       video.key,
-      video.jobId
+      video.jobId,
+      accountId
     );
 
     if (status === 'pending_approval') {
@@ -2875,8 +2903,13 @@ function getScheduledPostForTenant(db: Db, id: string, tenantId: string): Promis
 // were never designed to handle it, so it's presented as 'scheduled' (what
 // it effectively still is, from the outside) rather than leaking the
 // implementation detail.
+//
+// Except once it is genuinely on its way: a reel Instagram is transcoding, or
+// one waiting out a limit, can sit there for minutes or an hour, and
+// "Запланировано" past its own time would read as stuck.
 function toPublicScheduledPost(post: ScheduledPost): ScheduledPost {
-  return post.status === 'publishing' ? { ...post, status: 'scheduled' } : post;
+  if (post.status !== 'publishing') return post;
+  return post.publish_stage || post.waiting_reason ? post : { ...post, status: 'scheduled' };
 }
 
 // How a caption should look, resolved from what a request asked for against

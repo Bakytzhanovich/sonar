@@ -297,6 +297,19 @@ const MIGRATIONS: string[] = [
      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
   `CREATE INDEX IF NOT EXISTS idx_content_calendar_day ON content_calendar(tenant_id, day)`,
+  // Module 5: real publishing — a post goes through Instagram's container
+  // flow over several publisher passes (publisher.ts).
+  `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS platform_account_id TEXT`,
+  `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS ig_container_id TEXT`,
+  `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS publish_stage TEXT`,
+  `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS container_created_at TIMESTAMPTZ`,
+  `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ`,
+  `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS waiting_reason TEXT`,
+  `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS failure_detail TEXT`,
+  // When the account last started a publish — the slot publisher.ts claims
+  // atomically to keep posts to one account spaced out.
+  `ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS last_publish_slot_at TIMESTAMPTZ`,
 ];
 
 async function applyMigrations(client: PoolClient): Promise<void> {

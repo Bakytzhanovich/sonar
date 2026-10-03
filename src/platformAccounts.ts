@@ -20,6 +20,7 @@ export interface PlatformAccountRow {
   is_test: boolean;
   connected_at: string;
   refreshed_at: string | null;
+  last_publish_slot_at: string | null;
 }
 
 /** What leaves the server. No token, sealed or not, and no platform user id —
@@ -202,7 +203,7 @@ export async function maintainTokens(
   return result;
 }
 
-async function markNeedsReconnect(db: Db, account: PlatformAccountRow): Promise<void> {
+export async function markNeedsReconnect(db: Db, account: PlatformAccountRow): Promise<void> {
   const changed = await queryOne<{ id: string }>(
     db,
     `UPDATE platform_accounts SET status = 'needs_reconnect' WHERE id = ? AND status = 'active' RETURNING id`,

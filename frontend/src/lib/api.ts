@@ -193,6 +193,12 @@ export interface ScheduledPost {
   external_post_url: string | null;
   /** The render this post came from, when it was scheduled from the editor. */
   video_job_id: string | null;
+  /** The connected account it goes to; null publishes through the mock. */
+  platform_account_id: string | null;
+  /** Why a post on its way is waiting: our pace between posts, or Instagram's daily limit. */
+  waiting_reason: 'pace' | 'instagram_limit' | null;
+  /** Instagram's own words when it refused the post. */
+  failure_detail: string | null;
   /** The video, signed to play for a couple of hours. Null only on old posts
    *  from before posts carried one. */
   video_url: string | null;
@@ -675,6 +681,7 @@ export const api = {
       requiresApproval?: boolean;
       videoJobId?: string;
       videoObjectKey?: string;
+      platformAccountId?: string;
     }
   ) => apiRequest(config, 'POST', '/api/scheduled-posts', fields) as Promise<{ post: ScheduledPost }>,
 
