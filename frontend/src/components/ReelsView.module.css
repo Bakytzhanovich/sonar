@@ -29,7 +29,7 @@
  * the canvas is empty until something is analysed — so the empty state,
  * sized to fill a desktop canvas, filled a whole phone screen with nothing. */
 @media (max-width: 760px) {
-  .sidebar { padding: 14px !important; gap: 10px; border-bottom: 1px solid var(--border); }
+  .sidebar { width: 100% !important; padding: 14px !important; gap: 10px; border-bottom: 1px solid var(--border); }
   /* The main pane becomes a column that can stretch, which is what lets the
    * empty state below claim the leftover height. */
   .main { display: flex; flex-direction: column; padding: 14px !important; flex: 1; }

@@ -8,10 +8,10 @@ import { API_BASE_URL } from '@/lib/apiConfig';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { ONBOARDING_PROGRESS_KEY } from '@/lib/useLogout';
 import { useSession } from '@/lib/useSession';
-import LogoutButton from './LogoutButton';
 import ModuleNav from './ModuleNav';
 import controls from './Controls.module.css';
 import styles from './OnboardingView.module.css';
+import Brand from './Brand';
 
 const DEFAULT_KEYWORD = 'план';
 const DEFAULT_REPLY = 'Отправлю чек-лист. Подскажите, вы запускаете курс или консультацию?';
@@ -303,20 +303,19 @@ export default function OnboardingView() {
     <main className={styles.page}>
       <header className={styles.topbar}>
         <Link href="/" className={styles.brand} aria-label="Sonar — на главную">
-          Sonar
+          <Brand size="small" />
         </Link>
         <div className={styles.topbarRight}>
           <ModuleNav current="/onboarding" />
           <div className={styles.account}>
             <span>{session.userEmail}</span>
-            <LogoutButton />
           </div>
         </div>
       </header>
 
       <div className={styles.container}>
         <section className={styles.intro} aria-labelledby="onboarding-title">
-          <p className={styles.eyebrow}>ДЕМО · РАННИЙ MVP</p>
+          <p className={styles.eyebrow}>ДЕМО · ПЕРВЫЙ ЗАПУСК</p>
           <h1 id="onboarding-title">Пройдите первый цикл Sonar</h1>
           <p className={styles.lead}>
             Соберите простой ответ, проверьте его без записи данных, затем создайте один демо-диалог и продолжите работу с лидом в CRM.

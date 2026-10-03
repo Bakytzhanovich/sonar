@@ -1,0 +1,4 @@
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--foreground); font-size: var(--text-2xl); font-weight: 750; letter-spacing: -0.03em; }
+.small { gap: 8px; font-size: var(--text-xl); }
+.mark { width: 11px; height: 11px; flex: none; border-radius: 50%; background: var(--accent); }
+.small .mark { width: 9px; height: 9px; }

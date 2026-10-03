@@ -9,6 +9,7 @@ import { API_BASE_URL } from '@/lib/apiConfig';
 import { useSession } from '@/lib/useSession';
 import controls from './Controls.module.css';
 import styles from './AuthView.module.css';
+import Brand from './Brand';
 
 // Where a signed-in person lands. The video editor, not the guided chat-bot
 // tour: that tour walks through keywords and demo contacts, which is the part
@@ -127,7 +128,7 @@ export default function SignupView() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.brand}>Sonar</div>
+      <div className={styles.brand}><Brand /></div>
       <div className={styles.card}>
         <h1 className={styles.title}>Создать аккаунт</h1>
         {/* Said before the form rather than after a submission: there is no
