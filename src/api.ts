@@ -45,6 +45,9 @@ import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { generateCarouselSlides } from './carouselGeneration';
 import { PLATFORM_NAME, publishDuePosts } from './publisher';
+import { authorizeUrl, connectWithCode, instagramConfigFromEnv, signState, verifyState, type InstagramAppConfig } from './instagramAuth';
+import { listAccounts, saveConnectedAccount } from './platformAccounts';
+import { keyringFromEnv, type TokenKeyring } from './tokenVault';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
 import { assToRgb } from './assColour';
@@ -115,10 +118,28 @@ export interface AppOptions {
   /** The model that adapts reel scripts. Injected by tests so they never
    *  reach the network; defaults to OpenAI with the key from the environment. */
   reelChat?: ChatModel;
+  /** Encryption keys for platform tokens. Absent means "from the
+   *  environment"; null means "not configured", which tests use to check the
+   *  refusal. */
+  tokenKeyring?: TokenKeyring | null;
+  /** The Meta app. Same absent/null convention as tokenKeyring. */
+  instagram?: InstagramAppConfig | null;
+  /** Every request to Instagram goes through this. Tests pass a fake. */
+  instagramFetch?: typeof fetch;
 }
+
+// The test connection is development tooling, like the mock pipelines: never
+// on the site customers use.
+const MOCK_CONNECT_AVAILABLE = process.env.NODE_ENV !== 'production';
 
 export function createApp(db: Db, options: AppOptions = {}): Express {
   const reelChat = options.reelChat ?? openAiChatFromEnv();
+  const tokenKeyring = 'tokenKeyring' in options ? options.tokenKeyring ?? null : keyringFromEnv();
+  const instagram = 'instagram' in options ? options.instagram ?? null : instagramConfigFromEnv();
+  const instagramFetch = options.instagramFetch ?? fetch;
+  // Tied to the session secret like every other derived key, but its own:
+  // a state can never be mistaken for any other signed thing.
+  const oauthStateKey = deriveKey('instagram-oauth-state');
   const app = express();
 
   // Rate limiting keys on req.ip, which behind a reverse proxy is the
@@ -237,6 +258,32 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   });
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
+  // ---- Instagram connection: the way back from instagram.com ---------------
+  // Before requireProductCredential, like the media routes below: this is a
+  // browser arriving from Instagram, and the signed `state` — minted by the
+  // owner's own session a few minutes earlier — is what says which workspace
+  // it belongs to. Every outcome ends on the scheduler, which reads the
+  // result from the address and says it in words.
+  app.get('/api/oauth/instagram/callback', asyncHandler(async (req, res) => {
+    const back = (outcome: string) => res.redirect(302, `/scheduler?instagram=${outcome}`);
+    // The person pressed "Cancel" on Instagram's own screen.
+    if (req.query.error) return back('denied');
+    const tenantId = verifyState(oauthStateKey, req.query.state);
+    if (!tenantId) return back('expired');
+    if (!instagram || !tokenKeyring) return back('unavailable');
+    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    if (!code) return back('failed');
+    try {
+      const profile = await connectWithCode(instagram, code, instagramFetch);
+      await saveConnectedAccount(db, tokenKeyring, tenantId, 'instagram', profile);
+      return back('connected');
+    } catch (err) {
+      // The reason, which instagramAuth keeps free of tokens and URLs.
+      console.warn(`[instagram] connect failed for ${tenantId}: ${err instanceof Error ? err.message.slice(0, 300) : 'unknown'}`);
+      return back('failed');
+    }
+  }));
 
   // ---- Local media store (development stand-in for R2) --------------------
   // Mounted BEFORE requireProductCredential on purpose: like a presigned S3
@@ -1743,6 +1790,57 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // posts. The server-side timer in server.ts keeps the unscoped sweep.
   app.post('/api/scheduled-posts/process-due', asyncHandler(async (_req, res) => {
     res.json(await publishDuePosts(db, new Date(), res.locals.tenantId as string));
+  }));
+
+  // ---- Module 5: connected accounts -------------------------------------
+  // Writes are owner-only (roles.ts). Nothing here returns a token: the list
+  // carries who and until when, which is all a screen needs.
+
+  app.get('/api/platform-accounts', asyncHandler(async (_req, res) => {
+    res.json({
+      accounts: await listAccounts(db, res.locals.tenantId as string),
+      // Said separately, so the screen can tell "nothing connected yet" from
+      // "connecting is not possible yet" — different things to tell a person.
+      instagramAvailable: Boolean(instagram && tokenKeyring),
+      testConnectAvailable: MOCK_CONNECT_AVAILABLE,
+    });
+  }));
+
+  app.post('/api/platform-accounts/instagram/connect', asyncHandler(async (_req, res) => {
+    if (!tokenKeyring) return res.status(503).json({ error: 'token_vault_not_configured' });
+    if (!instagram) return res.status(503).json({ error: 'instagram_not_configured' });
+    res.json({ authorizeUrl: authorizeUrl(instagram, signState(oauthStateKey, res.locals.tenantId as string)) });
+  }));
+
+  // The development stand-in, same idea as the mock webhook: the whole path —
+  // connect, list, disconnect — exercised without Meta. No token worth the
+  // name, never refreshed, labelled as a test on the screen, and absent from
+  // production.
+  app.post('/api/platform-accounts/test', asyncHandler(async (_req, res) => {
+    if (!MOCK_CONNECT_AVAILABLE) return res.status(404).json({ error: 'not_found' });
+    if (!tokenKeyring) return res.status(503).json({ error: 'token_vault_not_configured' });
+    const account = await saveConnectedAccount(db, tokenKeyring, res.locals.tenantId as string, 'instagram', {
+      userId: 'test-account',
+      username: 'test_blogger',
+      accessToken: 'test-token',
+      expiresAt: new Date(),
+      isTest: true,
+    });
+    res.status(201).json({ account });
+  }));
+
+  // Disconnecting forgets the token. Revoking the app's access on
+  // Instagram's side is the person's to do in their Instagram settings —
+  // there is no API for an app to revoke itself there.
+  app.delete('/api/platform-accounts/:id', asyncHandler(async (req, res) => {
+    const removed = await queryOne<{ id: string }>(
+      db,
+      `DELETE FROM platform_accounts WHERE id = ? AND tenant_id = ? RETURNING id`,
+      req.params.id,
+      res.locals.tenantId
+    );
+    if (!removed) return res.status(404).json({ error: 'account not found' });
+    res.status(204).end();
   }));
 
   // ---- Module 6: Content plan from CRM + Module 3 (the real differentiator) --

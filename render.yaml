@@ -46,6 +46,23 @@ services:
         sync: false
       - key: VAPID_PRIVATE_KEY
         sync: false
+      # Encrypts connected accounts' access tokens at rest (src/tokenVault.ts).
+      # Unset: the API still runs, connecting accounts answers "not
+      # configured". Generate with
+      #   node -e "console.log('v1:'+require('crypto').randomBytes(32).toString('base64'))"
+      # Rotation: put a new v2:... in FRONT, keep v1 after it until the hourly
+      # sweep has re-sealed every token, then drop v1. Losing every key loses
+      # every connection — keep a copy in the password manager.
+      - key: TOKEN_ENCRYPTION_KEYS
+        sync: false
+      # The Meta app ("Instagram API with Instagram Login"). The redirect URI
+      # must be registered in the app exactly: https://<frontend>/api/oauth/instagram/callback
+      - key: INSTAGRAM_APP_ID
+        sync: false
+      - key: INSTAGRAM_APP_SECRET
+        sync: false
+      - key: INSTAGRAM_REDIRECT_URI
+        sync: false
       # The two routes that mint a credential without needing one, and so the
       # two that decide who can get into this deployment at all.
       #

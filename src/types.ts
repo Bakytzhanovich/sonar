@@ -407,7 +407,8 @@ export type NotificationType =
   | 'video_completed'
   | 'video_failed'
   | 'reel_analyzed'
-  | 'reel_failed';
+  | 'reel_failed'
+  | 'account_needs_reconnect';
 
 export interface AppNotification {
   id: string;

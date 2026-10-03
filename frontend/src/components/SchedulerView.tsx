@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, type PostingPlatform, type ScheduledPost, type VideoEditJob } from '@/lib/api';
+import { api, type PlatformAccount, type PostingPlatform, type ScheduledPost, type VideoEditJob } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { STAFF_BOOTSTRAP_AVAILABLE, useApiAccess } from '@/lib/useApiAccess';
 import ModuleNav from './ModuleNav';
@@ -61,6 +61,31 @@ const CREATE_ERRORS: Record<string, string> = {
   storage_not_configured: 'Загрузка файлов сейчас недоступна',
 };
 
+// Instagram sends the person back to /scheduler?instagram=<outcome>.
+const CONNECT_OUTCOME: Record<string, string> = {
+  connected: 'Instagram подключён',
+  denied: 'Подключение отменено на стороне Instagram',
+  expired: 'Ссылка подключения устарела — нажмите «Подключить Instagram» ещё раз',
+  failed: 'Instagram не подтвердил подключение — попробуйте ещё раз',
+  unavailable: 'Подключение Instagram сейчас недоступно',
+};
+
+// Read without side effects: React may call a state initialiser twice, and a
+// reader that also cleared the address would find nothing the second time.
+function connectOutcomeFromAddress(): string {
+  if (typeof window === 'undefined') return '';
+  return CONNECT_OUTCOME[new URLSearchParams(window.location.search).get('instagram') ?? ''] ?? '';
+}
+
+/** Said once: a reload must not announce the same connection again. */
+function forgetConnectOutcome(): void {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has('instagram')) return;
+  params.delete('instagram');
+  const rest = params.toString();
+  window.history.replaceState(null, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+}
+
 const SOURCE_OPTIONS = [
   { id: 'render', label: 'Мой монтаж' },
   { id: 'upload', label: 'Загрузить файл' },
@@ -109,7 +134,7 @@ export default function SchedulerView() {
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [posts, setPosts] = useState<ScheduledPost[]>([]);
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState(connectOutcomeFromAddress);
 
   const load = useCallback(async () => {
     if (!hasAccess) return;
@@ -144,6 +169,8 @@ export default function SchedulerView() {
     load();
     loadRenders();
   }, [load, loadRenders]);
+
+  useEffect(forgetConnectOutcome, []);
 
   const videoChosen = source === 'render' ? Boolean(jobId && renders.some((r) => r.id === jobId)) : Boolean(file);
 
@@ -320,6 +347,8 @@ export default function SchedulerView() {
           {/* Said plainly: until an account is connected through the
               platform's own review, nothing here reaches a real feed, and a
               post marked "Опубликовано" must not be mistaken for one that is. */}
+          <AccountsPanel config={config} hasAccess={hasAccess} onMessage={setStatus} />
+
           <NoticeBanner>
             Публикация в соцсети подключается: сейчас посты проходят очередь и расписание, но в аккаунт не уходят.
           </NoticeBanner>
@@ -398,5 +427,131 @@ function PostRow({ post }: { post: ScheduledPost }) {
         )}
       </div>
     </div>
+  );
+}
+
+// The accounts posts go to. Connecting is a trip to Instagram's own sign-in —
+// we never see a password — and the token it hands back never reaches this
+// screen; what does is who, and whether it still works.
+function AccountsPanel({
+  config,
+  hasAccess,
+  onMessage,
+}: {
+  config: { baseUrl: string; apiKey: string };
+  hasAccess: boolean;
+  onMessage: (message: string) => void;
+}) {
+  const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
+  const [instagramAvailable, setInstagramAvailable] = useState(false);
+  const [testAvailable, setTestAvailable] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!hasAccess) return;
+    try {
+      const res = await api.listPlatformAccounts(config);
+      setAccounts(res.accounts);
+      setInstagramAvailable(res.instagramAvailable);
+      setTestAvailable(res.testConnectAvailable);
+    } catch {
+      // The panel is not the screen's main job; the queue still works.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.apiKey, config.baseUrl, hasAccess]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load();
+  }, [load]);
+
+  async function connect() {
+    setBusy(true);
+    try {
+      const { authorizeUrl } = await api.connectInstagram(config);
+      // Leaves the page: Instagram brings the person back here.
+      window.location.assign(authorizeUrl);
+    } catch (err) {
+      onMessage(err instanceof Error ? err.message : String(err));
+      setBusy(false);
+    }
+  }
+
+  async function connectTest() {
+    try {
+      await api.connectTestAccount(config);
+      await load();
+      onMessage('Тестовый аккаунт подключён');
+    } catch (err) {
+      onMessage(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function disconnect(account: PlatformAccount) {
+    const who = account.username ? `@${account.username}` : 'аккаунт';
+    if (!window.confirm(`Отключить ${who}? Запланированные в него посты не выйдут, пока аккаунт не подключат снова.`)) return;
+    try {
+      await api.disconnectAccount(config, account.id);
+      await load();
+      onMessage(`${who} отключён`);
+    } catch (err) {
+      onMessage(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return (
+    <section className={styles.accounts}>
+      <div className={styles.accountsHead}>
+        <h3>Аккаунты</h3>
+        <div className={styles.accountsActions}>
+          {testAvailable && (
+            <button type="button" className={controls.buttonSecondary} onClick={connectTest} disabled={!hasAccess}>
+              Тестовое подключение
+            </button>
+          )}
+          <button
+            type="button"
+            className={controls.buttonSecondary}
+            onClick={connect}
+            disabled={!instagramAvailable || busy || !hasAccess}
+          >
+            {busy ? 'Открываю Instagram…' : 'Подключить Instagram'}
+          </button>
+        </div>
+      </div>
+
+      {!instagramAvailable && (
+        <p className={styles.accountsHint}>Подключение Instagram откроется после одобрения приложения в Meta.</p>
+      )}
+
+      {accounts.length > 0 ? (
+        <ul className={styles.accountList}>
+          {accounts.map((a) => (
+            <li key={a.id} className={styles.accountItem}>
+              <span className={styles.accountAvatar} aria-hidden="true">{(a.username ?? '?').slice(0, 1).toUpperCase()}</span>
+              <span className={styles.accountName}>
+                {a.username ? `@${a.username}` : 'Instagram'}
+                <span className={styles.accountMeta}>
+                  {PLATFORM_LABEL[a.platform] ?? a.platform}
+                  {a.is_test && ' · тестовый'}
+                </span>
+              </span>
+              {a.status === 'needs_reconnect' ? (
+                <button type="button" className={styles.accountWarn} onClick={connect} disabled={!instagramAvailable}>
+                  Переподключить
+                </button>
+              ) : (
+                <span className={styles.accountOk}>подключён</span>
+              )}
+              <button type="button" className={styles.accountRemove} onClick={() => disconnect(a)}>
+                Отключить
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        instagramAvailable && <p className={styles.accountsHint}>Пока ни одного аккаунта. Подключите Instagram, чтобы посты уходили в него.</p>
+      )}
+    </section>
   );
 }

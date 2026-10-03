@@ -167,6 +167,18 @@ export interface CarouselSlide {
 }
 
 export type PostingPlatform = 'instagram' | 'tiktok' | 'youtube_shorts';
+
+/** A connected social account. Never carries the token — the server keeps it. */
+export interface PlatformAccount {
+  id: string;
+  platform: string;
+  username: string | null;
+  status: 'active' | 'needs_reconnect';
+  /** The development stand-in, not a real Instagram. */
+  is_test: boolean;
+  token_expires_at: string | null;
+  connected_at: string;
+}
 export type ScheduledPostStatus = 'pending_approval' | 'scheduled' | 'publishing' | 'published' | 'failed' | 'rejected';
 
 export interface ScheduledPost {
@@ -632,6 +644,23 @@ export const api = {
 
   rejectPost: (config: ApiConfig, id: string) =>
     apiRequest(config, 'POST', `/api/scheduled-posts/${id}/reject`) as Promise<{ post: ScheduledPost }>,
+
+  listPlatformAccounts: (config: ApiConfig) =>
+    apiRequest(config, 'GET', '/api/platform-accounts') as Promise<{
+      accounts: PlatformAccount[];
+      instagramAvailable: boolean;
+      testConnectAvailable: boolean;
+    }>,
+
+  /** Where to send the browser: Instagram's own sign-in, which comes back
+   *  to /scheduler?instagram=<outcome>. */
+  connectInstagram: (config: ApiConfig) =>
+    apiRequest(config, 'POST', '/api/platform-accounts/instagram/connect') as Promise<{ authorizeUrl: string }>,
+
+  connectTestAccount: (config: ApiConfig) =>
+    apiRequest(config, 'POST', '/api/platform-accounts/test') as Promise<{ account: PlatformAccount }>,
+
+  disconnectAccount: (config: ApiConfig, id: string) => apiRequest(config, 'DELETE', `/api/platform-accounts/${id}`),
 
   processDuePosts: (config: ApiConfig) => apiRequest(config, 'POST', '/api/scheduled-posts/process-due') as Promise<{ processed: number }>,
 

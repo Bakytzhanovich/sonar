@@ -62,6 +62,16 @@ const SELF_SCOPED_WRITES = [
  */
 const OWNER_ONLY = [/^\/api\/members(\/|$)/];
 
+/**
+ * Paths everyone may read but only an owner may change.
+ *
+ * Connected social accounts decide where the whole workspace's posts go, and
+ * connecting one hands us publishing rights over someone's Instagram. That is
+ * the owner's call. Reading stays open: an editor scheduling a post needs to
+ * see which accounts there are.
+ */
+const OWNER_ONLY_WRITES = [/^\/api\/platform-accounts(\/|$)/];
+
 function matches(path: string, patterns: Array<string | RegExp>): boolean {
   return patterns.some((p) => (typeof p === 'string' ? p === path : p.test(path)));
 }
@@ -75,6 +85,7 @@ function matches(path: string, patterns: Array<string | RegExp>): boolean {
 export function requiredRole(method: string, path: string): Role {
   if (matches(path, OWNER_ONLY)) return 'owner';
   if (READ_METHODS.has(method.toUpperCase())) return 'viewer';
+  if (matches(path, OWNER_ONLY_WRITES)) return 'owner';
   if (matches(path, SELF_SCOPED_WRITES)) return 'viewer';
   return 'editor';
 }

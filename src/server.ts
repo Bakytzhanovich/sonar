@@ -1,12 +1,17 @@
 import { createApp } from './api';
 import { createDb } from './db';
+import { maintainTokens } from './platformAccounts';
 import { publishDuePosts } from './publisher';
+import { keyringFromEnv } from './tokenVault';
 import { advanceRenderJobs } from './videoRender';
 import { assertMockWebhookConfig } from './webhookAuth';
 
 const PORT = Number(process.env.PORT ?? 4001);
 const PUBLISH_POLL_INTERVAL_MS = 15_000;
 const RENDER_POLL_INTERVAL_MS = 15_000;
+// Hourly: tokens are renewed a week ahead, so this has days of slack, and
+// each pass is one cheap query when nothing is due.
+const TOKEN_UPKEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 async function main() {
   // Refuses to boot with the mock webhook switched on but no shared secret
@@ -17,6 +22,12 @@ async function main() {
 
   const db = await createDb();
   const app = createApp(db);
+
+  // Read once and shared with the sweep below. Production without
+  // TOKEN_ENCRYPTION_KEYS still boots — connecting an account answers "not
+  // configured" — but says so here, where a deploy log will show it.
+  const tokenKeyring = keyringFromEnv();
+  if (!tokenKeyring) console.warn('[tokens] TOKEN_ENCRYPTION_KEYS not set: connecting social accounts is disabled');
 
   app.listen(PORT, () => {
     console.log(`Sonar Module 1 API listening on http://localhost:${PORT}`);
@@ -48,6 +59,21 @@ async function main() {
       })
       .catch((err) => console.error('[render] tick failed', err));
   }, RENDER_POLL_INTERVAL_MS);
+
+  // Connected accounts' tokens: renewed before they expire, marked for the
+  // person to reconnect when they cannot be, re-sealed after a key rotation.
+  if (tokenKeyring) {
+    const upkeep = () =>
+      maintainTokens(db, tokenKeyring)
+        .then(({ refreshed, needsReconnect, reencrypted }) => {
+          if (refreshed || needsReconnect || reencrypted) {
+            console.log(`[tokens] продлено: ${refreshed}, нужно переподключить: ${needsReconnect}, перешифровано: ${reencrypted}`);
+          }
+        })
+        .catch((err) => console.error('[tokens] upkeep failed', err));
+    void upkeep();
+    setInterval(upkeep, TOKEN_UPKEEP_INTERVAL_MS);
+  }
 }
 
 main().catch((err) => {

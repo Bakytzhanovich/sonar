@@ -344,6 +344,31 @@ CREATE TABLE scheduled_posts (
 );
 
 CREATE INDEX idx_scheduled_posts_tenant ON scheduled_posts(tenant_id);
+
+-- A social account a workspace has connected. token_ciphertext is the
+-- platform's access token encrypted with tokenVault.ts, bound to this row —
+-- never the token itself. One Instagram account may be connected to several
+-- workspaces (a blogger and their agency), each with its own token.
+-- status: active | needs_reconnect (refresh failed or the token expired; only
+-- the person can fix it, by connecting again). is_test marks the development
+-- stand-in, which has no real token and is never sent to Meta.
+CREATE TABLE platform_accounts (
+  id                TEXT PRIMARY KEY,
+  seq               BIGSERIAL,
+  tenant_id         TEXT NOT NULL REFERENCES tenants(id),
+  platform          TEXT NOT NULL,
+  external_user_id  TEXT NOT NULL,
+  username          TEXT,
+  token_ciphertext  TEXT NOT NULL,
+  token_expires_at  TIMESTAMPTZ,
+  status            TEXT NOT NULL DEFAULT 'active',
+  is_test           BOOLEAN NOT NULL DEFAULT false,
+  connected_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  refreshed_at      TIMESTAMPTZ,
+  UNIQUE (tenant_id, platform, external_user_id)
+);
+-- What the refresh sweep scans.
+CREATE INDEX idx_platform_accounts_expiry ON platform_accounts(status, token_expires_at);
 -- What the polling publisher scans on every tick.
 CREATE INDEX idx_scheduled_posts_due ON scheduled_posts(status, scheduled_at);
 

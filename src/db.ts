@@ -254,6 +254,24 @@ const MIGRATIONS: string[] = [
   // and a time, with nothing a reel platform could actually publish.
   `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS video_object_key TEXT`,
   `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS video_job_id TEXT`,
+  // Module 5: connected social accounts. The token column holds ciphertext
+  // only — see tokenVault.ts.
+  `CREATE TABLE IF NOT EXISTS platform_accounts (
+     id                TEXT PRIMARY KEY,
+     seq               BIGSERIAL,
+     tenant_id         TEXT NOT NULL REFERENCES tenants(id),
+     platform          TEXT NOT NULL,
+     external_user_id  TEXT NOT NULL,
+     username          TEXT,
+     token_ciphertext  TEXT NOT NULL,
+     token_expires_at  TIMESTAMPTZ,
+     status            TEXT NOT NULL DEFAULT 'active',
+     is_test           BOOLEAN NOT NULL DEFAULT false,
+     connected_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+     refreshed_at      TIMESTAMPTZ,
+     UNIQUE (tenant_id, platform, external_user_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_platform_accounts_expiry ON platform_accounts(status, token_expires_at)`,
 ];
 
 async function applyMigrations(client: PoolClient): Promise<void> {
