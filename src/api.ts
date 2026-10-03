@@ -1553,33 +1553,46 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     res.json({ presets });
   }));
 
-  // "Промпт → готовая карусель" — generateCarouselSlides calls OpenAI when
-  // OPENAI_API_KEY is set, falling back to the deterministic mock otherwise
-  // (missing key, network error, malformed response); everything else
-  // (slide storage, editing, listing) is real either way.
+  // "Промпт → готовая карусель". The text comes first, and only then is
+  // anything written: a model that fails must not leave an empty carousel in
+  // the library. And when it does fail, the person is told — never handed
+  // template slides as if they were generated (see carouselGeneration.ts).
   app.post('/api/carousels', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
     if (!prompt) return res.status(400).json({ error: 'prompt is required' });
 
     const presetId = req.body?.presetId ?? null;
     if (presetId) {
-      const preset = await queryOne(db, `SELECT id FROM brand_presets WHERE id = ? AND tenant_id = ?`, presetId, res.locals.tenantId);
+      const preset = await queryOne(db, `SELECT id FROM brand_presets WHERE id = ? AND tenant_id = ?`, presetId, tenantId);
       if (!preset) return res.status(404).json({ error: 'preset not found' });
     }
 
-    const carouselId = randomUUID();
-    await exec(db, `INSERT INTO carousels (id, tenant_id, prompt, preset_id) VALUES (?, ?, ?, ?)`, carouselId, res.locals.tenantId, prompt, presetId);
+    let slides;
+    try {
+      slides = await generateCarouselSlides(prompt, reelChat);
+    } catch (err) {
+      const reason = err instanceof ReelAnalysisError ? err.reason : 'llm_failed';
+      return res.status(reason === 'llm_not_configured' ? 503 : 502).json({ error: reason });
+    }
 
-    // One multi-row INSERT, not an awaited-per-slide loop: each slide is
-    // an independent Postgres round-trip now (unlike the old synchronous
-    // better-sqlite3 version, which committed the whole batch on one
-    // in-process call), so a sequential loop both serializes N round-trips
-    // and lets a concurrent reader observe a carousel with only some of
-    // its slides if the request fails partway through.
-    const slides = await generateCarouselSlides(prompt);
-    const slideParams = slides.flatMap((slide, i) => [randomUUID(), carouselId, res.locals.tenantId, i, slide.headline, slide.body]);
-    const valuesSql = slides.map(() => '(?, ?, ?, ?, ?, ?)').join(', ');
-    await exec(db, `INSERT INTO carousel_slides (id, carousel_id, tenant_id, position, headline, body) VALUES ${valuesSql}`, ...slideParams);
+    // The carousel and its slides in one transaction, so nobody can ever
+    // read a carousel with only some of its slides.
+    const carouselId = randomUUID();
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      await exec(client, `INSERT INTO carousels (id, tenant_id, prompt, preset_id) VALUES (?, ?, ?, ?)`, carouselId, tenantId, prompt, presetId);
+      const slideParams = slides.flatMap((slide, i) => [randomUUID(), carouselId, tenantId, i, slide.headline, slide.body]);
+      const valuesSql = slides.map(() => '(?, ?, ?, ?, ?, ?)').join(', ');
+      await exec(client, `INSERT INTO carousel_slides (id, carousel_id, tenant_id, position, headline, body) VALUES ${valuesSql}`, ...slideParams);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
 
     const carousel = (await getCarouselForTenant(db, carouselId, res.locals.tenantId as string))!;
     res.status(201).json({ carousel, slides: await getSlidesForCarousel(db, carouselId) });

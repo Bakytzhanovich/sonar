@@ -29,6 +29,20 @@ function Swatch({ preset }: { preset: BrandPreset | null }) {
   );
 }
 
+// A failed generation says it failed — the server no longer hands out
+// template slides as if they were written by the model.
+const GENERATE_ERRORS: Record<string, string> = {
+  llm_not_configured: 'ИИ сейчас не подключён — карусель не создать',
+  llm_invalid_answer: 'ИИ ответил что-то не то — нажмите «Сгенерировать» ещё раз',
+  llm_failed: 'ИИ не ответил — попробуйте ещё раз через минуту',
+};
+
+function generateErrorText(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = Object.keys(GENERATE_ERRORS).find((key) => message.includes(key));
+  return code ? GENERATE_ERRORS[code] : message;
+}
+
 export default function CarouselView() {
   const [devConfig] = useDevConfig();
   const { baseUrl, apiKey } = devConfig;
@@ -38,6 +52,7 @@ export default function CarouselView() {
   const { hasAccess } = useApiAccess();
 
   const [prompt, setPrompt] = useState('5 привычек продуктивности');
+  const [generating, setGenerating] = useState(false);
   const [presets, setPresets] = useState<BrandPreset[]>([]);
   const [presetId, setPresetId] = useState('');
   const [presetName, setPresetName] = useState('Мой бренд');
@@ -129,16 +144,20 @@ export default function CarouselView() {
   }, [currentSlide, activePreset]);
 
   async function generate() {
-    if (!prompt.trim()) return;
+    if (!prompt.trim() || generating) return;
+    setGenerating(true);
+    setStatus('');
     try {
       const res = await api.createCarousel(config, prompt.trim(), presetId || undefined);
       await loadLibrary();
       setSelectedCarousel(res.carousel);
       setSlides(res.slides);
       setSlideIndex(0);
-      setStatus(`Карусель сгенерирована: ${res.slides.length} слайдов (мок-текст)`);
+      setStatus(`Готово: ${res.slides.length} слайдов. Текст можно поправить прямо на слайде.`);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
+      setStatus(generateErrorText(err));
+    } finally {
+      setGenerating(false);
     }
   }
 
@@ -221,7 +240,9 @@ export default function CarouselView() {
             />
             <Swatch preset={activePreset} />
           </div>
-          <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={generate}>Сгенерировать</button>
+          <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={generate} disabled={generating}>
+            {generating ? 'Генерирую…' : 'Сгенерировать'}
+          </button>
 
           <div className={styles.sectionLabel}>Бренд</div>
           <input className={controls.input} value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="Название пресета" />

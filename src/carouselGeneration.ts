@@ -1,111 +1,67 @@
-import { createHash } from 'node:crypto';
+import { ReelAnalysisError, type ChatModel } from './reelLlm';
 
-// generateCarouselMock stands in for a real LLM call (per ТЗ: "LLM для
-// текста"). Deterministic from the prompt, same reasoning as
-// analyzeReelMock. generateCarouselSlides below is the real entry point —
-// it calls OpenAI when a key is configured and falls back to the mock
-// (missing key, network error, malformed response) so this feature never
-// takes the carousel endpoint down and local dev/tests need no API key.
+// Module 4 — a carousel's text from one prompt.
+//
+// There is deliberately NO fallback to template slides. There used to be:
+// with no key, or when the model failed or answered nonsense, the person got
+// "Пункт 1 / Пункт 2 / [мок] текст слайда" and was told the carousel had been
+// generated. That is the same failure Module 3 was rewritten to remove — a
+// made-up result presented as the real one. Now a failure says so, and the
+// person can simply press the button again.
+//
+// The model is the same injected ChatModel the reel and content-plan
+// modules use, so tests never reach the network and every LLM feature
+// fails the same, explainable way.
 
 export interface SlideContentFields {
   headline: string;
   body: string;
 }
 
-const SLIDE_COUNT_MIN = 4;
-const SLIDE_COUNT_RANGE = 3; // 4..6 slides
-
-const HEADLINE_TEMPLATES = [
-  (n: number, prompt: string) => (n === 0 ? prompt : `Пункт ${n}`),
-  (n: number, prompt: string) => (n === 0 ? `Всё про: ${prompt}` : `Шаг ${n}`),
-];
-
-export function generateCarouselMock(prompt: string): SlideContentFields[] {
-  const hash = createHash('sha256').update(prompt).digest();
-  const slideCount = SLIDE_COUNT_MIN + (hash[0] % SLIDE_COUNT_RANGE);
-  const templateIndex = hash[1] % HEADLINE_TEMPLATES.length;
-  const template = HEADLINE_TEMPLATES[templateIndex];
-
-  const slides: SlideContentFields[] = [];
-  for (let i = 0; i < slideCount; i++) {
-    slides.push({
-      headline: template(i, prompt),
-      body: i === slideCount - 1 ? '[мок] Сохрани и поделись, если было полезно' : `[мок] текст слайда ${i + 1} по теме "${prompt}"`,
-    });
-  }
-  return slides;
-}
-
-const OPENAI_CHAT_COMPLETIONS_URL = 'https://api.openai.com/v1/chat/completions';
-const OPENAI_MODEL = 'gpt-4o-mini';
+const MIN_SLIDES = 4;
+const MAX_SLIDES = 8;
+const MAX_HEADLINE = 80;
+const MAX_BODY = 400;
 
 const SYSTEM_PROMPT =
-  'Ты помогаешь блогерам делать карусели для Instagram/TikTok. По теме от пользователя сгенерируй 4-6 слайдов. ' +
-  'Ответь СТРОГО валидным JSON без markdown-обёртки: {"slides": [{"headline": string, "body": string}, ...]}. ' +
-  'headline — короткий заголовок слайда (до 60 символов), body — 1-3 предложения текста. Пиши по-русски.';
+  'Ты помогаешь блогерам делать карусели для Instagram и TikTok. По теме от пользователя сделай 4–6 слайдов. ' +
+  'Первый слайд — цепляющий заголовок темы, последний — призыв (сохранить, написать в директ). ' +
+  'Ответь строго JSON без markdown: {"slides": [{"headline": string, "body": string}]}. ' +
+  'headline — короткий заголовок слайда (до 60 символов), body — 1–3 предложения. Пиши по-русски.';
 
-function isSlideContentFields(value: unknown): value is SlideContentFields {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as SlideContentFields).headline === 'string' &&
-    typeof (value as SlideContentFields).body === 'string'
-  );
+function clean(value: unknown, max: number): string | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim().replace(/[ \t]+/g, ' ');
+  return text ? text.slice(0, max) : null;
 }
 
-// Without a deadline a stalled TCP connection held POST /api/carousels open
-// indefinitely: fetch has no default timeout, and because nothing ever threw,
-// the mock fallback below could not step in either — the request simply never
-// answered. 20s is well above a normal completion for this small prompt.
-const OPENAI_TIMEOUT_MS = 20_000;
-
-async function generateCarouselWithOpenAI(prompt: string, apiKey: string, fetchImpl: typeof fetch): Promise<SlideContentFields[]> {
-  const response = await fetchImpl(OPENAI_CHAT_COMPLETIONS_URL, {
-    method: 'POST',
-    signal: AbortSignal.timeout(OPENAI_TIMEOUT_MS),
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: prompt },
-      ],
-    }),
-  });
-
-  if (!response.ok) throw new Error(`OpenAI request failed: ${response.status} ${await response.text()}`);
-
-  const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
-  const content = body?.choices?.[0]?.message?.content;
-  if (typeof content !== 'string') throw new Error('OpenAI response missing message content');
-
-  const parsed = JSON.parse(content);
-  const slides = parsed?.slides;
-  if (!Array.isArray(slides) || slides.length < SLIDE_COUNT_MIN || !slides.every(isSlideContentFields)) {
-    throw new Error('OpenAI response did not contain a valid slides array');
+/**
+ * The model's answer as slides, or a refusal. Forgiving on detail — an
+ * overlong headline is cut, extra slides are dropped — strict on shape: a
+ * slide without a headline is not a slide, and fewer than four is not a
+ * carousel.
+ */
+export function parseSlides(content: string): SlideContentFields[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new ReelAnalysisError('llm_invalid_answer', 'not JSON');
   }
-
+  const raw = (parsed as { slides?: unknown }).slides;
+  if (!Array.isArray(raw)) throw new ReelAnalysisError('llm_invalid_answer', 'no slides');
+  const slides = raw
+    .map((s: unknown) => {
+      const slide = s as { headline?: unknown; body?: unknown };
+      const headline = clean(slide.headline, MAX_HEADLINE);
+      return headline ? { headline, body: clean(slide.body, MAX_BODY) ?? '' } : null;
+    })
+    .filter((s): s is SlideContentFields => s !== null)
+    .slice(0, MAX_SLIDES);
+  if (slides.length < MIN_SLIDES) throw new ReelAnalysisError('llm_invalid_answer', `only ${slides.length} slides`);
   return slides;
 }
 
-// The real entry point api.ts calls. `fetchImpl` is a plain parameter
-// (never read from globalThis inside the OpenAI call) so concurrent
-// requests on this server can never race over a shared mutable fetch, and
-// a test could inject a stub without a network mock library — no test does
-// this today since the missing-key fallback below already keeps the whole
-// suite offline.
-export async function generateCarouselSlides(
-  prompt: string,
-  apiKey: string | undefined = process.env.OPENAI_API_KEY,
-  fetchImpl: typeof fetch = fetch
-): Promise<SlideContentFields[]> {
-  if (!apiKey) return generateCarouselMock(prompt);
-
-  try {
-    return await generateCarouselWithOpenAI(prompt, apiKey, fetchImpl);
-  } catch (err) {
-    console.warn('generateCarouselSlides: OpenAI call failed, falling back to mock:', err instanceof Error ? err.message : err);
-    return generateCarouselMock(prompt);
-  }
+export async function generateCarouselSlides(prompt: string, chat: ChatModel): Promise<SlideContentFields[]> {
+  return parseSlides(await chat(SYSTEM_PROMPT, prompt));
 }

@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import type { Db } from '../src/db';
+import { queryAll, type Db } from '../src/db';
 import { createApp } from '../src/api';
-import { generateCarouselMock } from '../src/carouselGeneration';
+import { parseSlides } from '../src/carouselGeneration';
+import { ReelAnalysisError, type ChatModel } from '../src/reelLlm';
 import { createTestDb, dropTestDb } from './dbTestHelper';
 
 async function createTenant(app: Express, email = 'carousel@example.com') {
@@ -11,23 +12,32 @@ async function createTenant(app: Express, email = 'carousel@example.com') {
   return { apiKey: res.body.apiKey as string };
 }
 
-describe('generateCarouselMock (pure)', () => {
-  it('is deterministic and produces 4-6 slides', () => {
-    const a = generateCarouselMock('5 привычек продуктивности');
-    const b = generateCarouselMock('5 привычек продуктивности');
-    expect(a).toEqual(b);
-    expect(a.length).toBeGreaterThanOrEqual(4);
-    expect(a.length).toBeLessThanOrEqual(6);
+const slidesAnswer = (n: number) =>
+  JSON.stringify({ slides: Array.from({ length: n }, (_, i) => ({ headline: `Слайд ${i + 1}`, body: `Текст ${i + 1}` })) });
+
+describe('parseSlides', () => {
+  it('reads the model\'s slides, trimming what runs long', () => {
+    const slides = parseSlides(JSON.stringify({ slides: [{ headline: '  Привычка  ', body: 'x'.repeat(900) }, ...JSON.parse(slidesAnswer(4)).slides] }));
+    expect(slides[0]).toEqual({ headline: 'Привычка', body: 'x'.repeat(400) });
+    expect(parseSlides(slidesAnswer(12))).toHaveLength(8);
+  });
+
+  it('refuses something that is not a carousel', () => {
+    expect(() => parseSlides(slidesAnswer(3))).toThrow(ReelAnalysisError);
+    expect(() => parseSlides('{"slides": [{"body": "без заголовка"}]}')).toThrow(ReelAnalysisError);
+    expect(() => parseSlides('не JSON')).toThrow(ReelAnalysisError);
   });
 });
 
 describe('carousel API', () => {
   let app: Express;
   let db: Db;
+  let chat: ChatModel;
 
   beforeEach(async () => {
     db = await createTestDb();
-    app = createApp(db);
+    chat = async () => slidesAnswer(5);
+    app = createApp(db, { reelChat: (s, u) => chat(s, u) });
   });
 
   afterEach(async () => {
@@ -55,6 +65,27 @@ describe('carousel API', () => {
 
     const list = await request(app).get('/api/carousels').set('Authorization', `Bearer ${apiKey}`);
     expect(list.body.carousels).toHaveLength(1);
+  });
+
+  // The old fallback handed out "Пункт 1 / [мок] текст слайда" as a
+  // generated carousel. A failure now says it failed, and leaves nothing
+  // half-made in the library.
+  it('says the model failed instead of handing out template slides', async () => {
+    const { apiKey } = await createTenant(app);
+    chat = async () => { throw new ReelAnalysisError('llm_failed', 'down'); };
+    const failed = await request(app).post('/api/carousels').set('Authorization', `Bearer ${apiKey}`).send({ prompt: 'тема' });
+    expect(failed.status).toBe(502);
+    expect(failed.body.error).toBe('llm_failed');
+
+    chat = async () => { throw new ReelAnalysisError('llm_not_configured'); };
+    const unconfigured = await request(app).post('/api/carousels').set('Authorization', `Bearer ${apiKey}`).send({ prompt: 'тема' });
+    expect(unconfigured.status).toBe(503);
+
+    chat = async () => slidesAnswer(2);
+    const tooShort = await request(app).post('/api/carousels').set('Authorization', `Bearer ${apiKey}`).send({ prompt: 'тема' });
+    expect(tooShort.status).toBe(502);
+
+    expect(await queryAll(db, `SELECT id FROM carousels`)).toHaveLength(0);
   });
 
   it('rejects an unknown presetId', async () => {
