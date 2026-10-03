@@ -395,6 +395,35 @@ export interface ContentRecommendation {
   explanation: string;
 }
 
+/** A video topic read from what buyers asked in direct messages. */
+export interface ContentTopic {
+  id: string;
+  title: string;
+  segment: string;
+  why: string;
+  /** Verbatim excerpts of buyers' messages, with personal data masked. */
+  quotes: string[];
+  clientCount: number;
+  subscriberCount: number;
+  script?: string;
+}
+
+export interface ContentPlan {
+  topics: ContentTopic[];
+  generatedAt: string;
+  /** Conversations have moved on since the plan was made. */
+  stale: boolean;
+}
+
+export interface PlanReadiness {
+  instagramConnected: boolean;
+  inboundMessages: number;
+  taggedSubscribers: number;
+  clients: number;
+  clientMessages: number;
+  ready: boolean;
+}
+
 export interface ApiConfig {
   baseUrl: string;
   apiKey?: string;
@@ -670,6 +699,15 @@ export const api = {
     apiRequest(config, 'GET', `/api/content-recommendations${segment ? `?segment=${encodeURIComponent(segment)}` : ''}`) as Promise<{
       recommendations: ContentRecommendation[];
     }>,
+
+  getContentPlan: (config: ApiConfig) =>
+    apiRequest(config, 'GET', '/api/content-plan') as Promise<{ plan: ContentPlan | null; readiness: PlanReadiness }>,
+
+  /** Asks the model — seconds, and money — so only on a click. */
+  generateContentPlan: (config: ApiConfig) => apiRequest(config, 'POST', '/api/content-plan') as Promise<{ plan: ContentPlan }>,
+
+  writeTopicScript: (config: ApiConfig, topicId: string) =>
+    apiRequest(config, 'POST', `/api/content-plan/topics/${encodeURIComponent(topicId)}/script`) as Promise<{ topic: ContentTopic }>,
 
   // ---- Module 8: Video editing, Levels 1-2 (mocked) -----------------------
 

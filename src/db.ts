@@ -272,6 +272,13 @@ const MIGRATIONS: string[] = [
      UNIQUE (tenant_id, platform, external_user_id)
    )`,
   `CREATE INDEX IF NOT EXISTS idx_platform_accounts_expiry ON platform_accounts(status, token_expires_at)`,
+  // Module 6: the topic plan read from buyers' messages (contentTopics.ts).
+  `CREATE TABLE IF NOT EXISTS content_plans (
+     tenant_id     TEXT PRIMARY KEY REFERENCES tenants(id),
+     topics        JSONB NOT NULL,
+     source_hash   TEXT NOT NULL,
+     generated_at  TIMESTAMPTZ NOT NULL
+   )`,
 ];
 
 async function applyMigrations(client: PoolClient): Promise<void> {

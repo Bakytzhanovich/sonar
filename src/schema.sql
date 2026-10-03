@@ -372,6 +372,18 @@ CREATE INDEX idx_platform_accounts_expiry ON platform_accounts(status, token_exp
 -- What the polling publisher scans on every tick.
 CREATE INDEX idx_scheduled_posts_due ON scheduled_posts(status, scheduled_at);
 
+-- ---- Module 6: content plan -------------------------------------------------
+-- One plan per workspace: video topics read from what buyers asked in direct
+-- messages (contentTopics.ts). Kept rather than recomputed per page view — it
+-- costs a model call. source_hash fingerprints the conversations it was read
+-- from, so the screen can say when they have moved on.
+CREATE TABLE content_plans (
+  tenant_id     TEXT PRIMARY KEY REFERENCES tenants(id),
+  topics        JSONB NOT NULL,
+  source_hash   TEXT NOT NULL,
+  generated_at  TIMESTAMPTZ NOT NULL
+);
+
 -- ---- Module 8: Video editing, Levels 1-2 only (mocked Shotstack/Creatomate) --
 -- Level 3 (custom FFmpeg engine + AI upscaling) is explicitly its own R&D
 -- track per the ТЗ and out of scope here. source_video_url is just a

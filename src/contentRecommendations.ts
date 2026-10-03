@@ -90,7 +90,7 @@ function buildExplanation(segment: string, total: number, clients: number, rate:
   const conversionLine = `Сегмент "${segment}": ${clients} из ${total} подписчиков с этим тегом стали клиентами (${pct}%).`;
   const contentLine =
     scriptCount > 0
-      ? `Уже есть ${scriptCount} готовых сценариев по этой теме (Модуль 3) — можно публиковать сразу.`
-      : 'Готовых сценариев по этой теме пока нет — стоит сделать разбор рилса в Модуле 3.';
+      ? `Уже есть ${scriptCount} готовых сценариев по этой теме — можно снимать.`
+      : 'Готовых сценариев по этой теме пока нет — их напишет план выше или разбор удачного рилса в разделе «Рилсы».';
   return `${conversionLine} ${contentLine}`;
 }

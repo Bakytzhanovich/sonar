@@ -99,6 +99,11 @@ describe('parseReelAnalysis', () => {
 });
 
 describe('parseScript', () => {
+  it('turns twice-escaped line breaks back into line breaks', () => {
+    expect(parseScript(JSON.stringify({ script: 'Хук: привет\\n\\nСуть: ответ' }))).toBe('Хук: привет\n\nСуть: ответ');
+    expect(parseScript(JSON.stringify({ script: 'Хук\nпро символ \\n' }))).toBe('Хук\nпро символ \\n');
+  });
+
   it('reads the script and refuses an empty one', () => {
     expect(parseScript(JSON.stringify({ script: '  Хук: …  ' }))).toBe('Хук: …');
     expect(() => parseScript(JSON.stringify({ script: '' }))).toThrow(ReelAnalysisError);

@@ -48,6 +48,7 @@ import { PLATFORM_NAME, publishDuePosts } from './publisher';
 import { authorizeUrl, connectWithCode, instagramConfigFromEnv, signState, verifyState, type InstagramAppConfig } from './instagramAuth';
 import { listAccounts, saveConnectedAccount } from './platformAccounts';
 import { keyringFromEnv, type TokenKeyring } from './tokenVault';
+import { generateContentPlan, getContentPlan, NotEnoughDataError, planReadiness, writeTopicScript } from './contentTopics';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
 import { assToRgb } from './assColour';
@@ -1851,6 +1852,38 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     const segment = typeof req.query.segment === 'string' ? req.query.segment : undefined;
     const recommendations = segment ? all.filter((r) => r.segment.toLowerCase() === segment.toLowerCase()) : all;
     res.json({ recommendations });
+  }));
+
+  // Topics read from what buyers asked (contentTopics.ts). The saved plan and
+  // what the workspace has so far, together: the screen needs both to decide
+  // between showing topics, offering to make them, and explaining what is
+  // still missing.
+  app.get('/api/content-plan', asyncHandler(async (_req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    res.json({ plan: await getContentPlan(db, tenantId), readiness: await planReadiness(db, tenantId) });
+  }));
+
+  // Made on request, not on view — a model call per page load would be paid
+  // for by every refresh. Same model as the reel scripts.
+  app.post('/api/content-plan', asyncHandler(async (_req, res) => {
+    try {
+      res.json({ plan: await generateContentPlan(db, res.locals.tenantId as string, reelChat) });
+    } catch (err) {
+      if (err instanceof NotEnoughDataError) return res.status(409).json({ error: 'not_enough_data' });
+      if (err instanceof ReelAnalysisError) return res.status(err.reason === 'llm_not_configured' ? 503 : 502).json({ error: err.reason });
+      throw err;
+    }
+  }));
+
+  app.post('/api/content-plan/topics/:id/script', asyncHandler(async (req, res) => {
+    try {
+      const topic = await writeTopicScript(db, res.locals.tenantId as string, req.params.id, reelChat);
+      if (!topic) return res.status(404).json({ error: 'topic not found' });
+      res.json({ topic });
+    } catch (err) {
+      if (err instanceof ReelAnalysisError) return res.status(err.reason === 'llm_not_configured' ? 503 : 502).json({ error: err.reason });
+      throw err;
+    }
   }));
 
   // ---- Module 8: Video editing, Levels 1-2 (mocked Shotstack/Creatomate) --

@@ -139,6 +139,17 @@ export function parseReelAnalysis(content: string, durationSec: number): ReelAna
   return { hook, structure, why: cleanText(body.why, 800) ?? '' };
 }
 
+/**
+ * A script's line breaks, as line breaks. Models asked for JSON sometimes
+ * escape a newline twice, and the text arrives with a literal "\\n\\n"
+ * between its parts — which is what the person would then copy into their
+ * notes. Only undone when the text has no real line break at all, so a
+ * script that genuinely mentions "\\n" keeps it.
+ */
+export function unescapeLineBreaks(text: string): string {
+  return text.includes('\n') || !text.includes('\\n') ? text : text.replace(/(\\r)?\\n/g, '\n');
+}
+
 export function parseScript(content: string): string {
   let parsed: unknown;
   try {
@@ -148,7 +159,7 @@ export function parseScript(content: string): string {
   }
   const script = (parsed as { script?: unknown }).script;
   if (typeof script !== 'string' || !script.trim()) throw new ReelAnalysisError('llm_invalid_answer', 'no script');
-  return script.trim().slice(0, 4000);
+  return unescapeLineBreaks(script.trim()).slice(0, 4000);
 }
 
 // ---- The two questions ----------------------------------------------------
