@@ -170,6 +170,29 @@ describe('content plan API', () => {
     expect(await queryOne(db, `SELECT tenant_id FROM content_plans WHERE tenant_id = ?`, t.id)).toBeUndefined();
   });
 
+  // Kazakhstan's personal data law: erasing a contact reaches the quotes
+  // taken from their messages, not only the messages.
+  it('takes a deleted contact\'s words out of the plan, and any topic left with no evidence', async () => {
+    const t = await tenant('erase@example.com');
+    await buyersAsked(t.id);
+    chat = async () =>
+      JSON.stringify({
+        topics: [
+          { title: 'Спина после родов', segment: 'Йога', why: 'x', quotes: ['болит спина после родов'] },
+          { title: 'Утренние занятия', segment: 'Йога', why: 'x', quotes: ['можно заниматься утром до работы'] },
+        ],
+      });
+    await request(app).post('/api/content-plan').set('Authorization', `Bearer ${t.apiKey}`);
+
+    const author = await queryOne<{ subscriber_id: string }>(db, `SELECT subscriber_id FROM messages WHERE content LIKE '%болит спина%'`);
+    const del = await request(app).delete(`/api/subscribers/${author!.subscriber_id}`).set('Authorization', `Bearer ${t.apiKey}`);
+    expect(del.status).toBe(204);
+
+    const plan = (await request(app).get('/api/content-plan').set('Authorization', `Bearer ${t.apiKey}`)).body.plan;
+    expect(plan.topics.map((topic: { title: string }) => topic.title)).toEqual(['Утренние занятия']);
+    expect(JSON.stringify(plan)).not.toContain('болит спина');
+  });
+
   it('never reads another workspace\'s messages or topics', async () => {
     const a = await tenant('a@example.com');
     const b = await tenant('b@example.com');

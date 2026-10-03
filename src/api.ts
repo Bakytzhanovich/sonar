@@ -48,7 +48,7 @@ import { PLATFORM_NAME, publishDuePosts } from './publisher';
 import { authorizeUrl, connectWithCode, instagramConfigFromEnv, signState, verifyState, type InstagramAppConfig } from './instagramAuth';
 import { listAccounts, saveConnectedAccount } from './platformAccounts';
 import { keyringFromEnv, type TokenKeyring } from './tokenVault';
-import { generateContentPlan, getContentPlan, NotEnoughDataError, planReadiness, scriptFor, writeTopicScript } from './contentTopics';
+import { eraseContactFromPlan, generateContentPlan, getContentPlan, NotEnoughDataError, planReadiness, scriptFor, writeTopicScript } from './contentTopics';
 import { addDays, autoFillWeek, isDay, listEntries } from './contentCalendar';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
@@ -1335,6 +1335,8 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     const client = await db.connect();
     try {
       await client.query('BEGIN');
+      // Before the messages go: they are what identifies this person's quotes.
+      await eraseContactFromPlan(client, res.locals.tenantId as string, subscriber.id);
       // mock_sent_messages references flow_runs, so it goes before them.
       await exec(client, `DELETE FROM mock_sent_messages WHERE subscriber_id = ?`, subscriber.id);
       await exec(client, `DELETE FROM flow_runs WHERE subscriber_id = ?`, subscriber.id);

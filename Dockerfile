@@ -3,7 +3,8 @@
 # The API does NOT use this image — it runs on Render's plain Node runtime
 # (see render.yaml), because it never touches a video file. This exists for
 # one reason: ffmpeg is a system binary, and no Node runtime ships it.
-FROM node:20-slim
+# Node 22: Node 20 left support in April 2026 and gets no security fixes.
+FROM node:22-slim
 
 # ffmpeg pulls in the codecs; ca-certificates is needed for the HTTPS calls to
 # object storage and the transcription API. --no-install-recommends keeps the
@@ -77,4 +78,10 @@ RUN test -f assets/rnnoise/bd.rnnn
 RUN node -e "require('./dist/fontChecks.js').assertFontsUsable()" 
 
 ENV NODE_ENV=production
+# Not root. This process feeds files uploaded by strangers to ffmpeg, a large
+# parser of untrusted input; if one of those files ever exploits it, the
+# attacker should land as an unprivileged user, not as root in the image.
+# The worker only writes to os.tmpdir(), which the node user can.
+USER node
+
 CMD ["node", "dist/worker.js"]

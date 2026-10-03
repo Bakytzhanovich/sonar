@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { exec, queryAll, queryOne, type Db } from './db';
+import { exec, queryAll, queryOne, type Db, type Queryable } from './db';
 import { parseScript, ReelAnalysisError, type ChatModel } from './reelLlm';
 
 // Module 6 — what to film next, read from what buyers asked.
@@ -318,6 +318,35 @@ export async function getContentPlan(db: Db, tenantId: string): Promise<ContentP
   );
   if (!row) return null;
   return { topics: row.topics, generatedAt: row.generated_at, stale: row.source_hash !== (await sourceHash(db, tenantId)) };
+}
+
+/**
+ * Takes a contact's words out of the saved plan — the right to erasure under
+ * Kazakhstan's personal data law reaches the quotes too, not only the
+ * messages they were taken from. A topic left with no quote goes as well:
+ * without its evidence it is exactly the made-up topic this module refuses
+ * to show.
+ *
+ * Runs inside the caller's transaction, before the messages are deleted —
+ * they are what says which quotes were this person's.
+ */
+export async function eraseContactFromPlan(client: Queryable, tenantId: string, subscriberId: string): Promise<void> {
+  const plan = await queryOne<{ topics: ContentTopic[] }>(
+    client,
+    `SELECT topics FROM content_plans WHERE tenant_id = ? FOR UPDATE`,
+    tenantId
+  );
+  if (!plan) return;
+  const said = (
+    await queryAll<{ content: string }>(client, `SELECT content FROM messages WHERE subscriber_id = ? AND direction = 'in'`, subscriberId)
+  ).map((m) => normalise(maskPersonalData(m.content)));
+  if (said.length === 0) return;
+
+  const theirs = (quote: string) => said.some((message) => message.includes(normalise(quote)));
+  const topics = plan.topics
+    .map((topic) => ({ ...topic, quotes: topic.quotes.filter((q) => !theirs(q)) }))
+    .filter((topic) => topic.quotes.length > 0);
+  await exec(client, `UPDATE content_plans SET topics = ?::jsonb WHERE tenant_id = ?`, JSON.stringify(topics), tenantId);
 }
 
 /** A script for a topic — or for a calendar entry whose topic a rebuilt plan
