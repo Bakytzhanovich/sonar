@@ -76,6 +76,21 @@ function writeStoredConfig(config: DevConfig) {
   }
 }
 
+/**
+ * Forgets which bot this browser was working with. Called when who is signed
+ * in changes — sign-in, sign-up, sign-out — because the bot belongs to an
+ * account, and the browser outlives the account using it.
+ */
+export function forgetWorkspaceSelection(): void {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const stored = raw ? JSON.parse(raw) : {};
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ botId: '', externalAccountId: '', devMode: Boolean(stored?.devMode) }));
+  } catch {
+    // Storage unavailable: nothing was remembered to forget.
+  }
+}
+
 // Shared across the flow editor and the CRM page so setting apiKey/botId
 // once (e.g. via "Быстрый старт") carries over when navigating between
 // them, instead of re-entering the same values on every route.

@@ -14,6 +14,7 @@ import PulseIndicator, { LiveDot } from './PulseIndicator';
 import styles from './CrmView.module.css';
 import controls from './Controls.module.css';
 import layout from './Layout.module.css';
+import { useVerifiedBot } from '@/lib/useVerifiedBot';
 
 const LEAD_STATUSES: LeadStatus[] = ['new', 'in_progress', 'client'];
 const STATUS_LABEL: Record<LeadStatus, string> = { new: 'Новый', in_progress: 'В работе', client: 'Клиент' };
@@ -120,6 +121,7 @@ export default function CrmView() {
   const [devConfig, setDevConfig] = useDevConfig();
   const { baseUrl, apiKey, botId, devMode } = devConfig;
   const setBotId = (value: string) => setDevConfig((current) => ({ ...current, botId: value }));
+  useVerifiedBot(botId, setBotId);
   const setDevMode = (value: boolean) => setDevConfig((current) => ({ ...current, devMode: value }));
 
   // Every piece of state below that scopes to the selected bot (list data,

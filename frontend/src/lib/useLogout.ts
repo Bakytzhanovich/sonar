@@ -4,6 +4,7 @@ import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from './api';
 import { API_BASE_URL } from './apiConfig';
+import { forgetWorkspaceSelection } from './useDevConfig';
 import { useSession } from './useSession';
 
 // Onboarding writes this alongside the session; signing out has to clear it
@@ -31,6 +32,7 @@ export function useLogout() {
     // devConfig.apiKey is no longer ever the session token — it only holds a
     // real tenant key from the dev panel's "Быстрый старт", which has nothing
     // to do with this login and would break a staff-assisted demo if wiped.
+    forgetWorkspaceSelection();
     try {
       localStorage.removeItem(ONBOARDING_PROGRESS_KEY);
     } catch {

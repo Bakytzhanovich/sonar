@@ -29,6 +29,7 @@ import TabBar from './TabBar';
 import Select from './Select';
 import styles from './FlowEditor.module.css';
 import controls from './Controls.module.css';
+import { useVerifiedBot } from '@/lib/useVerifiedBot';
 
 type TriggerData = { kind: 'trigger'; label: string; keyword: string; matchType: MatchType };
 type MessageData = { kind: 'send_message'; label: string; text: string; fallbackChannel?: FallbackChannel };
@@ -168,6 +169,7 @@ export default function FlowEditor() {
   const { baseUrl, apiKey, botId, devMode } = devConfig;
   const setApiKey = (v: string) => setDevConfig((c) => ({ ...c, apiKey: v }));
   const setBotId = (v: string) => setDevConfig((c) => ({ ...c, botId: v }));
+  useVerifiedBot(botId, setBotId);
   const setDevMode = (v: boolean) => setDevConfig((c) => ({ ...c, devMode: v }));
   const [status, setStatus] = useState<string>('');
   const [errors, setErrors] = useState<string[]>([]);

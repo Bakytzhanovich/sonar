@@ -10,6 +10,7 @@ import { useSession } from '@/lib/useSession';
 import controls from './Controls.module.css';
 import styles from './AuthView.module.css';
 import Brand from './Brand';
+import { forgetWorkspaceSelection } from '@/lib/useDevConfig';
 
 // Where a signed-in person lands. The video editor, not the guided chat-bot
 // tour: that tour walks through keywords and demo contacts, which is the part
@@ -63,6 +64,8 @@ export default function LoginView() {
         tenantId: res.tenant.id,
         tenantName: res.tenant.name,
       };
+      // A new person on this browser: the previous one's bot is not theirs.
+      forgetWorkspaceSelection();
       setSession(nextSession);
       router.replace(HOME_ROUTE);
     } catch (err) {
