@@ -125,8 +125,6 @@
   text-transform: uppercase;
 }
 
-.headerTitle { display: flex; align-items: baseline; gap: 8px; }
-
 /* ---- Module 3: upload, progress, the result ------------------------------ */
 
 /* A target for the file picker. The native input is a tiny OS button with

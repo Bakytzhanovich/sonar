@@ -1,4 +1,5 @@
 import { queryAll, type Db } from './db';
+import { plural } from './plural';
 
 // The actual differentiator (per CLAUDE.md and the Notion ТЗ): ties
 // Module 2's CRM data (who actually converts, by tag/segment) to Module
@@ -87,10 +88,13 @@ function rankScore(r: ContentRecommendation): number {
 // text formulation is faked.
 function buildExplanation(segment: string, total: number, clients: number, rate: number, scriptCount: number): string {
   const pct = Math.round(rate * 100);
-  const conversionLine = `Сегмент "${segment}": ${clients} из ${total} подписчиков с этим тегом стали клиентами (${pct}%).`;
+  // "из N" takes the genitive: из 1 подписчика, из 5 подписчиков, из 21 подписчика.
+  const ofTotal = `${total} ${plural(total, ['подписчика', 'подписчиков', 'подписчиков'])}`;
+  const became = clients === 1 ? 'стал клиентом' : 'стали клиентами';
+  const conversionLine = `Сегмент «${segment}»: ${clients} из ${ofTotal} с этим тегом ${became} (${pct}%).`;
   const contentLine =
     scriptCount > 0
-      ? `Уже есть ${scriptCount} готовых сценариев по этой теме — можно снимать.`
+      ? `Уже есть ${scriptCount} ${plural(scriptCount, ['готовый сценарий', 'готовых сценария', 'готовых сценариев'])} по этой теме — можно снимать.`
       : 'Готовых сценариев по этой теме пока нет — их напишет план выше или разбор удачного рилса в разделе «Рилсы».';
   return `${conversionLine} ${contentLine}`;
 }

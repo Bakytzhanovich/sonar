@@ -3,17 +3,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { count, plural } from '@/lib/plural';
 import { api, type ContentPlan, type ContentRecommendation, type ContentTopic, type PlanReadiness } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
 import ContentCalendar from './ContentCalendar';
-import ModuleNav from './ModuleNav';
+import PageHeader from './PageHeader';
 import TabBar from './TabBar';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
 import StatusMessage from './StatusMessage';
 import controls from './Controls.module.css';
 import styles from './ContentPlanView.module.css';
-import layout from './Layout.module.css';
 
 const DEFAULT_ONBOARDING_SEGMENT = 'запуск';
 
@@ -146,10 +146,7 @@ export default function ContentPlanView() {
 
   return (
     <div className={styles.page}>
-      <header className={layout.header}>
-        <div className={styles.headerTitle}><span className={styles.eyebrow}>СТРАТЕГИЯ</span><span className={layout.title}>Контент-план</span></div>
-        <ModuleNav current="/content-plan" />
-      </header>
+      <PageHeader section="Стратегия" title="Контент-план" current="/content-plan" />
 
       <main className={styles.main}>
         {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
@@ -229,7 +226,7 @@ export default function ContentPlanView() {
           </div>
         )}
 
-        {recommendations.length > 0 && <div className={styles.summary}><strong>{recommendations.length}</strong><span>сегмента найдено<br /><small>на основе живых данных CRM</small></span></div>}
+        {recommendations.length > 0 && <div className={styles.summary}><strong>{recommendations.length}</strong><span>{plural(recommendations.length, ['сегмент найден', 'сегмента найдено', 'сегментов найдено'])}<br /><small>на основе живых данных CRM</small></span></div>}
         <div className={styles.cards}>
         {recommendations.map((r, i) => (
           <div key={r.segment} className={styles.card}>
@@ -251,9 +248,8 @@ export default function ContentPlanView() {
             <p className={styles.explanation}>{r.explanation}</p>
 
             <div className={styles.meta}>
-              <span>{r.clientCount} из {r.subscriberCount} подписчиков стали клиентами</span>
               <span className={`${styles.scriptBadge} ${r.matchingScriptCount > 0 ? styles.scriptBadgeReady : styles.scriptBadgeMissing}`}>
-                {r.matchingScriptCount > 0 ? `${r.matchingScriptCount} сценариев готово` : 'сценариев нет'}
+                {r.matchingScriptCount > 0 ? count(r.matchingScriptCount, ['сценарий готов', 'сценария готово', 'сценариев готово']) : 'сценариев нет'}
               </span>
             </div>
           </div>

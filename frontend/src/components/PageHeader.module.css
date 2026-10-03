@@ -1,0 +1,4 @@
+.header { min-height: 56px; }
+.titleBlock { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.section { color: var(--accent); font-size: var(--text-xs); font-weight: 800; letter-spacing: .12em; text-transform: uppercase; white-space: nowrap; }
+.title { color: var(--foreground); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

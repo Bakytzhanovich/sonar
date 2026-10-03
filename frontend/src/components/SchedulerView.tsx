@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { count, plural } from '@/lib/plural';
 import { api, type PlatformAccount, type PostingPlatform, type ScheduledPost, type VideoEditJob } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { STAFF_BOOTSTRAP_AVAILABLE, useApiAccess } from '@/lib/useApiAccess';
-import ModuleNav from './ModuleNav';
+import PageHeader from './PageHeader';
 import TabBar from './TabBar';
 import Switch from './Switch';
 import PillPicker from './PillPicker';
@@ -263,11 +264,9 @@ export default function SchedulerView() {
 
   return (
     <div className={styles.page}>
-      <header className={layout.header}>
-        <div className={styles.headerTitle}><span className={styles.eyebrow}>ПУБЛИКАЦИЯ</span><span className={layout.title}>Автопостинг</span></div>
-        {pending.length > 0 && <PulseIndicator count={pending.length} label="постов ждут согласования" />}
-        <ModuleNav current="/scheduler" />
-      </header>
+      <PageHeader section="Публикация" title="Автопостинг" current="/scheduler">
+        {pending.length > 0 && <PulseIndicator count={pending.length} label={plural(pending.length, ['пост ждёт согласования', 'поста ждут согласования', 'постов ждут согласования'])} />}
+      </PageHeader>
 
       <div className={layout.twoPane}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>
@@ -415,7 +414,7 @@ export default function SchedulerView() {
             </>
           )}
 
-          <div className={styles.queueHeader}><h2>Очередь</h2><span className={styles.queueCount}>{posts.length} публикаций</span></div>
+          <div className={styles.queueHeader}><h2>Очередь</h2><span className={styles.queueCount}>{count(posts.length, ['публикация', 'публикации', 'публикаций'])}</span></div>
           {rest.map((p) => (
             <div key={p.id} className={styles.postCard} style={{ borderLeftColor: STATUS_COLOR[p.status] }}>
               <PostRow post={p} account={accountName(p.platform_account_id)} config={config} accounts={accounts} onChanged={load} onMessage={setStatus} />

@@ -5,6 +5,9 @@
  */
 
 .input {
+  /* Without it a textarea and a date field take the browser's own font —
+     monospace for a textarea in Chrome — and a caption looked like code. */
+  font-family: inherit;
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--foreground);
@@ -21,6 +24,7 @@
 }
 
 .buttonBase {
+  font-family: inherit;
   border-radius: var(--radius-sm);
   padding: 6px 12px;
   font-size: var(--text-sm);

@@ -23,8 +23,8 @@ import '@xyflow/react/dist/style.css';
 import { api, ApiError, type ApiConfig, type FlowDefinition, type MatchType, type FallbackChannel } from '@/lib/api';
 import Link from 'next/link';
 import { useDevConfig } from '@/lib/useDevConfig';
-import { useApiAccess } from '@/lib/useApiAccess';
-import ModuleNav from './ModuleNav';
+import { STAFF_BOOTSTRAP_AVAILABLE, useApiAccess } from '@/lib/useApiAccess';
+import PageHeader from './PageHeader';
 import TabBar from './TabBar';
 import Select from './Select';
 import styles from './FlowEditor.module.css';
@@ -35,8 +35,12 @@ type MessageData = { kind: 'send_message'; label: string; text: string; fallback
 type CanvasData = TriggerData | MessageData;
 type CanvasNode = Node<CanvasData>;
 
+// What a person calls the two match rules. The ids stay the API's.
+const MATCH_LABEL: Record<MatchType, string> = { contains: 'содержит', exact: 'точно' };
+const FLOW_STATUS_LABEL: Record<string, string> = { draft: 'черновик', published: 'опубликован' };
+
 function triggerLabel(keyword: string, matchType: MatchType) {
-  return `Триггер: "${keyword}" (${matchType})`;
+  return `Триггер: «${keyword}» (${MATCH_LABEL[matchType] ?? matchType})`;
 }
 
 function messageLabel(text: string) {
@@ -127,7 +131,7 @@ function TriggerNode({ data, selected }: NodeProps<Node<TriggerData>>) {
         <span className={styles.nodeTitle}>Триггер</span>
       </div>
       <div className={styles.nodeSubtitle}>
-        &ldquo;{data.keyword}&rdquo; · {data.matchType}
+        &ldquo;{data.keyword}&rdquo; · {MATCH_LABEL[data.matchType as MatchType] ?? data.matchType}
       </div>
     </div>
   );
@@ -275,7 +279,7 @@ export default function FlowEditor() {
 
   async function saveDraft() {
     setErrors([]);
-    if (!botId) return setStatus('Укажи botId');
+    if (!botId) return setStatus('Сначала пройдите первый запуск — он создаст бота');
     try {
       const definition = toWireDefinition(nodes, edges);
       if (!flowId) {
@@ -283,12 +287,12 @@ export default function FlowEditor() {
         setFlowId(res.flow.id);
         setFlowVersion(res.flow.version);
         setFlowStatus(res.flow.status);
-        setStatus(`Черновик создан: ${res.flow.id} v${res.flow.version}`);
+        setStatus(`Черновик сохранён — версия ${res.flow.version}`);
       } else {
         const res = await api.createFlowVersion(config, flowId, definition);
         setFlowVersion(res.flow.version);
         setFlowStatus(res.flow.status);
-        setStatus(`Новая версия черновика: v${res.flow.version}`);
+        setStatus(`Сохранена версия ${res.flow.version}`);
       }
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
@@ -297,11 +301,11 @@ export default function FlowEditor() {
 
   async function publish() {
     setErrors([]);
-    if (!flowId || flowVersion === null) return setStatus('Сначала сохрани черновик');
+    if (!flowId || flowVersion === null) return setStatus('Сначала сохраните черновик');
     try {
       const res = await api.publishFlow(config, flowId, flowVersion);
       setFlowStatus(res.flow.status);
-      setStatus(`Опубликовано: v${res.flow.version}`);
+      setStatus(`Сценарий опубликован — версия ${res.flow.version}`);
     } catch (err) {
       if (err instanceof ApiError && err.status === 422 && Array.isArray((err.body as { errors?: string[] })?.errors)) {
         setErrors((err.body as { errors: string[] }).errors);
@@ -329,7 +333,7 @@ export default function FlowEditor() {
   }
 
   async function bindTrigger() {
-    if (!triggerNode || !flowId || flowVersion === null) return setStatus('Нужен опубликованный флоу с триггером');
+    if (!triggerNode || !flowId || flowVersion === null) return setStatus('Сначала опубликуйте сценарий с триггером');
     try {
       const res = await api.createTrigger(config, botId, {
         keyword: triggerNode.data.keyword,
@@ -340,14 +344,14 @@ export default function FlowEditor() {
       setBoundTrigger(
         res.trigger.is_active ? { botId, flowId, flowVersion, keyword: res.trigger.keyword, matchType: res.trigger.match_type } : null
       );
-      setStatus(`Триггер привязан: "${res.trigger.keyword}" -> v${res.trigger.flow_version}`);
+      setStatus(`Бот отвечает на «${res.trigger.keyword}» — работает версия ${res.trigger.flow_version}`);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
     }
   }
 
   async function runTest() {
-    if (!botId) return setStatus('Укажи botId');
+    if (!botId) return setStatus('Сначала пройдите первый запуск — он создаст бота');
     try {
       const res = await api.testRun(config, botId, { externalUserId: testUser, messageText: testMessage });
       setStatus(`Тест: ${JSON.stringify(res.outcome)}`);
@@ -357,7 +361,7 @@ export default function FlowEditor() {
   }
 
   async function refreshDashboard() {
-    if (!botId) return setStatus('Укажи botId');
+    if (!botId) return setStatus('Сначала пройдите первый запуск — он создаст бота');
     try {
       setDashboard(await api.dashboard(config, botId));
     } catch (err) {
@@ -394,11 +398,8 @@ export default function FlowEditor() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'system-ui, sans-serif' }}>
-      <header className={styles.header}>
-        <span className={styles.title}>Sonar — редактор бота</span>
-        <ModuleNav current="/bot" />
-      </header>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      <PageHeader section="Автоматизация" title="Редактор бота" current="/bot" />
 
       <div className={styles.body}>
         <div className={styles.canvasWrap}>
@@ -458,8 +459,8 @@ export default function FlowEditor() {
                       onChange={(next) => updateSelectedData({ matchType: next as MatchType })}
                       aria-label="Тип совпадения"
                       options={[
-                        { value: 'contains', label: 'contains' },
-                        { value: 'exact', label: 'exact' },
+                        { value: 'contains', label: 'Сообщение содержит слово' },
+                        { value: 'exact', label: 'Сообщение — ровно это слово' },
                       ]}
                     />
                   </label>
@@ -471,15 +472,15 @@ export default function FlowEditor() {
                     <textarea className={controls.input} value={selectedNode.data.text} onChange={(e) => updateSelectedData({ text: e.target.value })} style={{ display: 'block', width: '100%', marginTop: 4 }} rows={4} />
                   </label>
                   <label>
-                    Fallback-канал вне 24ч окна
+                    Если человек писал больше 24 часов назад
                     <Select
                       className={styles.inspectorSelect}
                       value={selectedNode.data.fallbackChannel ?? ''}
                       onChange={(next) => updateSelectedData({ fallbackChannel: (next || undefined) as FallbackChannel | undefined })}
                       aria-label="Запасной канал"
                       options={[
-                        { value: '', label: 'нет (провалится вне окна)' },
-                        { value: 'comment_reply', label: 'comment_reply' },
+                        { value: '', label: 'Не отвечать — Instagram не даст написать в директ' },
+                        { value: 'comment_reply', label: 'Ответить в комментарии' },
                       ]}
                     />
                   </label>
@@ -489,7 +490,9 @@ export default function FlowEditor() {
           )}
 
           <div className={styles.card}>
-            <h4 className={styles.cardTitle}>Флоу {flowId ? `(${flowId.slice(0, 8)}… v${flowVersion} — ${flowStatus})` : '(не сохранён)'}</h4>
+            <h4 className={styles.cardTitle}>
+              Сценарий · {flowId ? `версия ${flowVersion}, ${FLOW_STATUS_LABEL[flowStatus ?? ''] ?? flowStatus}` : 'не сохранён'}
+            </h4>
             <div className={styles.row}>
               <button className={controls.buttonSecondary} onClick={saveDraft} disabled={!botId}>
                 Сохранить черновик
@@ -509,8 +512,9 @@ export default function FlowEditor() {
             )}
           </div>
 
+          {STAFF_BOOTSTRAP_AVAILABLE && (
           <div className={styles.card}>
-            <h4 className={styles.cardTitle}>Загрузить существующий флоу</h4>
+            <h4 className={styles.cardTitle}>Загрузить сценарий по id (разработка)</h4>
             <div className={styles.row}>
               <input className={controls.input} value={loadFlowId} onChange={(e) => setLoadFlowId(e.target.value)} placeholder="flowId" style={{ flex: 1, minWidth: 0 }} />
               <input className={controls.input} value={loadVersion} onChange={(e) => setLoadVersion(e.target.value)} placeholder="версия" style={{ width: 70 }} />
@@ -519,6 +523,7 @@ export default function FlowEditor() {
               </button>
             </div>
           </div>
+          )}
 
           {errors.length > 0 && (
             <div className={`${styles.card} ${styles.errorBox}`}>

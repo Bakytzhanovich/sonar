@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type GeneratedScript, type ReelAnalysis } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
-import ModuleNav from './ModuleNav';
+import PageHeader from './PageHeader';
 import TabBar from './TabBar';
 import StatusMessage from './StatusMessage';
 import controls from './Controls.module.css';
@@ -253,13 +253,7 @@ export default function ReelsView() {
 
   return (
     <div className={styles.page}>
-      <header className={layout.header}>
-        <div className={styles.headerTitle}>
-          <span className={styles.eyebrow}>ИССЛЕДОВАНИЯ</span>
-          <span className={layout.title}>Анализ рилсов</span>
-        </div>
-        <ModuleNav current="/reels" />
-      </header>
+      <PageHeader section="Исследования" title="Анализ рилсов" current="/reels" />
 
       <div className={layout.twoPane}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>

@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Canvas, Rect, Textbox } from 'fabric';
+import { count } from '@/lib/plural';
 import { api, type BrandPreset, type Carousel, type CarouselSlide } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useApiAccess } from '@/lib/useApiAccess';
-import ModuleNav from './ModuleNav';
+import PageHeader from './PageHeader';
 import TabBar from './TabBar';
 import Select from './Select';
 import NoticeBanner, { MISSING_API_KEY_MESSAGE } from './NoticeBanner';
@@ -153,7 +154,7 @@ export default function CarouselView() {
       setSelectedCarousel(res.carousel);
       setSlides(res.slides);
       setSlideIndex(0);
-      setStatus(`Готово: ${res.slides.length} слайдов. Текст можно поправить прямо на слайде.`);
+      setStatus(`Готово: ${count(res.slides.length, ['слайд', 'слайда', 'слайдов'])}. Текст можно поправить прямо на слайде.`);
     } catch (err) {
       setStatus(generateErrorText(err));
     } finally {
@@ -212,13 +213,7 @@ export default function CarouselView() {
 
   return (
     <div className={styles.page}>
-      <header className={layout.header}>
-        <div className={styles.headerTitle}>
-          <span className={styles.panelEyebrow}>СТУДИЯ КОНТЕНТА</span>
-          <span className={layout.title}>Карусели</span>
-        </div>
-        <ModuleNav current="/carousels" />
-      </header>
+      <PageHeader section="Студия контента" title="Карусели" current="/carousels" />
 
       <div className={`${layout.twoPane} ${styles.workspace}`}>
         <div className={`${layout.sidebar} ${styles.sidebar}`}>

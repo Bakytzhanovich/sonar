@@ -64,7 +64,7 @@ describe('computeContentRecommendations (pure logic)', () => {
 
     const [rec] = await computeContentRecommendations(db, TENANT_ID);
     expect(rec.matchingScriptCount).toBe(1);
-    expect(rec.explanation).toContain('Уже есть 1 готовых сценариев');
+    expect(rec.explanation).toContain('Уже есть 1 готовый сценарий');
   });
 
   it('says no ready scripts exist when the niche has none', async () => {

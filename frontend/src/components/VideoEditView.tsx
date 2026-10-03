@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { plural } from '@/lib/plural';
 import { api, type AspectRatioOption, type HeadlineOption, type PosterLayout, type SubtitlePosition, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
 import { STAFF_BOOTSTRAP_AVAILABLE } from '@/lib/useApiAccess';
-import ModuleNav from './ModuleNav';
+import PageHeader from './PageHeader';
 import TabBar from './TabBar';
 import Switch from './Switch';
 import PillPicker from './PillPicker';
@@ -15,7 +16,6 @@ import PulseIndicator from './PulseIndicator';
 import CutEditor from './CutEditor';
 import StatusMessage from './StatusMessage';
 import controls from './Controls.module.css';
-import layout from './Layout.module.css';
 import styles from './VideoEditView.module.css';
 
 // A line with the shape the real ones have: a couple of quiet words and one
@@ -409,14 +409,9 @@ export default function VideoEditView() {
 
   return (
     <div className={styles.page}>
-      <header className={layout.header}>
-        <div>
-          <span className={styles.eyebrow}>РЕДАКТОР</span>
-          <span className={layout.title}>Видеомонтаж</span>
-        </div>
-        {processingCount > 0 && <PulseIndicator count={processingCount} label="рендеров в процессе" />}
-        <ModuleNav current="/video" />
-      </header>
+      <PageHeader section="Редактор" title="Видеомонтаж" current="/video">
+        {processingCount > 0 && <PulseIndicator count={processingCount} label={plural(processingCount, ['ролик монтируется', 'ролика монтируются', 'роликов монтируются'])} />}
+      </PageHeader>
 
       <main className={styles.main}>
         {/* No banner here, unlike the other screens. Everything below can be
@@ -430,11 +425,16 @@ export default function VideoEditView() {
         <div className={styles.hero}>
           <div>
             <h1>Преврати исходник в ролик</h1>
+            {/* Said in what the person gets, not in how we build it: "Уровень 3"
+                and "мок" were our words, and customers read them here. */}
             <p className={styles.lead}>
-              Уровень 3 работает с настоящим файлом: расшифровка речи, вырезание пауз, вжигание субтитров.
-              Шум убирается сам, если запись шумная; субтитры выносятся на проверку, если язык распознан
-              ненадёжно. Уровни 1–2 пока мок — там источник это просто ссылка.
+              Загрузи запись — Sonar расшифрует речь, вырежет паузы и слова-паразиты и наложит субтитры.
+              Шумную запись почистит сам, а если речь распознана неуверенно, покажет субтитры на проверку
+              перед монтажом.
             </p>
+            {MOCK_PIPELINES_VISIBLE && (
+              <p className={styles.lead}>Только в разработке: шаблоны уровней 1–2 — заглушки, источник там просто ссылка.</p>
+            )}
           </div>
         </div>
 

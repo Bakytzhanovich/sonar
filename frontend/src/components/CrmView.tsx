@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { plural } from '@/lib/plural';
 import { api, type ConversationMessage, type LeadStatus, type Note, type Subscriber, type Tag } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
-import ModuleNav from './ModuleNav';
+import PageHeader from './PageHeader';
 import TabBar from './TabBar';
 import Select from './Select';
 import PulseIndicator, { LiveDot } from './PulseIndicator';
@@ -603,15 +604,7 @@ export default function CrmView() {
 
   return (
     <div className={styles.page}>
-      <header className={`${layout.header} ${styles.topbar}`}>
-        <div className={styles.appIdentity}>
-          <span className={styles.brandMark} aria-hidden="true" />
-          <span className={styles.brandName}>Sonar</span>
-          <span className={styles.identityDivider} aria-hidden="true">/</span>
-          <strong>CRM</strong>
-        </div>
-        <ModuleNav current="/crm" />
-      </header>
+      <PageHeader section="Аудитория" title="CRM" current="/crm" />
 
       <div className={`${layout.twoPane} ${styles.workspace} ${selected ? styles.workspaceWithSelection : ''}`}>
         <main className={`${layout.main} ${styles.mainPane}`}>
@@ -624,9 +617,9 @@ export default function CrmView() {
               </div>
               {botId && (
                 <div className={styles.audienceMeta} aria-label="Сводка CRM">
-                  <span><strong>{totalCount}</strong> контактов</span>
-                  <span><strong>{clientCount}</strong> клиентов</span>
-                  {activeNow > 0 && <PulseIndicator count={activeNow} label="взаимодействовали за 15 минут" />}
+                  <span><strong>{totalCount}</strong> {plural(totalCount, ['контакт', 'контакта', 'контактов'])}</span>
+                  <span><strong>{clientCount}</strong> {plural(clientCount, ['клиент', 'клиента', 'клиентов'])}</span>
+                  {activeNow > 0 && <PulseIndicator count={activeNow} label={activeNow === 1 ? 'писал за последние 15 минут' : 'писали за последние 15 минут'} />}
                 </div>
               )}
             </section>
