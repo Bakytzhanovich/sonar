@@ -10,21 +10,21 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   title: 'Sonar — из диалога в CRM и контент-план',
-  description: 'Пройдите демо-цикл Sonar: сценарий, тестовый диалог, CRM и rule-based приоритет контента. Без подключения соцсетей, карты и автоподписки.',
+  description: 'Чат-бот, CRM, ИИ-монтаж и автопостинг — и контент-план из вопросов ваших покупателей. Демо без карты и подключения соцсетей.',
   alternates: {
     canonical: '/',
   },
   openGraph: {
     title: 'Sonar — из диалога в CRM и контент-план',
-    description: 'Четыре шага от демо-диалога до объяснимого приоритета контента.',
-    images: ['/hero-content-plan.png'],
+    description: 'Темы роликов из вопросов тех, кто купил, — с их дословными цитатами.',
+    images: ['/landing-topic.png'],
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Sonar — из диалога в CRM и контент-план',
-    description: 'Демо-сценарий, CRM и объяснимый приоритет контента в одной цепочке данных.',
-    images: ['/hero-content-plan.png'],
+    description: 'Чат-бот, CRM, ИИ-монтаж, автопостинг и контент-план из вопросов покупателей.',
+    images: ['/landing-topic.png'],
   },
 };
 

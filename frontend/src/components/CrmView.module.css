@@ -74,6 +74,9 @@
 }
 
 .audienceMeta {
+  /* Keeps its width; the lead text beside it wraps instead. Shrunk, its own
+     overflow cut the live counter off mid-word ("1 диалог…"). */
+  flex: none;
   display: flex;
   align-items: center;
   gap: 0;

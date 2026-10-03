@@ -619,7 +619,7 @@ export default function CrmView() {
                 <div className={styles.audienceMeta} aria-label="Сводка CRM">
                   <span><strong>{totalCount}</strong> {plural(totalCount, ['контакт', 'контакта', 'контактов'])}</span>
                   <span><strong>{clientCount}</strong> {plural(clientCount, ['клиент', 'клиента', 'клиентов'])}</span>
-                  {activeNow > 0 && <PulseIndicator count={activeNow} label={activeNow === 1 ? 'писал за последние 15 минут' : 'писали за последние 15 минут'} />}
+                  {activeNow > 0 && <PulseIndicator count={activeNow} label={plural(activeNow, ['диалог активен', 'диалога активны', 'диалогов активны'])} />}
                 </div>
               )}
             </section>

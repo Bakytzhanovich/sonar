@@ -1055,3 +1055,7 @@
     transform: translateY(0);
   }
 }
+
+/* The last module card spans the row, so the grid closes evenly at two and
+   at three columns (see PRODUCT_AREAS). */
+.areaCardWide { grid-column: 1 / -1; min-height: 0; }
