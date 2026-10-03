@@ -287,6 +287,14 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
+  // The caller's own address, as this server sees it — nothing a caller does
+  // not already know. It exists to check one deployment fact: the per-address
+  // limits on sign-in and sign-up only work if req.ip is the visitor, not the
+  // frontend proxy in front of this API. If two different networks see the
+  // same address here, every visitor shares one limit, and TRUST_PROXY needs
+  // to count one more hop (the frontend's own load balancer).
+  app.get('/api/auth/client-ip', (req, res) => res.json({ ip: req.ip }));
+
   // ---- Instagram connection: the way back from instagram.com ---------------
   // Before requireProductCredential, like the media routes below: this is a
   // browser arriving from Instagram, and the signed `state` — minted by the

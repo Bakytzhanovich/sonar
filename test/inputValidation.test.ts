@@ -51,3 +51,16 @@ describe('malformed input is a bad request, not a server fault', () => {
     expect(res.status).toBeLessThan(500);
   });
 });
+
+describe('client address check', () => {
+  it('tells a caller the address the server sees for them, signed in or not', async () => {
+    const db = await createTestDb();
+    try {
+      const res = await request(createApp(db)).get('/api/auth/client-ip');
+      expect(res.status).toBe(200);
+      expect(typeof res.body.ip).toBe('string');
+    } finally {
+      await dropTestDb(db);
+    }
+  });
+});
