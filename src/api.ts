@@ -44,7 +44,7 @@ import { SMART_CUT_WORKER, isWorkerOnline } from './workerHealth';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { generateCarouselSlides } from './carouselGeneration';
-import { publishDuePosts } from './publisher';
+import { PLATFORM_NAME, publishDuePosts } from './publisher';
 import { computeContentRecommendations } from './contentRecommendations';
 import { advanceRenderJobs } from './videoRender';
 import { assToRgb } from './assColour';
@@ -65,6 +65,7 @@ import type {
   FlowDefinition,
   GeneratedScript,
   ReelAnalysis,
+  PostingPlatform,
   ScheduledPost,
   Subscriber,
   Trigger,
@@ -1569,29 +1570,82 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
 
   const PLATFORMS = ['instagram', 'tiktok', 'youtube_shorts'];
 
+  // A post is a reel, so it carries a video: either a file uploaded for it
+  // (videoObjectKey, from POST /api/video-uploads) or a finished render from
+  // the editor (videoJobId) — "edited it, now post it" without downloading
+  // and uploading the same file again.
+  async function resolvePostVideo(
+    tenantId: string,
+    body: Record<string, unknown>
+  ): Promise<{ key: string; jobId: string | null } | { status: number; error: string }> {
+    const jobId = typeof body.videoJobId === 'string' ? body.videoJobId : '';
+    const key = typeof body.videoObjectKey === 'string' ? body.videoObjectKey.trim() : '';
+    if (jobId) {
+      const job = await queryOne<{ status: string; output_object_key: string | null; preview_of: string | null }>(
+        db,
+        `SELECT status, output_object_key, preview_of FROM video_edit_jobs WHERE id = ? AND tenant_id = ?`,
+        jobId,
+        tenantId
+      );
+      if (!job) return { status: 404, error: 'video job not found' };
+      // A preview is four seconds of a style being tried, and is swept away
+      // within hours — not something to schedule.
+      if (job.preview_of || job.status !== 'completed' || !job.output_object_key) return { status: 409, error: 'video_not_ready' };
+      return { key: job.output_object_key, jobId };
+    }
+    if (key) {
+      // Same rule as every other upload consumer: only this tenant's own
+      // uploads, or a post could publish another client's video.
+      if (!key.startsWith(`tenants/${tenantId}/sources/`)) return { status: 403, error: 'video does not belong to this account' };
+      return { key, jobId: null };
+    }
+    return { status: 400, error: 'video is required: videoJobId or videoObjectKey' };
+  }
+
+  // The stored key never leaves the server; what does is a link the queue
+  // can play, signed for as long as an editor session.
+  function postForClient(post: ScheduledPost) {
+    const { video_object_key, ...rest } = toPublicScheduledPost(post);
+    let videoUrl: string | null = null;
+    if (video_object_key) {
+      const storage = storageConfigFromEnv();
+      videoUrl = storage
+        ? presign(storage, { method: 'GET', key: video_object_key, expiresInSec: EDITOR_SOURCE_TTL_SEC })
+        : localMedia
+          ? signLocalUrl(localMedia, 'GET', video_object_key, EDITOR_SOURCE_TTL_SEC)
+          : null;
+    }
+    return { ...rest, video_url: videoUrl };
+  }
+
   app.post('/api/scheduled-posts', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
     const { platform, caption, scheduledAt, requiresApproval } = req.body ?? {};
     if (!PLATFORMS.includes(platform)) return res.status(400).json({ error: `platform must be one of: ${PLATFORMS.join(', ')}` });
     if (!caption || typeof caption !== 'string') return res.status(400).json({ error: 'caption is required' });
     if (!scheduledAt || Number.isNaN(Date.parse(scheduledAt))) return res.status(400).json({ error: 'scheduledAt must be a valid date' });
+    const video = await resolvePostVideo(tenantId, req.body ?? {});
+    if ('error' in video) return res.status(video.status).json({ error: video.error });
 
     const id = randomUUID();
     const status = requiresApproval ? 'pending_approval' : 'scheduled';
     await exec(
       db,
-      `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, requires_approval, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, requires_approval, status, video_object_key, video_job_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
-      res.locals.tenantId,
+      tenantId,
       platform,
       caption,
       new Date(scheduledAt).toISOString(),
       Boolean(requiresApproval),
-      status
+      status,
+      video.key,
+      video.jobId
     );
 
     if (status === 'pending_approval') {
-      await notify(db, res.locals.tenantId as string, 'post_pending_approval', `Пост в ${platform} ждёт согласования`, id);
+      await notify(db, tenantId, 'post_pending_approval', `Пост в ${PLATFORM_NAME[platform as PostingPlatform]} ждёт согласования`, id);
     }
 
     // toPublicScheduledPost, not the raw row: the background publisher
@@ -1600,7 +1654,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     // 'publishing' is an internal transient state every other endpoint
     // in this file already hides from API consumers.
     const created = await getScheduledPostForTenant(db, id, res.locals.tenantId as string);
-    res.status(201).json({ post: created && toPublicScheduledPost(created) });
+    res.status(201).json({ post: created && postForClient(created) });
   }));
 
   // The calendar/queue screen from the ТЗ reads from here, filtered by
@@ -1632,13 +1686,13 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
 
     const posts = await queryAll<ScheduledPost>(db, `SELECT * FROM scheduled_posts WHERE ${conditions.join(' AND ')} ORDER BY scheduled_at ASC, seq ASC`, ...params);
 
-    res.json({ posts: posts.map(toPublicScheduledPost) });
+    res.json({ posts: posts.map(postForClient) });
   }));
 
   app.get('/api/scheduled-posts/:id', asyncHandler(async (req, res) => {
     const post = await getScheduledPostForTenant(db, req.params.id, res.locals.tenantId as string);
     if (!post) return res.status(404).json({ error: 'post not found' });
-    res.json({ post: toPublicScheduledPost(post) });
+    res.json({ post: postForClient(post) });
   }));
 
   // Approval workflow is optional per the ТЗ — only posts created with
@@ -1662,7 +1716,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     if (!updated) return res.status(409).json({ error: 'post was already approved or rejected by a concurrent request' });
 
     const fresh = await getScheduledPostForTenant(db, post.id, res.locals.tenantId as string);
-    res.json({ post: fresh && toPublicScheduledPost(fresh) });
+    res.json({ post: fresh && postForClient(fresh) });
   }));
 
   app.post('/api/scheduled-posts/:id/reject', asyncHandler(async (req, res) => {
@@ -1678,7 +1732,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     if (!updated) return res.status(409).json({ error: 'post was already approved or rejected by a concurrent request' });
 
     const fresh = await getScheduledPostForTenant(db, post.id, res.locals.tenantId as string);
-    res.json({ post: fresh && toPublicScheduledPost(fresh) });
+    res.json({ post: fresh && postForClient(fresh) });
   }));
 
   // Manual trigger for the polling publisher — there's no real queue to

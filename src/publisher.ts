@@ -5,6 +5,13 @@ import type { PostingPlatform, PublishFailureReason, ScheduledPost } from './typ
 
 const FAILURE_REASONS: PublishFailureReason[] = ['token_expired', 'rejected_by_platform', 'rate_limited'];
 
+const FAILURE_TEXT: Record<PublishFailureReason, string> = {
+  token_expired: 'доступ к аккаунту истёк, подключите его заново',
+  rejected_by_platform: 'платформа отклонила публикацию',
+  rate_limited: 'слишком много публикаций подряд, платформа просит подождать',
+  no_video: 'к посту не прикреплено видео',
+};
+
 // A live claim only ever holds 'publishing' for the duration of one
 // synchronous-ish processing pass within this same Node process (the mock
 // publish call plus a couple of awaited queries) — well under a second in
@@ -115,8 +122,21 @@ async function forEachBounded<T>(items: T[], limit: number, task: (item: T) => P
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
+/** What the person calls it, for notification text. */
+export const PLATFORM_NAME: Record<PostingPlatform, string> = {
+  instagram: 'Instagram',
+  tiktok: 'TikTok',
+  youtube_shorts: 'YouTube Shorts',
+};
+
 async function processOnePost(db: Db, post: ScheduledPost, now: Date): Promise<void> {
-  const result = mockPublish(post.id, post.platform);
+  // Every platform here publishes video. A post from before posts carried
+  // one has nothing to send, and "publishing" it would report success for a
+  // reel that does not exist.
+  const result = post.video_object_key
+    ? mockPublish(post.id, post.platform)
+    : ({ success: false, reason: 'no_video' } as const);
+  const name = PLATFORM_NAME[post.platform] ?? post.platform;
   if (result.success) {
     await exec(
       db,
@@ -125,9 +145,9 @@ async function processOnePost(db: Db, post: ScheduledPost, now: Date): Promise<v
       result.externalPostUrl,
       post.id
     );
-    await notify(db, post.tenant_id, 'post_published', `Пост в ${post.platform} опубликован: ${result.externalPostUrl}`, post.id);
+    await notify(db, post.tenant_id, 'post_published', `Пост в ${name} опубликован: ${result.externalPostUrl}`, post.id);
   } else {
     await exec(db, `UPDATE scheduled_posts SET status = 'failed', failure_reason = ? WHERE id = ?`, result.reason, post.id);
-    await notify(db, post.tenant_id, 'post_failed', `Ошибка публикации в ${post.platform}: ${result.reason}`, post.id);
+    await notify(db, post.tenant_id, 'post_failed', `Не удалось опубликовать в ${name}: ${FAILURE_TEXT[result.reason]}`, post.id);
   }
 }

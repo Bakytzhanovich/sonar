@@ -331,6 +331,15 @@ CREATE TABLE scheduled_posts (
   failure_reason     TEXT, -- token_expired | rejected_by_platform | rate_limited
   published_at       TIMESTAMPTZ,
   external_post_url  TEXT,
+  -- The video being posted: an upload, or a finished render from Module 8
+  -- (then video_job_id says which, and the key is that render's output).
+  -- Nullable only for rows from before posts carried a video; the API
+  -- refuses to create one without, and the publisher fails one without.
+  video_object_key   TEXT,
+  -- No foreign key: video_edit_jobs is declared below. The API checks the
+  -- job belongs to the tenant and is a finished, non-preview render, and
+  -- renders are never deleted (only previews are, and those are refused).
+  video_job_id       TEXT,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

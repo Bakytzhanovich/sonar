@@ -12,8 +12,11 @@ import { createTestDb, dropTestDb } from './dbTestHelper';
 const WEBHOOK_SECRET_HEADER = 'x-sonar-webhook-secret';
 const TEST_WEBHOOK_SECRET = 'test-mock-webhook-secret';
 
+// Posts carry a video now; any key under the tenant's own uploads will do.
+const videoFor = new Map<string, string>();
 async function createTenant(app: Express, email: string) {
   const res = await request(app).post('/api/tenants').send({ name: email, email });
+  videoFor.set(res.body.apiKey, `tenants/${res.body.tenant.id}/sources/clip.mp4`);
   return res.body.apiKey as string;
 }
 
@@ -158,7 +161,7 @@ describe('security: multi-tenancy isolation of the job processors', () => {
       await request(app)
         .post('/api/scheduled-posts')
         .set('Authorization', `Bearer ${keyA}`)
-        .send({ platform: 'instagram', caption: 'приватный пост A', scheduledAt: new Date(Date.now() - 60_000).toISOString() })
+        .send({ videoObjectKey: videoFor.get(keyA), platform: 'instagram', caption: 'приватный пост A', scheduledAt: new Date(Date.now() - 60_000).toISOString() })
     ).body.post;
 
     const res = await request(app).post('/api/scheduled-posts/process-due').set('Authorization', `Bearer ${keyB}`).send({});

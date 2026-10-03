@@ -8,8 +8,11 @@ import { publishDuePosts } from '../src/publisher';
 import { advanceRenderJobs } from '../src/videoRender';
 import { createTestDb, dropTestDb } from './dbTestHelper';
 
+// Posts carry a video now; any key under the tenant's own uploads will do.
+const videoFor = new Map<string, string>();
 async function createTenant(app: Express, email = 'push@example.com') {
   const res = await request(app).post('/api/tenants').send({ name: 'Blogger', email });
+  videoFor.set(res.body.apiKey, `tenants/${res.body.tenant.id}/sources/clip.mp4`);
   return { apiKey: res.body.apiKey as string, tenantId: res.body.tenant.id as string };
 }
 
@@ -60,7 +63,7 @@ describe('notifications fire from real publisher/render flows', () => {
   it('publishDuePosts notifies whichever way the post resolves', async () => {
     await exec(
       db,
-      `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, status) VALUES ('post-success', 't1', 'instagram', 'x', '2020-01-01T00:00:00.000Z', 'scheduled')`
+      `INSERT INTO scheduled_posts (id, tenant_id, platform, caption, scheduled_at, status, video_object_key) VALUES ('post-success', 't1', 'instagram', 'x', '2020-01-01T00:00:00.000Z', 'scheduled', 'tenants/t1/sources/clip.mp4')`
     );
 
     await publishDuePosts(db, new Date('2026-01-01T00:00:00.000Z'));
@@ -129,7 +132,7 @@ describe('push + notifications API', () => {
     await request(app)
       .post('/api/scheduled-posts')
       .set('Authorization', `Bearer ${apiKey}`)
-      .send({ platform: 'instagram', caption: 'x', scheduledAt: '2026-01-01T00:00:00.000Z', requiresApproval: true });
+      .send({ videoObjectKey: videoFor.get(apiKey), platform: 'instagram', caption: 'x', scheduledAt: '2026-01-01T00:00:00.000Z', requiresApproval: true });
 
     const res = await request(app).get('/api/notifications').set('Authorization', `Bearer ${apiKey}`);
     expect(res.body.notifications).toHaveLength(1);
@@ -141,7 +144,7 @@ describe('push + notifications API', () => {
     await request(app)
       .post('/api/scheduled-posts')
       .set('Authorization', `Bearer ${apiKey}`)
-      .send({ platform: 'instagram', caption: 'x', scheduledAt: '2026-01-01T00:00:00.000Z', requiresApproval: true });
+      .send({ videoObjectKey: videoFor.get(apiKey), platform: 'instagram', caption: 'x', scheduledAt: '2026-01-01T00:00:00.000Z', requiresApproval: true });
     const list = await request(app).get('/api/notifications').set('Authorization', `Bearer ${apiKey}`);
     const notificationId = list.body.notifications[0].id;
 
@@ -157,7 +160,7 @@ describe('push + notifications API', () => {
     await request(app)
       .post('/api/scheduled-posts')
       .set('Authorization', `Bearer ${owner.apiKey}`)
-      .send({ platform: 'instagram', caption: 'x', scheduledAt: '2026-01-01T00:00:00.000Z', requiresApproval: true });
+      .send({ videoObjectKey: videoFor.get(owner.apiKey), platform: 'instagram', caption: 'x', scheduledAt: '2026-01-01T00:00:00.000Z', requiresApproval: true });
 
     const res = await request(app).get('/api/notifications').set('Authorization', `Bearer ${intruder.apiKey}`);
     expect(res.body.notifications).toHaveLength(0);

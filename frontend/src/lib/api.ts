@@ -179,6 +179,11 @@ export interface ScheduledPost {
   failure_reason: string | null;
   published_at: string | null;
   external_post_url: string | null;
+  /** The render this post came from, when it was scheduled from the editor. */
+  video_job_id: string | null;
+  /** The video, signed to play for a couple of hours. Null only on old posts
+   *  from before posts carried one. */
+  video_url: string | null;
   created_at: string;
 }
 
@@ -609,7 +614,15 @@ export const api = {
 
   createScheduledPost: (
     config: ApiConfig,
-    fields: { platform: PostingPlatform; caption: string; scheduledAt: string; requiresApproval?: boolean }
+    // One of the two video fields: a finished render, or a fresh upload.
+    fields: {
+      platform: PostingPlatform;
+      caption: string;
+      scheduledAt: string;
+      requiresApproval?: boolean;
+      videoJobId?: string;
+      videoObjectKey?: string;
+    }
   ) => apiRequest(config, 'POST', '/api/scheduled-posts', fields) as Promise<{ post: ScheduledPost }>,
 
   listScheduledPosts: (config: ApiConfig) => apiRequest(config, 'GET', '/api/scheduled-posts') as Promise<{ posts: ScheduledPost[] }>,

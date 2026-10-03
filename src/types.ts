@@ -255,7 +255,7 @@ export type PostingPlatform = 'instagram' | 'tiktok' | 'youtube_shorts';
 // 'publishing' is a transient claim state — a row sits in it only for the
 // duration of publishDuePosts' processing, never observed at rest.
 export type ScheduledPostStatus = 'pending_approval' | 'scheduled' | 'publishing' | 'published' | 'failed' | 'rejected';
-export type PublishFailureReason = 'token_expired' | 'rejected_by_platform' | 'rate_limited';
+export type PublishFailureReason = 'token_expired' | 'rejected_by_platform' | 'rate_limited' | 'no_video';
 
 export interface ScheduledPost {
   id: string;
@@ -269,6 +269,8 @@ export interface ScheduledPost {
   failure_reason: PublishFailureReason | null;
   published_at: string | null;
   external_post_url: string | null;
+  video_object_key: string | null;
+  video_job_id: string | null;
   created_at: string;
 }
 

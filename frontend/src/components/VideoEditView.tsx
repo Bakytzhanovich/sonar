@@ -893,6 +893,14 @@ export default function VideoEditView() {
                           strips transcripts out (they are tens of kilobytes
                           per job and nothing here shows them), and a job that
                           reached a plan necessarily has one. */}
+                      {/* Straight to the scheduler with this render chosen:
+                          posting it should not mean downloading the file and
+                          uploading it again. */}
+                      {j.pipeline === 'smart_cut' && j.status === 'completed' && (
+                        <a className={styles.jobSecondaryButton} href={`/scheduler?video=${encodeURIComponent(j.id)}`}>
+                          Запланировать публикацию
+                        </a>
+                      )}
                       {j.pipeline === 'smart_cut' && j.artifacts?.plan && (
                         <button
                           type="button"

@@ -378,6 +378,7 @@
   font-size: var(--text-sm);
   font-weight: 650;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .jobSecondaryButton:hover { border-color: var(--accent); color: var(--accent); }

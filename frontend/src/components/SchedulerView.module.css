@@ -1,10 +1,13 @@
 .page { min-height: 100dvh; display: flex; flex-direction: column; background: var(--surface); color: var(--foreground); }
-.sidebar { width: 320px !important; padding: 24px !important; background: var(--background); gap: 12px; }
+/* One rhythm between blocks: the pickers, the tiles and the fields are all
+   direct children, and a gap here spaces them evenly where per-field margins
+   left some touching and others apart. */
+.sidebar { width: 320px !important; padding: 24px !important; background: var(--background); display: flex; flex-direction: column; gap: 18px; }
 .main { padding: clamp(20px, 4vw, 44px) !important; background: var(--surface); }
 .panelHeading { display: flex; flex-direction: column; gap: 4px; }
 .panelHeading h2 { margin: 0; font-size: var(--text-lg); letter-spacing: -0.02em; }
 .eyebrow { color: var(--accent); font-size: var(--text-xs); font-weight: 800; letter-spacing: .12em; }
-.divider { height: 1px; margin: 12px 0; background: var(--border); }
+.divider { height: 1px; background: var(--border); }
 .postCard { padding: 16px; margin-bottom: 12px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 4px 14px 14px 14px; background: var(--background); transition: transform 180ms ease, border-color 180ms ease; }
 .postCard:hover { transform: translateY(-2px); border-color: var(--accent); }
 .queueHeader { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
@@ -16,18 +19,19 @@
 .emptyIcon { display: grid; place-items: center; width: 58px; height: 58px; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); background: var(--accent-soft); font-size: var(--text-2xl); }
 .postMeta { color: var(--foreground-muted); font-size: var(--text-xs); line-height: 1.5; }
 
-.field { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-.field:first-of-type { margin-top: 0; }
-.fieldLabel { color: var(--foreground-muted); font-size: var(--text-xs); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+/* Matches PillPicker's label, so a field and a picker read as the same kind
+   of question. */
+.fieldLabel { color: var(--foreground); font-size: var(--text-sm); font-weight: 650; }
 .field select, .field textarea, .field input { width: 100%; }
 
 .checkboxRow { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: var(--text-sm); }
 
-.fullButton { width: 100%; margin-top: 14px; }
+.fullButton { width: 100%; }
 .hint { margin-top: 8px; color: var(--foreground-muted); font-size: var(--text-xs); }
 
 .postHeader { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.platformLabel { font-weight: 700; font-size: var(--text-sm); text-transform: capitalize; }
+.platformLabel { font-weight: 700; font-size: var(--text-sm); }
 
 .statusBadge {
   padding: 2px 9px;
@@ -42,7 +46,7 @@
 
 /* ---- Phone layout ------------------------------------------------------- */
 @media (max-width: 760px) {
-  .sidebar { padding: 14px !important; gap: 10px; }
+  .sidebar { width: 100% !important; padding: 14px !important; gap: 16px; }
   .main { padding: 14px !important; }
   .emptyState { min-height: 200px; padding: 20px 16px; }
   .emptyState h2 { font-size: var(--text-xl); }
@@ -63,3 +67,75 @@
   letter-spacing: .06em;
   text-transform: uppercase;
 }
+
+/* ---- Choosing the video ------------------------------------------------- */
+/* Finished renders as 9:16 tiles: a reel is recognised by its frame, not by
+   a date in a list. */
+.renderGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+button.renderTile {
+  position: relative;
+  aspect-ratio: 9 / 16;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: var(--radius-md, 10px);
+  background: var(--surface);
+  cursor: pointer;
+}
+button.renderTile img, button.renderTile video { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+button.renderTileActive { border-color: var(--accent); }
+.renderDate {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 3px 4px;
+  color: #fff;
+  background: rgb(0 0 0 / .55);
+  font-size: 10px;
+  text-align: center;
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 22px 12px;
+  border: 1.5px dashed color-mix(in srgb, var(--foreground-muted) 55%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  text-align: center;
+  cursor: pointer;
+}
+.dropzone:hover, .dropzone:focus-within { border-color: var(--accent); }
+.dropzoneFilled { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+.dropzoneTitle { font-size: var(--text-sm); font-weight: 650; overflow-wrap: anywhere; }
+.dropzoneHint { color: var(--foreground-muted); font-size: var(--text-xs); }
+.hiddenInput { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.hint a { color: var(--accent); }
+
+/* ---- A post in the queue ------------------------------------------------ */
+.postRow { display: flex; gap: 14px; align-items: flex-start; }
+.postVideo {
+  flex: none;
+  width: 72px;
+  aspect-ratio: 9 / 16;
+  border-radius: 8px;
+  background: #000;
+  object-fit: cover;
+  cursor: pointer;
+}
+.postVideoMissing {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  color: var(--foreground-muted);
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  font-size: 10px;
+  text-align: center;
+  cursor: default;
+}
+.postBody { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.postCaption { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.postFailure { color: var(--status-failed); font-size: var(--text-xs); }
+.postBody a { color: var(--accent); font-size: var(--text-sm); }

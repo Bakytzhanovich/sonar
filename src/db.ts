@@ -250,6 +250,10 @@ const MIGRATIONS: string[] = [
        GRANT SELECT, UPDATE ON reel_analyses TO sonar_worker;
      END IF;
    END $$`,
+  // Module 5: a post is a video. Before these, a scheduled post was a caption
+  // and a time, with nothing a reel platform could actually publish.
+  `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS video_object_key TEXT`,
+  `ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS video_job_id TEXT`,
 ];
 
 async function applyMigrations(client: PoolClient): Promise<void> {
