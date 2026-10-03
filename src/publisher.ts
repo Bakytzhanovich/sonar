@@ -331,7 +331,7 @@ async function markPublished(db: Db, post: ScheduledPost, now: Date, url: string
     post.id
   );
   const name = PLATFORM_NAME[post.platform] ?? post.platform;
-  await notify(db, post.tenant_id, 'post_published', url ? `Пост в ${name} опубликован: ${url}` : `Пост в ${name} опубликован`, post.id);
+  await notify(db, post.tenant_id, 'post_published', `Пост в ${name} опубликован`, post.id);
 }
 
 async function fail(db: Db, post: ScheduledPost, reason: PublishFailureReason, detail?: string): Promise<void> {

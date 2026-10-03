@@ -76,7 +76,7 @@ async function processOneJob(db: Db, job: VideoEditJob, now: Date): Promise<bool
       now.toISOString(),
       job.id
     );
-    if (claimed) await notify(db, job.tenant_id, 'video_failed', `Ошибка рендера видео: video_processing_error`, job.id);
+    if (claimed) await notify(db, job.tenant_id, 'video_failed', 'Монтаж не получился — подробности в разделе «Видео»', job.id);
     return claimed;
   }
 
@@ -88,6 +88,6 @@ async function processOneJob(db: Db, job: VideoEditJob, now: Date): Promise<bool
     now.toISOString(),
     job.id
   );
-  if (claimed) await notify(db, job.tenant_id, 'video_completed', `Рендер видео завершён: ${outputUrl}`, job.id);
+  if (claimed) await notify(db, job.tenant_id, 'video_completed', 'Монтаж готов — ролик ждёт в разделе «Видео»', job.id);
   return claimed;
 }

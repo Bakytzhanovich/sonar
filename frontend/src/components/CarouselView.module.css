@@ -94,7 +94,9 @@ button.thumb {
   width: 96px;
   aspect-ratio: 4 / 5;
   padding: 10px 8px;
-  border: 2px solid transparent;
+  /* A white slide on the light theme's pale page needs an edge to read as
+     a slide at all. */
+  border: 2px solid var(--border);
   border-radius: 8px;
   font: inherit;
   text-align: left;

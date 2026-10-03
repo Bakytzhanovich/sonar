@@ -145,7 +145,7 @@
 .emptyState { display: grid; place-items: center; min-height: 250px; border: 1px dashed var(--border); border-radius: var(--radius-lg); background: var(--background); text-align: center; }
 .emptyState h2 { margin: 10px 0 0; font-size: var(--text-xl); }
 .emptyState p { margin: 6px 0 0; color: var(--foreground-muted); font-size: var(--text-sm); }
-.emptyIcon { display: grid; place-items: center; width: 56px; height: 56px; border: 1px solid var(--accent); border-radius: 14px 50% 50% 50%; color: var(--accent); background: var(--accent-soft); }
+.emptyIcon { display: grid; place-items: center; width: 56px; height: 56px; margin: 0 auto; border: 1px solid var(--accent); border-radius: 14px 50% 50% 50%; color: var(--accent); background: var(--accent-soft); }
 
 @media (max-width: 760px) {
   .hero { align-items: start; flex-direction: column; }

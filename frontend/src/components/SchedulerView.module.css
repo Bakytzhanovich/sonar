@@ -15,7 +15,7 @@
 .emptyState { min-height: 330px; display: grid; place-items: center; padding: 30px; border: 1px dashed var(--border); border-radius: var(--radius-lg); background: var(--background); text-align: center; }
 .emptyState h2 { margin: 10px 0 0; font-size: var(--text-2xl); }
 .emptyState p { max-width: 350px; margin: 8px 0 0; color: var(--foreground-muted); line-height: 1.5; }
-.emptyIcon { display: grid; place-items: center; width: 58px; height: 58px; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); background: var(--accent-soft); font-size: var(--text-2xl); }
+.emptyIcon { display: grid; place-items: center; width: 58px; height: 58px; margin: 0 auto; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); background: var(--accent-soft); font-size: var(--text-2xl); }
 .postMeta { color: var(--foreground-muted); font-size: var(--text-xs); line-height: 1.5; }
 
 .field { display: flex; flex-direction: column; gap: 6px; }

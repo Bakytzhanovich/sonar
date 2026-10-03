@@ -279,7 +279,7 @@ export async function processSmartCutJob(
       now.toISOString(),
       job.id
     );
-    await notify(db, job.tenant_id, 'video_completed', `Монтаж готов: ${storage.publicUrl(outputKey)}`, job.id);
+    await notify(db, job.tenant_id, 'video_completed', 'Монтаж готов — ролик ждёт в разделе «Видео»', job.id);
   } catch (err) {
     if (err instanceof AwaitingReview) {
       // Releasing the lease as well as setting the status: the job is no
@@ -773,6 +773,6 @@ async function handleFailure(db: Db, job: VideoEditJob, err: unknown, now: Date)
   // Only notify if this call is the one that actually flipped the row — a
   // second worker losing the race must not send a duplicate push.
   if (updated.length > 0) {
-    await notify(db, job.tenant_id, 'video_failed', `Ошибка монтажа: ${reason}`, job.id);
+    await notify(db, job.tenant_id, 'video_failed', 'Монтаж не получился — причина на карточке ролика в разделе «Видео»', job.id);
   }
 }

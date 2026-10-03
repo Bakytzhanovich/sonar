@@ -1,0 +1,60 @@
+.root { position: relative; }
+.bell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--foreground-muted);
+  background: transparent;
+  cursor: pointer;
+}
+.bell:hover, .bell[aria-expanded='true'] { color: var(--accent); border-color: var(--accent); }
+.badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  color: var(--background);
+  background: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 18px;
+  text-align: center;
+}
+.panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: 340px;
+  max-height: min(70vh, 480px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--foreground);
+  background: var(--background);
+  overflow: hidden;
+}
+.panelHead { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.list { margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.item { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 10px 14px 10px 26px; border-bottom: 1px solid var(--border); }
+.itemRead { color: var(--foreground-muted); }
+.dot { position: absolute; top: 15px; left: 12px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.message { font-size: var(--text-sm); line-height: 1.4; overflow-wrap: anywhere; }
+.time { color: var(--foreground-muted); font-size: var(--text-xs); }
+.empty { margin: 0; padding: 18px 14px; color: var(--foreground-muted); font-size: var(--text-sm); line-height: 1.5; }
+.push { padding: 10px 14px; border-top: 1px solid var(--border); }
+.linkButton { padding: 0; border: 0; color: var(--accent); background: transparent; font: inherit; font-size: var(--text-sm); font-weight: 650; cursor: pointer; }
+.error { margin: 6px 0 0; color: var(--foreground-muted); font-size: var(--text-xs); }
+
+/* On a phone the panel takes the screen's width rather than hanging off it. */
+@media (max-width: 720px) {
+  .panel { position: fixed; top: 60px; right: 12px; left: 12px; width: auto; }
+}
