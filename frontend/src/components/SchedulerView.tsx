@@ -62,6 +62,16 @@ const WAITING_LABEL: Record<string, string> = {
   pace: 'Ждёт паузы между публикациями — так аккаунт не выглядит как бот',
   instagram_limit: 'Дневной лимит Instagram исчерпан — пост выйдет, как только он обновится',
 };
+// The answers the cancel, edit and retry buttons can get, in words.
+const CHANGE_ERRORS: Record<string, string> = {
+  already_publishing: 'Пост уже передан в Instagram — изменить или отменить его нельзя',
+  already_published: 'Пост уже опубликован',
+  account_needs_reconnect: 'Сначала переподключите аккаунт — блок «Аккаунты» выше',
+  account_unavailable: 'Аккаунт отключён — подключите его снова или удалите пост',
+  no_video: 'К посту не прикреплено видео — создайте пост заново',
+  caption: 'Текст поста не может быть пустым',
+};
+
 const CREATE_ERRORS: Record<string, string> = {
   video_not_ready: 'Этот ролик ещё не готов — дождитесь конца монтажа',
   'video job not found': 'Ролик не найден',
@@ -395,7 +405,7 @@ export default function SchedulerView() {
               <h3>Ждут согласования</h3>
               {pending.map((p) => (
                 <div key={p.id} className={styles.postCard} style={{ borderLeftColor: STATUS_COLOR[p.status] }}>
-                  <PostRow post={p} account={accountName(p.platform_account_id)} />
+                  <PostRow post={p} account={accountName(p.platform_account_id)} config={config} accounts={accounts} onChanged={load} onMessage={setStatus} />
                   <div className={controls.decisionPair}>
                     <button className={controls.buttonPrimary} onClick={() => decide(p.id, 'approve')}>Одобрить</button>
                     <button className={controls.buttonSecondary} onClick={() => decide(p.id, 'reject')}>Отклонить</button>
@@ -408,7 +418,7 @@ export default function SchedulerView() {
           <div className={styles.queueHeader}><h2>Очередь</h2><span className={styles.queueCount}>{posts.length} публикаций</span></div>
           {rest.map((p) => (
             <div key={p.id} className={styles.postCard} style={{ borderLeftColor: STATUS_COLOR[p.status] }}>
-              <PostRow post={p} account={accountName(p.platform_account_id)} />
+              <PostRow post={p} account={accountName(p.platform_account_id)} config={config} accounts={accounts} onChanged={load} onMessage={setStatus} />
             </div>
           ))}
           {posts.length === 0 && <div className={styles.emptyState}><div><div className={styles.emptyIcon}>↗</div><h2>Очередь свободна</h2><p>Выберите ролик слева, напишите текст и время — пост встанет сюда.</p></div></div>}
@@ -421,8 +431,71 @@ export default function SchedulerView() {
   );
 }
 
-function PostRow({ post, account }: { post: ScheduledPost; account: string | null }) {
+function PostRow({
+  post,
+  account,
+  config,
+  accounts,
+  onChanged,
+  onMessage,
+}: {
+  post: ScheduledPost;
+  account: string | null;
+  config: { baseUrl: string; apiKey: string };
+  accounts: PlatformAccount[];
+  onChanged: () => Promise<void>;
+  onMessage: (message: string) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [draftCaption, setDraftCaption] = useState(post.caption);
+  const [draftAt, setDraftAt] = useState(() => toLocalInputValue(new Date(post.scheduled_at)));
+  const [draftAccount, setDraftAccount] = useState(post.platform_account_id ?? '');
+  const accountChoices = accounts.filter((a) => a.platform === post.platform && a.status === 'active');
+
+  // What can be done depends on where the post is. The server holds the same
+  // rule and has the last word — a post the publisher picks up a moment
+  // before the click is refused there, and the answer is shown in words.
+  const notOutYet = post.status === 'scheduled' || post.status === 'pending_approval';
+  const canCancel = notOutYet || (post.status === 'publishing' && Boolean(post.waiting_reason));
+  const canRetry = post.status === 'failed' && post.failure_reason !== 'no_video';
+  const canClear = post.status === 'failed' || post.status === 'rejected';
+
+  async function run(action: () => Promise<unknown>, done: string) {
+    setBusy(true);
+    try {
+      await action();
+      await onChanged();
+      onMessage(done);
+      setEditing(false);
+    } catch (err) {
+      onMessage(errorText(err, CHANGE_ERRORS));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancel() {
+    const question = canClear ? 'Удалить пост из очереди?' : 'Отменить публикацию? Пост не выйдет.';
+    if (!window.confirm(question)) return;
+    void run(() => api.cancelPost(config, post.id), canClear ? 'Пост удалён' : 'Публикация отменена');
+  }
+
+  function save() {
+    const when = new Date(draftAt);
+    if (!draftCaption.trim()) return onMessage(CHANGE_ERRORS.caption);
+    if (Number.isNaN(when.getTime())) return onMessage('Укажите дату и время');
+    void run(
+      () =>
+        api.updatePost(config, post.id, {
+          caption: draftCaption.trim(),
+          scheduledAt: when.toISOString(),
+          ...(accountChoices.length > 0 ? { platformAccountId: draftAccount || null } : {}),
+        }),
+      'Изменения сохранены'
+    );
+  }
   // The mock publisher's links point at a host that does not exist.
   const realLink = post.external_post_url && !/\.mock\//.test(post.external_post_url) ? post.external_post_url : null;
 
@@ -472,6 +545,42 @@ function PostRow({ post, account }: { post: ScheduledPost; account: string | nul
         )}
         {realLink && (
           <a href={realLink} target="_blank" rel="noreferrer">Открыть публикацию</a>
+        )}
+
+        {editing && (
+          <div className={styles.editBox}>
+            <textarea className={controls.input} value={draftCaption} onChange={(e) => setDraftCaption(e.target.value)} rows={4} />
+            <input className={controls.input} type="datetime-local" value={draftAt} onChange={(e) => setDraftAt(e.target.value)} />
+            {accountChoices.length > 1 && (
+              <select className={controls.input} value={draftAccount} onChange={(e) => setDraftAccount(e.target.value)} aria-label="Аккаунт">
+                {accountChoices.map((a) => (
+                  <option key={a.id} value={a.id}>@{a.username ?? 'аккаунт'}{a.is_test ? ' (тестовый)' : ''}</option>
+                ))}
+              </select>
+            )}
+            <div className={styles.postActions}>
+              <button type="button" className={controls.buttonPrimary} onClick={save} disabled={busy}>Сохранить</button>
+              <button type="button" className={controls.buttonSecondary} onClick={() => setEditing(false)} disabled={busy}>Не менять</button>
+            </div>
+          </div>
+        )}
+
+        {!editing && (notOutYet || canCancel || canRetry || canClear) && (
+          <div className={styles.postActions}>
+            {canRetry && (
+              <button type="button" className={controls.buttonSecondary} onClick={() => void run(() => api.retryPost(config, post.id), 'Пост снова в очереди')} disabled={busy}>
+                Попробовать ещё раз
+              </button>
+            )}
+            {notOutYet && (
+              <button type="button" className={styles.textButton} onClick={() => setEditing(true)} disabled={busy}>Изменить</button>
+            )}
+            {(canCancel || canClear) && (
+              <button type="button" className={`${styles.textButton} ${styles.dangerText}`} onClick={cancel} disabled={busy}>
+                {canClear ? 'Удалить' : 'Отменить'}
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>

@@ -710,6 +710,15 @@ export const api = {
 
   disconnectAccount: (config: ApiConfig, id: string) => apiRequest(config, 'DELETE', `/api/platform-accounts/${id}`),
 
+  /** Cancel a post that has not gone out, or clear away a failed one. */
+  cancelPost: (config: ApiConfig, id: string) => apiRequest(config, 'DELETE', `/api/scheduled-posts/${encodeURIComponent(id)}`),
+
+  updatePost: (config: ApiConfig, id: string, fields: { caption?: string; scheduledAt?: string; platformAccountId?: string | null }) =>
+    apiRequest(config, 'PATCH', `/api/scheduled-posts/${encodeURIComponent(id)}`, fields) as Promise<{ post: ScheduledPost }>,
+
+  retryPost: (config: ApiConfig, id: string) =>
+    apiRequest(config, 'POST', `/api/scheduled-posts/${encodeURIComponent(id)}/retry`) as Promise<{ post: ScheduledPost }>,
+
   processDuePosts: (config: ApiConfig) => apiRequest(config, 'POST', '/api/scheduled-posts/process-due') as Promise<{ processed: number }>,
 
   // ---- Module 6: Content plan from CRM + Module 3 -------------------------

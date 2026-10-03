@@ -1691,6 +1691,20 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     return { ...rest, video_url: videoUrl };
   }
 
+  /** Why this account cannot take a post on this platform, or null when it can. */
+  async function refusePostAccount(tenantId: string, accountId: string, platform: string): Promise<{ status: number; error: string } | null> {
+    const account = await queryOne<{ platform: string; status: string }>(
+      db,
+      `SELECT platform, status FROM platform_accounts WHERE id = ? AND tenant_id = ?`,
+      accountId,
+      tenantId
+    );
+    if (!account) return { status: 404, error: 'account not found' };
+    if (account.platform !== platform) return { status: 400, error: 'account is for another platform' };
+    if (account.status !== 'active') return { status: 409, error: 'account_needs_reconnect' };
+    return null;
+  }
+
   app.post('/api/scheduled-posts', asyncHandler(async (req, res) => {
     const tenantId = res.locals.tenantId as string;
     const { platform, caption, scheduledAt, requiresApproval } = req.body ?? {};
@@ -1705,15 +1719,8 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     // given it must be this workspace's, for this platform, and working.
     const accountId = typeof req.body?.platformAccountId === 'string' ? req.body.platformAccountId : null;
     if (accountId) {
-      const account = await queryOne<{ platform: string; status: string }>(
-        db,
-        `SELECT platform, status FROM platform_accounts WHERE id = ? AND tenant_id = ?`,
-        accountId,
-        tenantId
-      );
-      if (!account) return res.status(404).json({ error: 'account not found' });
-      if (account.platform !== platform) return res.status(400).json({ error: 'account is for another platform' });
-      if (account.status !== 'active') return res.status(409).json({ error: 'account_needs_reconnect' });
+      const refused = await refusePostAccount(tenantId, accountId, platform);
+      if (refused) return res.status(refused.status).json({ error: refused.error });
     }
 
     const id = randomUUID();
@@ -1822,6 +1829,129 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     if (!updated) return res.status(409).json({ error: 'post was already approved or rejected by a concurrent request' });
 
     const fresh = await getScheduledPostForTenant(db, post.id, res.locals.tenantId as string);
+    res.json({ post: fresh && postForClient(fresh) });
+  }));
+
+  // ---- Changing your mind -------------------------------------------------
+  // One rule for cancel and edit: a post can be changed until it has been
+  // handed to Instagram, and not after. Before that it is only a row of ours;
+  // after, a container exists on Instagram's side and may already be live.
+  // The rule sits in each statement's WHERE, so the publisher claiming the
+  // post a moment earlier makes the change match nothing — never a cancel
+  // of a reel that is already going out.
+  const CHANGEABLE = `(status IN ('pending_approval', 'scheduled')
+    OR (status = 'publishing' AND claimed_at IS NULL AND ig_container_id IS NULL))`;
+
+  /** 404 for someone else's or a missing post, 409 with the reason otherwise. */
+  async function whyNotChangeable(id: string, tenantId: string): Promise<{ status: number; error: string }> {
+    const post = await getScheduledPostForTenant(db, id, tenantId);
+    if (!post) return { status: 404, error: 'post not found' };
+    if (post.status === 'published') return { status: 409, error: 'already_published' };
+    return { status: 409, error: 'already_publishing' };
+  }
+
+  // Cancel. Also clears away a failed or rejected post — nothing to protect
+  // there. A published one stays: the record of what went out is not ours
+  // to lose, and removing it here would not remove it from Instagram.
+  app.delete('/api/scheduled-posts/:id', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const removed = await queryOne<{ id: string }>(
+      db,
+      `DELETE FROM scheduled_posts
+       WHERE id = ? AND tenant_id = ? AND (${CHANGEABLE} OR status IN ('failed', 'rejected'))
+       RETURNING id`,
+      req.params.id,
+      tenantId
+    );
+    if (removed) return res.status(204).end();
+    const why = await whyNotChangeable(req.params.id, tenantId);
+    res.status(why.status).json({ error: why.error });
+  }));
+
+  // Edit the words, the time or the account. The platform and the video are
+  // what the post is; changing those is a new post.
+  app.patch('/api/scheduled-posts/:id', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const post = await getScheduledPostForTenant(db, req.params.id, tenantId);
+    if (!post) return res.status(404).json({ error: 'post not found' });
+
+    const body = req.body ?? {};
+    const caption = body.caption === undefined ? post.caption : body.caption;
+    if (typeof caption !== 'string' || !caption.trim()) return res.status(400).json({ error: 'caption is required' });
+    const scheduledAt = body.scheduledAt === undefined ? post.scheduled_at : body.scheduledAt;
+    if (Number.isNaN(Date.parse(scheduledAt))) return res.status(400).json({ error: 'scheduledAt must be a valid date' });
+    const accountId = body.platformAccountId === undefined ? post.platform_account_id : body.platformAccountId;
+    if (accountId !== null && typeof accountId !== 'string') return res.status(400).json({ error: 'platformAccountId must be a string or null' });
+    if (accountId && accountId !== post.platform_account_id) {
+      const refused = await refusePostAccount(tenantId, accountId, post.platform);
+      if (refused) return res.status(refused.status).json({ error: refused.error });
+    }
+
+    // A post waiting out our pace or Instagram's limit goes back to plain
+    // "scheduled": its new time is the one to wait for now.
+    const updated = await queryOne<{ id: string }>(
+      db,
+      `UPDATE scheduled_posts
+       SET caption = ?, scheduled_at = ?, platform_account_id = ?,
+           status = CASE WHEN status = 'publishing' THEN 'scheduled' ELSE status END,
+           waiting_reason = NULL, next_attempt_at = NULL
+       WHERE id = ? AND tenant_id = ? AND ${CHANGEABLE}
+       RETURNING id`,
+      caption.trim(),
+      new Date(scheduledAt).toISOString(),
+      accountId,
+      post.id,
+      tenantId
+    );
+    if (!updated) {
+      const why = await whyNotChangeable(post.id, tenantId);
+      return res.status(why.status).json({ error: why.error });
+    }
+    const fresh = await getScheduledPostForTenant(db, post.id, tenantId);
+    res.json({ post: fresh && postForClient(fresh) });
+  }));
+
+  // Try a failed post again — after reconnecting the account, say — without
+  // building it from scratch. It goes out as soon as the publisher next runs.
+  //
+  // One case is not a fresh start: a post that failed AT the publish call may
+  // in fact be live, its answer lost. That one keeps its container and stage,
+  // so the next pass asks Instagram first and only records it if it is
+  // already published — the same guard as an ordinary retry.
+  app.post('/api/scheduled-posts/:id/retry', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const post = await getScheduledPostForTenant(db, req.params.id, tenantId);
+    if (!post) return res.status(404).json({ error: 'post not found' });
+    if (post.status !== 'failed') return res.status(409).json({ error: 'not_failed' });
+    if (!post.video_object_key) return res.status(409).json({ error: 'no_video' });
+    if (post.platform_account_id) {
+      const refused = await refusePostAccount(tenantId, post.platform_account_id, post.platform);
+      // The post exists and is ours; what is missing is a usable account.
+      if (refused) return res.status(409).json({ error: refused.status === 404 ? 'account_unavailable' : refused.error });
+    }
+
+    const resumeAtPublish = post.publish_stage === 'publishing' && Boolean(post.ig_container_id);
+    const now = new Date().toISOString();
+    const retried = await queryOne<{ id: string }>(
+      db,
+      resumeAtPublish
+        ? `UPDATE scheduled_posts
+           SET status = 'publishing', claimed_at = NULL, next_attempt_at = ?, attempts = 0,
+               failure_reason = NULL, failure_detail = NULL, waiting_reason = NULL
+           WHERE id = ? AND tenant_id = ? AND status = 'failed'
+           RETURNING id`
+        : `UPDATE scheduled_posts
+           SET status = 'scheduled', scheduled_at = ?, claimed_at = NULL, next_attempt_at = NULL, attempts = 0,
+               failure_reason = NULL, failure_detail = NULL, waiting_reason = NULL,
+               ig_container_id = NULL, publish_stage = NULL, container_created_at = NULL
+           WHERE id = ? AND tenant_id = ? AND status = 'failed'
+           RETURNING id`,
+      now,
+      post.id,
+      tenantId
+    );
+    if (!retried) return res.status(409).json({ error: 'not_failed' });
+    const fresh = await getScheduledPostForTenant(db, post.id, tenantId);
     res.json({ post: fresh && postForClient(fresh) });
   }));
 

@@ -166,3 +166,11 @@ button.accountWarn { padding: 4px 10px; border: 1px solid var(--status-failed); 
 button.accountRemove { padding: 4px 6px; border: 0; color: var(--foreground-muted); background: transparent; font-size: var(--text-xs); cursor: pointer; }
 button.accountRemove:hover { color: var(--status-failed); }
 .accountLabel { color: var(--foreground-muted); font-weight: 500; }
+
+/* ---- Changing a post ---------------------------------------------------- */
+.postActions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+button.textButton { padding: 4px 0; border: 0; color: var(--foreground-muted); background: transparent; font-size: var(--text-sm); font-weight: 650; cursor: pointer; }
+button.textButton:hover { color: var(--accent); }
+button.dangerText:hover { color: var(--status-failed); }
+.editBox { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.editBox textarea, .editBox input, .editBox select { width: 100%; }
