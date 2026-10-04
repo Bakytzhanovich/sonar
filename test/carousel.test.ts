@@ -117,6 +117,17 @@ describe('carousel API', () => {
     expect((await make(other.apiKey)).status).toBe(201);
   });
 
+  it('deletes a carousel with its slides, and only the owner\'s', async () => {
+    const { apiKey } = await createTenant(app, 'del-car@example.com');
+    const other = await createTenant(app, 'del-other@example.com');
+    const made = (await request(app).post('/api/carousels').set('Authorization', `Bearer ${apiKey}`).send({ prompt: 'тема' })).body.carousel;
+
+    expect((await request(app).delete(`/api/carousels/${made.id}`).set('Authorization', `Bearer ${other.apiKey}`)).status).toBe(404);
+    expect((await request(app).delete(`/api/carousels/${made.id}`).set('Authorization', `Bearer ${apiKey}`)).status).toBe(204);
+    expect(await queryAll(db, `SELECT id FROM carousel_slides WHERE carousel_id = ?`, made.id)).toHaveLength(0);
+    expect((await request(app).get(`/api/carousels/${made.id}`).set('Authorization', `Bearer ${apiKey}`)).status).toBe(404);
+  });
+
   it('rejects an unknown presetId', async () => {
     const { apiKey } = await createTenant(app);
     const res = await request(app)

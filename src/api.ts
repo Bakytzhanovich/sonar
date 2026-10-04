@@ -1659,6 +1659,27 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // редактирование слайдов после генерации"). Only text content is
   // persisted, not exact dragged element positions — a documented MVP
   // simplification, not an oversight.
+  // Slides first (they reference the carousel), both in one transaction so a
+  // failure halfway cannot leave a carousel with half its slides.
+  app.delete('/api/carousels/:id', asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const carousel = await getCarouselForTenant(db, req.params.id, tenantId);
+    if (!carousel) return res.status(404).json({ error: 'carousel not found' });
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      await exec(client, `DELETE FROM carousel_slides WHERE carousel_id = ? AND tenant_id = ?`, carousel.id, tenantId);
+      await exec(client, `DELETE FROM carousels WHERE id = ? AND tenant_id = ?`, carousel.id, tenantId);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+    res.status(204).end();
+  }));
+
   // The brand style a carousel is shown and downloaded in. Kept on the
   // carousel, so coming back to it does not quietly fall back to plain.
   app.patch('/api/carousels/:id', asyncHandler(async (req, res) => {

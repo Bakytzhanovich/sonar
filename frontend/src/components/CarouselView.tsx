@@ -151,6 +151,9 @@ export default function CarouselView() {
   const activePreset = presets.find((p) => p.id === presetId) ?? null;
   const look = lookOf(activePreset);
   const current = slides[slideIndex] ?? null;
+  // Carousels made before generation was real carry template text marked
+  // "[мок]". Said plainly, so one is never mistaken for the model's work.
+  const isTemplate = slides.some((s) => s.body.startsWith('[мок]'));
 
   const openCarousel = useCallback(
     async (c: Carousel) => {
@@ -304,6 +307,20 @@ export default function CarouselView() {
     api.setCarouselStyle(config, selected.id, id || null).catch((err) => setStatus(err instanceof Error ? err.message : String(err)));
   }
 
+  async function removeCarousel() {
+    if (!selected || !window.confirm('Удалить карусель? Её слайды удалятся тоже.')) return;
+    try {
+      await api.deleteCarousel(config, selected.id);
+      const list = await loadLibrary();
+      setSelected(null);
+      setSlides([]);
+      if (list.length > 0) await openCarousel(list[0]);
+      setStatus('Карусель удалена');
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   async function saveStyle() {
     if (!styleName.trim()) return setStatus('Назовите стиль — например, по названию блога');
     try {
@@ -417,10 +434,17 @@ export default function CarouselView() {
                   </span>
                 </div>
                 <div className={styles.downloads}>
+                  <button type="button" className={styles.deleteLink} onClick={removeCarousel}>Удалить</button>
                   <button className={controls.buttonSecondary} onClick={downloadCurrent}>Скачать слайд</button>
                   <button className={controls.buttonPrimary} onClick={downloadAll}>Скачать все</button>
                 </div>
               </div>
+
+              {isTemplate && (
+                <NoticeBanner>
+                  Эта карусель создана шаблоном ещё до подключения ИИ — текст в ней не настоящий. Сгенерируйте её заново в блоке «Новая карусель», а эту можно удалить.
+                </NoticeBanner>
+              )}
 
               <div className={styles.editor}>
                 <div className={styles.slideColumn}>

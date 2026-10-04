@@ -136,3 +136,6 @@ button.thumbActive { border-color: var(--accent); }
   /* Example topics are tapped, not clicked: give them a finger's height. */
   button.example { min-height: 36px; padding: 6px 12px; }
 }
+
+button.deleteLink { padding: 0 6px; border: 0; color: var(--foreground-muted); background: transparent; font: inherit; font-size: var(--text-sm); cursor: pointer; }
+button.deleteLink:hover { color: var(--status-failed); }
