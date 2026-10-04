@@ -8,6 +8,7 @@ import type { Express } from 'express';
 import { queryAll, queryOne, type Db } from '../src/db';
 import { createApp } from '../src/api';
 import { createTestDb, dropTestDb } from './dbTestHelper';
+import { hashPassword, verifyPassword } from '../src/auth';
 
 const WEBHOOK_SECRET_HEADER = 'x-sonar-webhook-secret';
 const TEST_WEBHOOK_SECRET = 'test-mock-webhook-secret';
@@ -272,12 +273,22 @@ describe('security: login does not leak which emails are registered', () => {
     const unknownEmail = await request(app).post('/api/auth/login').send({ email: 'ghost@example.com', password: 'nope-nope-nope' });
     const unknownEmailMs = Date.now() - t1;
 
+    // One bcrypt comparison timed right here, under whatever load the run is
+    // under: the yardstick for "the bcrypt work happened". Comparing two single
+    // requests against each other was the flaky part — on a busy full run the
+    // first one alone could take seconds.
+    const hash = await hashPassword('baseline');
+    const t2 = Date.now();
+    await verifyPassword('not-it', hash);
+    const bcryptMs = Date.now() - t2;
+
     expect(wrongPassword.status).toBe(401);
     expect(unknownEmail.status).toBe(401);
     expect(unknownEmail.body).toEqual(wrongPassword.body);
-    // Generous bound — this asserts the bcrypt work happened, not a precise
-    // timing profile, so it cannot go flaky on a loaded CI box.
-    expect(unknownEmailMs).toBeGreaterThan(wrongPasswordMs / 4);
+    // Asserts the bcrypt work happened on both paths, not a precise timing
+    // profile.
+    expect(unknownEmailMs).toBeGreaterThan(bcryptMs / 2);
+    expect(wrongPasswordMs).toBeGreaterThan(bcryptMs / 2);
   });
 });
 
