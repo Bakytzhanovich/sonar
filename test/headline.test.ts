@@ -35,6 +35,22 @@ describe('wrapHeadline', () => {
     expect(wrapHeadline('КАК Я ПОДНЯЛ 2 МЛН')).toEqual(['КАК Я ПОДНЯЛ', '2 МЛН']);
   });
 
+  // The real one from a render: balancing alone still broke "2 / млн",
+  // because it only chooses widths and knows nothing about what a number is.
+  it('never leaves a number at the end of a line apart from the word it counts', () => {
+    for (const text of ['Как я поднял 2 млн за месяц', 'Мой доход вырос в 3 раза за год', 'Похудела на 12 кг без диет и спортзала']) {
+      const lines = wrapHeadline(text);
+      expect(lines.join(' ')).toBe(text);
+      for (const line of lines.slice(0, -1)) expect(line).not.toMatch(/\d$/);
+    }
+  });
+
+  it('does not leave a one-letter preposition hanging at the end of a line', () => {
+    for (const text of ['Как зарабатывать в соцсетях без вложений', 'Секреты продаж в директе и в сторис']) {
+      for (const line of wrapHeadline(text).slice(0, -1)) expect(line).not.toMatch(/(^|\s)[вискоуа]$/i);
+    }
+  });
+
   it('keeps a short headline on one line', () => {
     expect(wrapHeadline('БРОСЬ РАБОТУ')).toEqual(['БРОСЬ РАБОТУ']);
   });

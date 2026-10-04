@@ -216,8 +216,39 @@ function greedyWrap(words: string[], maxChars: number): string[] {
  * a line redistributes the words instead, and the result reads as a headline
  * somebody set rather than as text that ran out of room.
  */
+/** A number ("2", "3,5", "100%") — it belongs with the word it counts. */
+const NUMBER = /^\d[\d.,]*%?$/;
+/** One-letter prepositions and conjunctions: left at the end of a line they
+ *  hang, which Russian typesetting treats as an error. */
+const CLINGING = /^[вискоуаВИСКОУА]$/;
+
+/**
+ * Words joined into the units a line may not break inside: a number with the
+ * word after it ("2 млн", "3 раза"), a one-letter preposition with the word it
+ * introduces ("в директе"). Chained, so "в 3 раза" stays whole.
+ *
+ * Balancing alone did not prevent "2 / млн": it chooses line widths and knows
+ * nothing about what a number is, so on a longer headline the best width
+ * could still fall between the two.
+ */
+function unbreakableUnits(words: string[]): string[] {
+  const units: string[] = [];
+  let pending = '';
+  for (const word of words) {
+    const unit = pending ? `${pending} ${word}` : word;
+    if (NUMBER.test(word) || CLINGING.test(word)) {
+      pending = unit;
+    } else {
+      units.push(unit);
+      pending = '';
+    }
+  }
+  if (pending) units.push(pending);
+  return units;
+}
+
 export function wrapHeadline(text: string, maxChars: number = MAX_CHARS_PER_LINE): string[] {
-  const words = text.trim().split(/\s+/).filter(Boolean);
+  const words = unbreakableUnits(text.trim().split(/\s+/).filter(Boolean));
   if (words.length === 0) return [];
 
   let lines = greedyWrap(words, maxChars);
