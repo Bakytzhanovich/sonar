@@ -31,6 +31,7 @@ export default function SignupView() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [consent, setConsent] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,9 +96,14 @@ export default function SignupView() {
       return;
     }
 
+    if (!consent) {
+      setError('Чтобы создать аккаунт, нужно согласие на обработку данных');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const res = await api.signup({ baseUrl: API_BASE_URL }, email, password, inviteCode.trim());
+      const res = await api.signup({ baseUrl: API_BASE_URL }, email, password, inviteCode.trim(), consent);
       const nextSession = {
         userId: res.user.id,
         userEmail: res.user.email,
@@ -115,6 +121,7 @@ export default function SignupView() {
         else if (code === 'invalid_email') setError('Некорректный email');
         else if (code === 'invalid_password') setError(`Пароль должен быть не короче ${MIN_PASSWORD_LENGTH} символов`);
         else if (code === 'invalid_invite_code') setError('Неверный код приглашения');
+        else if (code === 'consent_required') setError('Чтобы создать аккаунт, нужно согласие на обработку данных');
         // Not "wrong code": the deployment has no code configured at all, so
         // there is nothing the visitor could type that would work.
         else if (code === 'signup_closed') setError('Регистрация сейчас закрыта — она доступна по приглашению');
@@ -227,6 +234,15 @@ export default function SignupView() {
               </button>
             </div>
           </div>
+          {/* A box the person ticks, not "by signing up you agree": the
+              law asks for consent that can be shown to have been given. */}
+          <label className={styles.consent}>
+            <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+            <span>
+              Согласен(на) на обработку персональных данных по{' '}
+              <Link href="/privacy" target="_blank">политике конфиденциальности</Link>
+            </span>
+          </label>
           {error && <p className={styles.error}>{error}</p>}
           <button className={`${controls.buttonPrimary} ${styles.submit}`} type="submit" disabled={submitting}>
             {submitting ? 'Создаём...' : 'Зарегистрироваться'}

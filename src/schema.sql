@@ -644,6 +644,11 @@ CREATE TABLE users (
   -- person who created it runs it. Anyone weaker arrives by invitation, which
   -- names their role explicitly.
   role          TEXT NOT NULL DEFAULT 'owner',
+  -- When the person agreed to the processing of their data, and to which
+  -- text of the policy (src/privacyPolicy.ts). Empty for accounts made
+  -- before signup asked.
+  privacy_consent_at     TIMESTAMPTZ,
+  privacy_policy_version TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

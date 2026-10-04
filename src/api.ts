@@ -49,6 +49,7 @@ import { authorizeUrl, connectWithCode, instagramConfigFromEnv, signState, verif
 import { listAccounts, saveConnectedAccount } from './platformAccounts';
 import { keyringFromEnv, type TokenKeyring } from './tokenVault';
 import { eraseAccount } from './accountDeletion';
+import { PRIVACY_POLICY_VERSION } from './privacyPolicy';
 import { eraseContactFromPlan, generateContentPlan, getContentPlan, NotEnoughDataError, planReadiness, scriptFor, writeTopicScript } from './contentTopics';
 import { addDays, autoFillWeek, isDay, listEntries } from './contentCalendar';
 import { computeContentRecommendations } from './contentRecommendations';
@@ -442,6 +443,12 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
         error: gate.reason === 'not_configured' ? 'signup_closed' : 'invalid_invite_code',
       });
     }
+    // Consent to processing personal data, given explicitly (Kazakhstan's
+    // personal data law). After the invite gate, so a caller without an
+    // invite learns nothing new from leaving it out.
+    if (req.body?.consent !== true) {
+      return res.status(400).json({ error: 'consent_required' });
+    }
     // Email identity must be case-insensitive (RFC 5321 leaves the local
     // part case-sensitive in theory, but no mainstream provider treats it
     // that way) — normalize before the uniqueness check/storage so
@@ -461,7 +468,15 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       // inserts leaves an orphan tenant row rather than a corrupt
       // reference; users.email UNIQUE is still the real race guard below.
       await exec(db, `INSERT INTO tenants (id, name, email) VALUES (?, ?, ?)`, tenantId, email, email);
-      await exec(db, `INSERT INTO users (id, tenant_id, email, password_hash) VALUES (?, ?, ?, ?)`, userId, tenantId, email, passwordHash);
+      await exec(
+        db,
+        `INSERT INTO users (id, tenant_id, email, password_hash, privacy_consent_at, privacy_policy_version) VALUES (?, ?, ?, ?, now(), ?)`,
+        userId,
+        tenantId,
+        email,
+        passwordHash,
+        PRIVACY_POLICY_VERSION
+      );
     } catch (err) {
       // Two signups racing on the same email: both pass the SELECT above,
       // one wins the INSERT, the other hits users.email's UNIQUE

@@ -6,7 +6,7 @@ import { createApp } from '../src/api';
 import { createTestDb, dropTestDb } from './dbTestHelper';
 
 async function signup(app: Express, email = 'onboarding@example.com') {
-  const res = await request(app).post('/api/auth/signup').send({ email, password: 'correct-horse' });
+  const res = await request(app).post('/api/auth/signup').send({ email, password: 'correct-horse', consent: true });
   expect(res.status).toBe(201);
   return {
     sessionToken: res.body.sessionToken as string,

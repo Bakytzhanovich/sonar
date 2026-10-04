@@ -224,7 +224,7 @@ describe('the credential-minting routes in production', () => {
   });
 
   describe('POST /api/auth/signup', () => {
-    const credentials = { email: 'blogger@example.com', password: 'longenoughpassword' };
+    const credentials = { email: 'blogger@example.com', password: 'longenoughpassword', consent: true };
 
     it('is closed when no invite code is configured', async () => {
       const app: Express = createApp(db);
@@ -294,7 +294,7 @@ describe('the credential-minting routes in production', () => {
       // have made signup an oracle.
       const unknown = await request(app)
         .post('/api/auth/signup')
-        .send({ email: 'nobody@example.com', password: credentials.password });
+        .send({ email: 'nobody@example.com', password: credentials.password, consent: true });
       expect(unknown.status).toBe(probe.status);
       expect(unknown.body.error).toBe(probe.body.error);
     });

@@ -30,7 +30,7 @@ describe('role enforcement over HTTP', () => {
   });
 
   async function signUpAs(role: Role, email: string) {
-    const res = await request(app).post('/api/auth/signup').send({ email, password: 'correct-horse' });
+    const res = await request(app).post('/api/auth/signup').send({ email, password: 'correct-horse', consent: true });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     // Signup always makes an owner — it creates the workspace. A weaker role
     // arrives by invitation, which does not exist yet, so it is set directly.

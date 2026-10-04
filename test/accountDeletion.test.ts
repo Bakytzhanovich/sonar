@@ -30,7 +30,7 @@ describe('erasing an account', () => {
   /** A signed-in owner with something in every part of the product. */
   async function fullAccount(email: string) {
     const agent = request.agent(app);
-    const signup = await agent.post('/api/auth/signup').send({ email, password: 'correct-horse-1' });
+    const signup = await agent.post('/api/auth/signup').send({ email, password: 'correct-horse-1', consent: true });
     const tenantId = signup.body.tenant.id as string;
     const demo = await agent.post('/api/onboarding/demo-workspace').send({ keyword: 'цена', replyText: 'Привет' });
     await agent.post(`/api/bots/${demo.body.bot.id}/simulate-incoming`).send({ externalUserId: 'buyer', messageText: 'цена?' });

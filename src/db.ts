@@ -314,6 +314,8 @@ const MIGRATIONS: string[] = [
   // speech out of the shared transcript cache (accountDeletion.ts).
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS audio_hash TEXT`,
   `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS audio_hash TEXT`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_consent_at TIMESTAMPTZ`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_policy_version TEXT`,
 ];
 
 async function applyMigrations(client: PoolClient): Promise<void> {

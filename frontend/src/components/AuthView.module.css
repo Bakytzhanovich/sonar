@@ -142,3 +142,15 @@
   margin-top: var(--space-3);
   align-self: flex-start;
 }
+
+.consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--foreground-muted);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  cursor: pointer;
+}
+.consent input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent); }
+.consent a { color: var(--accent); }

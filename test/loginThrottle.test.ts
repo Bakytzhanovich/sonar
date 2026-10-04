@@ -53,7 +53,7 @@ describe('POST /api/auth/login throttling', () => {
   beforeEach(async () => {
     db = await createTestDb();
     app = createApp(db);
-    await request(app).post('/api/auth/signup').send({ email, password });
+    await request(app).post('/api/auth/signup').send({ email, password, consent: true });
   });
   afterEach(async () => { await dropTestDb(db); });
 

@@ -520,6 +520,7 @@ export default function LandingView() {
           </a>
           <p>Чат-бот, CRM и контент-план в одной цепочке данных.</p>
           <a href="#inside">Текущий статус продукта</a>
+          <a href="/privacy">Конфиденциальность</a>
         </div>
       </footer>
     </div>

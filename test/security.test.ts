@@ -263,7 +263,7 @@ describe('security: login does not leak which emails are registered', () => {
   // comparison happens at all: an unknown email must cost a real verify,
   // so it cannot be answered near-instantly.
   it('spends comparable time on an unknown email as on a wrong password', async () => {
-    await request(app).post('/api/auth/signup').send({ email: 'real@example.com', password: 'correct-horse' });
+    await request(app).post('/api/auth/signup').send({ email: 'real@example.com', password: 'correct-horse', consent: true });
 
     const t0 = Date.now();
     const wrongPassword = await request(app).post('/api/auth/login').send({ email: 'real@example.com', password: 'nope-nope-nope' });
