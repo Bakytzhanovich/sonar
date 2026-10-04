@@ -60,7 +60,7 @@ const SELF_SCOPED_WRITES = [
  * invite is an editor who can promote themselves, and the distinction between
  * the roles stops meaning anything.
  */
-const OWNER_ONLY = [/^\/api\/members(\/|$)/];
+const OWNER_ONLY = [/^\/api\/members(\/|$)/, /^\/api\/account$/];
 
 /**
  * Paths everyone may read but only an owner may change.

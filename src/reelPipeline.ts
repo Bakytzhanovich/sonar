@@ -114,6 +114,8 @@ export async function processReelJob(db: Db, job: ReelAnalysis, deps: ReelDeps):
     // or one they already ran through the editor, is not paid for again. A
     // cache that cannot be read is a missed saving, never a failed job.
     const audioHash = await hashAudioFile(audioPath);
+    // Recorded so erasing the account can find this transcript in the cache.
+    await exec(db, `UPDATE reel_analyses SET audio_hash = ? WHERE id = ?`, audioHash, job.id).catch(() => {});
     let transcript = await readCachedTranscript(db, audioHash).catch(() => null);
     if (!transcript) {
       try {

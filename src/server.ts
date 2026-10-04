@@ -1,5 +1,6 @@
 import { createApp } from './api';
 import { createDb } from './db';
+import { purgeTranscriptCache } from './accountDeletion';
 import { maintainTokens } from './platformAccounts';
 import { publishDuePosts } from './publisher';
 import { keyringFromEnv } from './tokenVault';
@@ -59,6 +60,18 @@ async function main() {
       })
       .catch((err) => console.error('[render] tick failed', err));
   }, RENDER_POLL_INTERVAL_MS);
+
+  // Cached transcripts are the text of people's speech, kept to spare a second
+  // transcription bill — for a month, not forever. Here rather than in the
+  // worker: the worker's database role may only add to the cache.
+  const purge = () =>
+    purgeTranscriptCache(db)
+      .then((removed) => {
+        if (removed > 0) console.log(`[transcripts] из кэша удалено расшифровок: ${removed}`);
+      })
+      .catch((err) => console.error('[transcripts] purge failed', err));
+  void purge();
+  setInterval(purge, TOKEN_UPKEEP_INTERVAL_MS);
 
   // Connected accounts' tokens: renewed before they expire, marked for the
   // person to reconnect when they cannot be, re-sealed after a key rotation.

@@ -245,6 +245,9 @@ CREATE TABLE reel_analyses (
   failure_reason   TEXT,
   attempt_count    INTEGER NOT NULL DEFAULT 0,
   claimed_at       TIMESTAMPTZ,
+  -- The recording's key in transcript_cache, so erasing the account can
+  -- take its transcript out of the cache too.
+  audio_hash       TEXT,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -455,6 +458,9 @@ CREATE TABLE video_edit_jobs (
   -- URL would expire while the row outlives it. Rendered into a URL on read.
   source_object_key TEXT,
   output_object_key TEXT,
+  -- The audio's fingerprint in transcript_cache, so erasing the account can
+  -- remove its transcript from that shared cache.
+  audio_hash        TEXT,
   -- Which stage the job is in, and the accumulated per-stage results
   -- (probe output, transcript, cut plan). Checkpointing these is what makes a
   -- retry resume at the failed stage instead of paying for transcription

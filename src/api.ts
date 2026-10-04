@@ -48,6 +48,7 @@ import { PLATFORM_NAME, publishDuePosts } from './publisher';
 import { authorizeUrl, connectWithCode, instagramConfigFromEnv, signState, verifyState, type InstagramAppConfig } from './instagramAuth';
 import { listAccounts, saveConnectedAccount } from './platformAccounts';
 import { keyringFromEnv, type TokenKeyring } from './tokenVault';
+import { eraseAccount } from './accountDeletion';
 import { eraseContactFromPlan, generateContentPlan, getContentPlan, NotEnoughDataError, planReadiness, scriptFor, writeTopicScript } from './contentTopics';
 import { addDays, autoFillWeek, isDay, listEntries } from './contentCalendar';
 import { computeContentRecommendations } from './contentRecommendations';
@@ -2055,6 +2056,48 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // posts. The server-side timer in server.ts keeps the unscoped sweep.
   app.post('/api/scheduled-posts/process-due', asyncHandler(async (_req, res) => {
     res.json(await publishDuePosts(db, new Date(), res.locals.tenantId as string));
+  }));
+
+  // ---- Erasing the account ------------------------------------------------
+  // The customer's own right to erasure (Kazakhstan's personal data law):
+  // the whole workspace, every row and every file, on the owner's request.
+  //
+  // Owner-only (roles.ts), a signed-in person rather than an API key, and the
+  // password asked again: this cannot be undone, and a session left open on
+  // a shared computer must not be enough to do it. Rate-limited like sign-in,
+  // because a password check is a password check.
+  app.delete('/api/account', authRateLimit, asyncHandler(async (req, res) => {
+    const tenantId = res.locals.tenantId as string;
+    const session = res.locals.session as { userId: string } | undefined;
+    if (!session) return res.status(403).json({ error: 'Удалить аккаунт может только владелец, вошедший по паролю' });
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const user = await queryOne<{ password_hash: string }>(db, `SELECT password_hash FROM users WHERE id = ? AND tenant_id = ?`, session.userId, tenantId);
+    if (!user || !password || !(await verifyPassword(password, user.password_hash))) {
+      // 403, not 401: the session is valid, and the page treats a 401 as
+      // "signed out" — a typo would otherwise end the session.
+      return res.status(403).json({ error: 'Неверный пароль' });
+    }
+
+    const { objectKeys } = await eraseAccount(db, tenantId);
+
+    // After the rows are gone, and never fatal: see accountDeletion.ts.
+    const storage = storageConfigFromEnv();
+    for (const key of objectKeys) {
+      const removal = storage
+        ? deleteObject(storage, key)
+        : localMedia
+          ? fsp.rm(resolveKeyPath(localMedia, key), { force: true })
+          : Promise.resolve();
+      await removal.catch((err: unknown) =>
+        console.warn(`[account] ${tenantId}: file not removed: ${err instanceof Error ? err.message : String(err)}`)
+      );
+    }
+    if (localMedia) {
+      await fsp.rm(resolveKeyPath(localMedia, `tenants/${tenantId}`), { recursive: true, force: true }).catch(() => {});
+    }
+
+    clearSessionCookie(res);
+    res.status(204).end();
   }));
 
   // ---- Module 5: connected accounts -------------------------------------

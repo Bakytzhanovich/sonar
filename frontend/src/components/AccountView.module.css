@@ -1,0 +1,43 @@
+/* The account screen. The one red on it is the irreversible button — the
+   screen's accent is the danger, so nothing else competes with it. */
+
+.page { min-height: 100dvh; display: flex; flex-direction: column; background: var(--surface); color: var(--foreground); }
+.main { display: flex; flex-direction: column; gap: 16px; width: 100%; max-width: 640px; margin: 0 auto; padding: clamp(20px, 4vw, 44px); }
+
+.card { display: flex; flex-direction: column; gap: 12px; padding: 22px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--background); }
+.card p { margin: 0; line-height: 1.5; }
+.heading { margin: 0; font-size: var(--text-xl); letter-spacing: -0.02em; }
+.muted { margin: 0; color: var(--foreground-muted); font-size: var(--text-sm); }
+
+.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: var(--text-sm); }
+.facts dt { color: var(--foreground-muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.link { color: var(--accent); text-underline-offset: 3px; }
+
+@media (max-width: 480px) {
+  /* Label above value: beside it, an email breaks mid-word. */
+  .facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .facts dd + dt { margin-top: 8px; }
+}
+
+.danger { border-color: var(--status-failed); }
+.dangerTitle { margin: 0; color: var(--status-failed); font-size: var(--text-lg); }
+.list { margin: 0; padding-left: 20px; font-size: var(--text-sm); line-height: 1.6; }
+
+.form { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: var(--text-sm); font-weight: 650; }
+.field input { width: 100%; font-weight: 400; }
+.error { color: var(--status-failed); font-size: var(--text-sm); }
+
+button.eraseButton {
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: #fff;
+  background: var(--status-failed);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+button.eraseButton:disabled { opacity: .4; cursor: default; }

@@ -394,6 +394,8 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // tenants with the same clip, should not pay twice or get different
     // words than last time.
     const audioHash = await hashAudioFile(audioPath);
+    // Recorded so erasing the account can find this transcript in the cache.
+    await exec(db, `UPDATE video_edit_jobs SET audio_hash = ? WHERE id = ?`, audioHash, job.id).catch(() => {});
     // A cache that cannot be read is a missed saving, never a failed render.
     // It is also how this first breaks when the worker runs under the
     // least-privilege role and someone forgets to grant the new table: the

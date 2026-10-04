@@ -11,7 +11,7 @@ import styles from './ModuleNav.module.css';
 // module screens, so passing it just renders the nav with nothing marked
 // active, letting onboarding link out to every module without claiming to
 // be one.
-export type ModuleRoute = '/bot' | '/crm' | '/reels' | '/carousels' | '/scheduler' | '/content-plan' | '/video' | '/onboarding';
+export type ModuleRoute = '/bot' | '/crm' | '/reels' | '/carousels' | '/scheduler' | '/content-plan' | '/video' | '/onboarding' | '/account';
 
 const ITEMS: { href: ModuleRoute; label: string }[] = [
   { href: '/bot', label: 'Редактор бота' },
@@ -64,6 +64,12 @@ export default function ModuleNav({ current }: { current: ModuleRoute }) {
             </Link>
           )
         )}
+        {/* Beside the way out, where a person looks for their account. */}
+        {current === '/account' ? (
+          <span className={styles.active} aria-current="page">Аккаунт</span>
+        ) : (
+          <Link href="/account" className={styles.link}>Аккаунт</Link>
+        )}
         <LogoutButton />
       </nav>
 
@@ -84,6 +90,14 @@ export default function ModuleNav({ current }: { current: ModuleRoute }) {
                 {item.label}
               </Link>
             ))}
+            <Link
+              href="/account"
+              className={`${styles.mobileLink} ${current === '/account' ? styles.mobileActive : ''}`}
+              aria-current={current === '/account' ? 'page' : undefined}
+              onClick={closeMenu}
+            >
+              Аккаунт
+            </Link>
             <LogoutButton variant="stacked" />
           </div>
         )}

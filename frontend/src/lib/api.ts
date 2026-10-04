@@ -820,6 +820,8 @@ export const api = {
 
   logout: (config: ApiConfig) => apiRequest(config, 'POST', '/api/auth/logout'),
 
+  deleteAccount: (config: ApiConfig, password: string) => apiRequest(config, 'DELETE', '/api/account', { password }),
+
   approveCaptions: (config: ApiConfig, jobId: string, lines: Array<{ text: string }>) =>
     apiRequest(config, 'PUT', `/api/video-edit-jobs/${jobId}/captions`, { lines }),
 

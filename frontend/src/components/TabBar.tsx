@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Bot, Film, Images, LayoutGrid, Send, Sparkles, Users, Video } from 'lucide-react';
+import { Bot, Film, Images, LayoutGrid, Send, Sparkles, UserRound, Users, Video } from 'lucide-react';
 import type { ModuleRoute } from './ModuleNav';
 import LogoutButton from './LogoutButton';
 import { useSession } from '@/lib/useSession';
@@ -33,7 +33,7 @@ const SECONDARY: { href: ModuleRoute; label: string; Icon: typeof Bot }[] = [
 export default function TabBar({ current }: { current: ModuleRoute }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [session] = useSession();
-  const moreIsActive = SECONDARY.some((item) => item.href === current);
+  const moreIsActive = current === '/account' || SECONDARY.some((item) => item.href === current);
 
   return (
     <>
@@ -64,6 +64,14 @@ export default function TabBar({ current }: { current: ModuleRoute }) {
                 nothing. */}
             {session && (
               <div className={styles.sheetFooter}>
+                <Link
+                  href="/account"
+                  className={`${styles.sheetItem} ${current === '/account' ? styles.sheetItemActive : ''}`}
+                  onClick={() => setMoreOpen(false)}
+                >
+                  <UserRound size={18} strokeWidth={1.75} />
+                  Аккаунт
+                </Link>
                 <LogoutButton variant="stacked" />
               </div>
             )}

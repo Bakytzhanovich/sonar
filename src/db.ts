@@ -310,6 +310,10 @@ const MIGRATIONS: string[] = [
   // When the account last started a publish — the slot publisher.ts claims
   // atomically to keep posts to one account spaced out.
   `ALTER TABLE platform_accounts ADD COLUMN IF NOT EXISTS last_publish_slot_at TIMESTAMPTZ`,
+  // Which cached transcript is whose, so erasing an account can take its
+  // speech out of the shared transcript cache (accountDeletion.ts).
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS audio_hash TEXT`,
+  `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS audio_hash TEXT`,
 ];
 
 async function applyMigrations(client: PoolClient): Promise<void> {
