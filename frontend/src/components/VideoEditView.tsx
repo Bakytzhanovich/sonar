@@ -894,14 +894,6 @@ export default function VideoEditView() {
                           strips transcripts out (they are tens of kilobytes
                           per job and nothing here shows them), and a job that
                           reached a plan necessarily has one. */}
-                      {/* Straight to the scheduler with this render chosen:
-                          posting it should not mean downloading the file and
-                          uploading it again. */}
-                      {j.pipeline === 'smart_cut' && j.status === 'completed' && (
-                        <a className={styles.jobSecondaryButton} href={`/scheduler?video=${encodeURIComponent(j.id)}`}>
-                          Запланировать публикацию
-                        </a>
-                      )}
                       {j.pipeline === 'smart_cut' && j.artifacts?.plan && (
                         <button
                           type="button"
@@ -910,6 +902,17 @@ export default function VideoEditView() {
                         >
                           Изменить монтаж
                         </button>
+                      )}
+                      {/* Straight to the scheduler with this render chosen:
+                          posting it should not mean downloading the file and
+                          uploading it again. Last in the row, furthest from
+                          the player: it is the one button that leaves the
+                          page, and the result gets watched before it gets
+                          posted. */}
+                      {j.pipeline === 'smart_cut' && j.status === 'completed' && (
+                        <a className={styles.jobSecondaryButton} href={`/scheduler?video=${encodeURIComponent(j.id)}`}>
+                          Запланировать публикацию
+                        </a>
                       )}
                       {j.pipeline !== 'smart_cut' && (
                         <span className={styles.jobOutputHint}>мок-ссылка, реального файла ещё нет</span>
