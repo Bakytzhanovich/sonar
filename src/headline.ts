@@ -7,17 +7,26 @@
 // whenever the cut changes, the headline is a fixed string somebody typed.
 // ffmpeg chains ass filters happily, so this costs nothing at render time.
 //
-// The band is reserved, not borrowed. A 16:9 source letterboxed into 9:16
-// already has black above it and the text would fit — but a clip shot
-// vertically on a phone has no bars at all, and the headline would land on the
-// speaker's face. ffmpeg.ts shrinks the picture to make room whenever there is
-// a headline to place.
+// The picture is never shrunk to make room. It used to be: a vertical clip
+// with a headline came back 844x1500 inside a 1080x1920 frame, black on three
+// sides, and clients read that as the product spoiling a video that was fine
+// when they uploaded it. Now the band uses black the letterboxing already
+// left, when there is enough of it, and otherwise sits over the top of the
+// picture with an outline and shadow to stay legible on any background.
 
 import { REFERENCE_FRAME, type FrameSize } from './aspect';
 import { headlineColour, headlineFont, headlineSize } from './headlineStyles';
 
 /** How much of the 1920-high frame the band takes. */
 export const HEADLINE_BAND_HEIGHT = 420;
+
+/**
+ * Where a band laid over the picture starts, in the 1920-high frame.
+ *
+ * Not the top edge: Reels, TikTok and Shorts draw their own header across the
+ * first ~100px, and a title under it is half covered the moment it is posted.
+ */
+export const HEADLINE_SAFE_TOP = 120;
 
 export interface HeadlineStyle {
   fontName: string;
@@ -37,6 +46,12 @@ export interface HeadlineStyle {
    * than staying at the edge with nothing underneath.
    */
   bandTop: number;
+  /**
+   * True when the band is drawn over the picture rather than over black, so
+   * the letters need an outline and a shadow to read against whatever the
+   * video happens to show behind them.
+   */
+  overPicture: boolean;
 }
 
 export const DEFAULT_HEADLINE_STYLE: HeadlineStyle = {
@@ -51,6 +66,7 @@ export const DEFAULT_HEADLINE_STYLE: HeadlineStyle = {
   playResY: 1920,
   bandHeight: HEADLINE_BAND_HEIGHT,
   bandTop: 0,
+  overPicture: false,
 };
 
 /**
@@ -79,67 +95,54 @@ export function headlineStyleFor(choice: {
  * The band's height in a frame of a given shape.
  *
  * Exported because two places need the same answer and they are in different
- * files: this module draws the text inside the band, and ffmpeg.ts shrinks the
- * picture to leave the band empty. Deriving it twice from the same formula is
- * how they drift, and the symptom would be a headline over the speaker's face
- * in one format only — visible nowhere except in a finished render.
+ * files: this module draws the text inside the band, and the pipeline keeps
+ * top-aligned captions clear of it. Deriving it twice from the same formula is
+ * how they drift.
  */
 export function bandHeightForFrame(frame: FrameSize): number {
   return Math.round(HEADLINE_BAND_HEIGHT * (frame.height / REFERENCE_FRAME.height));
 }
 
 export interface BandLayout {
-  /** Height the picture gives up so the band has somewhere to go. */
-  reserve: number;
   /** Where the picture's top edge lands in the finished frame. */
   pictureTop: number;
-  /** Where the band starts — directly above the picture, wherever that is. */
+  /** Where the band starts. */
   bandTop: number;
+  /** Whether the band covers part of the picture rather than only black. */
+  overPicture: boolean;
 }
 
 /**
- * Where the headline band goes, and what the picture pays for it.
+ * Where the headline band goes.
  *
- * Two things a client got wrong in turn, both of which look the same from the
- * outside — a title stranded at the top of the frame with the video far below
- * it — and neither of which is visible anywhere but in a finished render.
+ * The picture keeps its full fitted size whatever the headline does — what
+ * ffmpeg.ts does with a source is decided by the source and the frame alone.
+ * That leaves two cases:
  *
- * The first is how much room to take. A source that does not share the frame's
- * shape is letterboxed already, and that black is room the headline can simply
- * use; taking the band on top of it counts the same emptiness twice. Their clip
- * was 3840x2160 in a vertical frame: 656px of black above it, a band wanting
- * 420, and 420 more reserved anyway. The reserve here is only the shortfall,
- * derived rather than tuned — the picture ends up centred in what remains, so
- * its top edge lands at (frameHeight + reserve - pictureHeight) / 2, and this
- * is the smallest reserve that keeps that clear of the band.
+ * - The letterboxing left at least a band's worth of black above the picture
+ *   (a landscape clip in a vertical frame). The band sits directly on top of
+ *   the picture, in that black — not pinned to the frame's edge, which left a
+ *   client's title stranded with the video floating far below it.
+ * - It did not (anything shot upright on a phone, where there is no black at
+ *   all). The band goes over the top of the picture, below the platforms' own
+ *   header, and the text gets an outline so it reads over any background.
  *
- * The second is where to put it. Reserving nothing leaves the picture floating
- * in the middle of the frame, and a band still pinned to the top edge has
- * nothing underneath it — the gap moves from below the headline to above it and
- * the complaint survives the fix. So the band sits against the picture. For a
- * source that fills the frame that is the top edge anyway, which is why this
- * changes nothing for anything shot on a phone.
+ * An unknown source shape is treated as filling the frame — the commonest
+ * upload by far, and the case where the result is still a usable video.
  */
 export function bandLayoutFor(frame: FrameSize, source: FrameSize | null, bandHeight: number): BandLayout {
-  if (bandHeight <= 0) return { reserve: 0, pictureTop: 0, bandTop: 0 };
-  // Without the source's shape there is no letterbox to measure, so the band
-  // takes its own room at the top of the frame — what every render did before
-  // this, and the safe answer when the probe could not read the dimensions.
-  if (!source || !source.width || !source.height) {
-    return { reserve: bandHeight, pictureTop: bandHeight, bandTop: 0 };
-  }
+  const fitted =
+    source && source.width && source.height
+      ? Math.min(frame.height, (frame.width * source.height) / source.width)
+      : frame.height;
+  const pictureTop = Math.round((frame.height - fitted) / 2);
+  if (bandHeight <= 0) return { pictureTop, bandTop: 0, overPicture: false };
 
-  const fittedToWidth = (frame.width * source.height) / source.width;
-  const reserve = Math.round(
-    Math.min(bandHeight, Math.max(0, 2 * bandHeight - frame.height + fittedToWidth))
-  );
-  const fitted = Math.min(frame.height - reserve, fittedToWidth);
-  const pictureTop = Math.round((frame.height + reserve - fitted) / 2);
-  // The band sits against the picture rather than against the frame. Pinning
-  // it to the top instead is what left a client's title stranded at the very
-  // edge with the video floating in the middle of the frame — the gap the
-  // reserve fix took out from under the headline simply reappeared above it.
-  return { reserve, pictureTop, bandTop: Math.max(0, pictureTop - bandHeight) };
+  if (pictureTop >= bandHeight) {
+    return { pictureTop, bandTop: pictureTop - bandHeight, overPicture: false };
+  }
+  const safeTop = Math.round(HEADLINE_SAFE_TOP * (frame.height / REFERENCE_FRAME.height));
+  return { pictureTop, bandTop: safeTop, overPicture: true };
 }
 
 /**
@@ -276,6 +279,16 @@ export function sanitizeHeadline(text: string): string {
     .slice(0, HEADLINE_MAX_CHARS);
 }
 
+// Proportional to the type rather than fixed, so a small headline in a 1:1
+// frame is not drawn with the same heavy stroke as a large one in 9:16.
+function outlineFor(fontSize: number): number {
+  return Math.max(2, Math.round(fontSize * 0.05));
+}
+
+function shadowFor(fontSize: number): number {
+  return Math.max(1, Math.round(fontSize * 0.04));
+}
+
 // One event, held for the whole clip. An explicit end far past any accepted
 // source is simpler than threading the duration down here, and a headline that
 // outlives the video by hours is never seen.
@@ -336,9 +349,10 @@ export function buildHeadlineAss(rawText: string, style: HeadlineStyle = DEFAULT
   const styles = [
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    // No outline: the band behind the text is already solid black, and an
-    // outline over it only thickens the letterforms.
-    `Style: Headline,${style.fontName},${fontSize},${style.primaryColour},${style.primaryColour},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,5,60,60,0,1`,
+    // Over black the letters need nothing: an outline there only thickens
+    // them. Over the picture they need both — the outline for a bright
+    // background, the soft shadow to lift them off a busy one.
+    `Style: Headline,${style.fontName},${fontSize},${style.primaryColour},${style.primaryColour},&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${style.overPicture ? outlineFor(fontSize) : 0},${style.overPicture ? shadowFor(fontSize) : 0},5,60,60,0,1`,
   ].join('\n');
 
   // \an5 centres on \pos, which is the middle of the band — so one line and

@@ -521,9 +521,8 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   });
 
   // Where the picture and the band land in this frame. Computed once, from the
-  // probe, and shared by the three things that have to agree about it: the
-  // .ass that draws the headline, the captions that must stay clear of it, and
-  // the filter graph that leaves it empty.
+  // probe, and shared by the two things that have to agree about it: the .ass
+  // that draws the headline and the captions that must stay clear of it.
   const sourceSize =
     probeResult.width && probeResult.height
       ? { width: probeResult.width, height: probeResult.height }
@@ -641,6 +640,7 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
         // frame from the source's own shape, and scaling it from the reference
         // frame would be scaling a number that was never in that space.
         bandTop: bandLayout.bandTop,
+        overPicture: bandLayout.overPicture,
       })
     : null;
   if (headlineAss) {
@@ -666,7 +666,6 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       segments: plan.segments,
       expectedDurationSec: plan.keptDurationSec,
       subtitlePath,
-      // Its presence is also what reserves the band in the filter graph.
       headlinePath,
       // The same frame the two .ass files above were built for. libass sizes
       // their contents against their own PlayRes, so padding to a different
@@ -674,7 +673,6 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       frame,
       // How much black the letterboxing already leaves is what decides whether
       // the headline needs room taken from the picture at all.
-      sourceSize,
       // A missing model file must not fail the render: the job still produces
       // a correct cut, just without the noise removal it asked for.
       // The recorded decision, not a re-evaluation: the card already told the

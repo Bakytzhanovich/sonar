@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { KeepSegment } from './smartCut';
-import { bandHeightForFrame, bandLayoutFor } from './headline';
 import type { FrameSize } from './aspect';
 
 // Thin wrapper around the ffmpeg/ffprobe binaries. Deliberately not a library
@@ -217,7 +216,14 @@ export async function probe(filePath: string): Promise<ProbeResult> {
 
   const parsed = JSON.parse(stdout) as {
     format?: { duration?: string };
-    streams?: Array<{ codec_type?: string; width?: number; height?: number; duration?: string }>;
+    streams?: Array<{
+      codec_type?: string;
+      width?: number;
+      height?: number;
+      duration?: string;
+      side_data_list?: Array<{ rotation?: number }>;
+      tags?: { rotate?: string };
+    }>;
   };
 
   const streams = parsed.streams ?? [];
@@ -229,11 +235,25 @@ export async function probe(filePath: string): Promise<ProbeResult> {
   // neither is present the file is not something we can plan an edit against.
   const durationSec = Number(parsed.format?.duration ?? video?.duration ?? NaN);
 
+  // A phone shooting upright often stores the frame lying on its side —
+  // 1920x1080 plus "turn this 90°" — and ffmpeg applies the turn when it
+  // decodes. The stored size is then the wrong way round for everything that
+  // lays the frame out: a vertical clip read as landscape got no headline band
+  // and had its title drawn over the speaker, while the browser preview, which
+  // honours the turn, showed something else. Newer files carry the turn as a
+  // display matrix, older ones as a `rotate` tag.
+  const rotation = Number(
+    video?.side_data_list?.find((d) => typeof d.rotation === 'number')?.rotation ?? video?.tags?.rotate ?? 0
+  );
+  const quarterTurn = Math.abs(Math.round(rotation / 90)) % 2 === 1;
+  const width = video?.width ?? null;
+  const height = video?.height ?? null;
+
   return {
     durationSec,
     hasAudio,
-    width: video?.width ?? null,
-    height: video?.height ?? null,
+    width: quarterTurn ? height : width,
+    height: quarterTurn ? width : height,
   };
 }
 
@@ -370,10 +390,7 @@ export function buildConcatFilter(
   denoiseModelPath?: string,
   cleanedAudio = false,
   headlinePath?: string,
-  frame: FrameSize = DEFAULT_FRAME,
-  // The source's own shape, which decides how much black the letterboxing
-  // already leaves for the headline. Absent: the band takes its own room.
-  sourceSize?: FrameSize | null
+  frame: FrameSize = DEFAULT_FRAME
 ): string {
   const parts: string[] = [];
   const labels: string[] = [];
@@ -416,23 +433,15 @@ export function buildConcatFilter(
   // and re-encoding the whole video twice.
   const fontsDir = `:fontsdir=${escapeFilterPath(FONTS_DIR)}`;
   const subtitleFilter = subtitlePath ? `,ass=filename=${escapeFilterPath(subtitlePath)}${fontsDir}` : '';
-  // A headline needs room of its own, and the picture gives up only the part
-  // of it the letterboxing has not already left empty — see bandLayoutFor.
-  // Reserving the whole band regardless is what put 446px of black between a
-  // client's headline and their video.
-  const band = headlinePath ? bandHeightForFrame(frame) : 0;
-  const reserve = headlinePath ? bandLayoutFor(frame, sourceSize ?? null, band).reserve : 0;
-  const videoHeight = frame.height - reserve;
-  // Centred in what is left, which is the whole frame when nothing had to be
-  // reserved. The literal height rather than pad's own `oh`: they differ by
-  // exactly the reserve, and using `oh` would drop the picture half of it too
-  // low.
-  const offsetY = reserve ? `${reserve}+(${videoHeight}-ih)/2` : '(oh-ih)/2';
+  // No room is taken from the picture for a headline: it goes into black the
+  // letterboxing already left, or over the top of the picture — see
+  // bandLayoutFor. Shrinking a vertical clip to make a band for it is what
+  // clients saw as the product spoiling a video that was fine on upload.
   // After the captions, so the band is drawn over anything that overlaps it.
   const headlineFilter = headlinePath ? `,ass=filename=${escapeFilterPath(headlinePath)}${fontsDir}` : '';
   parts.push(
-    `[vcat]scale=${frame.width}:${videoHeight}:force_original_aspect_ratio=decrease,` +
-      `pad=${frame.width}:${frame.height}:(ow-iw)/2:${offsetY},fps=${OUTPUT_FPS}` +
+    `[vcat]scale=${frame.width}:${frame.height}:force_original_aspect_ratio=decrease,` +
+      `pad=${frame.width}:${frame.height}:(ow-iw)/2:(oh-ih)/2,fps=${OUTPUT_FPS}` +
       `${subtitleFilter}${headlineFilter},format=yuv420p[vout]`
   );
 
@@ -454,22 +463,18 @@ export interface RenderOptions {
   // timeline as the original. Takes precedence over denoiseModelPath: the
   // cleaning has happened, the graph only cuts and levels it.
   cleanedAudioPath?: string;
-  // Absolute path to an .ass drawing the headline band. Its presence is what
-  // reserves the strip at the top — without one the picture fills the frame.
+  // Absolute path to an .ass drawing the headline band, burned in after the
+  // captions so the band wins where the two overlap.
   headlinePath?: string;
   // Output frame. Must be the same shape the .ass files were built against:
   // libass sizes everything relative to their PlayRes, so a mismatch here
   // renders captions at the wrong size and says nothing about it.
   frame?: FrameSize;
-  // The source's shape, from the probe. Decides how much of the headline band
-  // has to be taken out of the picture and how much the letterboxing already
-  // provides.
-  sourceSize?: FrameSize | null;
   onProgress?: (fraction: number) => void;
 }
 
 export async function renderSegments(options: RenderOptions): Promise<void> {
-  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, headlinePath, frame = DEFAULT_FRAME, sourceSize, onProgress } = options;
+  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, headlinePath, frame = DEFAULT_FRAME, onProgress } = options;
   if (segments.length === 0) throw new FfmpegError('no segments to render', '');
 
   // The graph is written to a file rather than passed as an argument: at a
@@ -478,7 +483,7 @@ export async function renderSegments(options: RenderOptions): Promise<void> {
   const filterPath = path.join(workDir, 'filter.txt');
   await fs.writeFile(
     filterPath,
-    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath), headlinePath, frame, sourceSize),
+    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath), headlinePath, frame),
     'utf-8'
   );
 

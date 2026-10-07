@@ -44,8 +44,8 @@ export default function FramePreview({
   fontEmRatios: Record<string, number>;
 }) {
   // The source's own shape, known once the browser has read the file's
-  // header. Until then the band takes its full room at the top, which is what
-  // the renderer does too when it cannot measure the source.
+  // header. Until then it is taken to fill the frame, which is what the
+  // renderer assumes too when it cannot measure the source.
   const [source, setSource] = useState<{ width: number; height: number } | null>(null);
 
   const frame = aspectRatioFor(aspectRatio);
@@ -77,10 +77,10 @@ export default function FramePreview({
 
   return (
     <div className={styles.frame} style={{ aspectRatio: `${frame.width} / ${frame.height}` }}>
-      {/* The picture's box is the frame minus what the band reserves, and the
-          video is fitted inside it — the same "scale into the space left,
-          centre it there" the ffmpeg filter graph does. */}
-      <div className={styles.picture} style={{ top: pct(layout.reserve), height: pct(frame.height - layout.reserve) }}>
+      {/* The picture fitted into the whole frame and centred — the same
+          scale-and-pad the ffmpeg filter graph does. The headline never takes
+          room from it. */}
+      <div className={styles.picture} style={{ top: 0, height: '100%' }}>
         <video
           className={styles.video}
           src={src}
@@ -96,7 +96,7 @@ export default function FramePreview({
 
       {lines.length > 0 && (
         <div
-          className={styles.band}
+          className={`${styles.band} ${layout.overPicture ? styles.bandOverPicture : ''}`}
           style={{
             top: pct(layout.bandTop),
             height: pct(band),

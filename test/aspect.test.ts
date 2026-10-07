@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { aspectRatioFor, ASPECT_RATIOS, isAspectRatioId, REFERENCE_FRAME } from '../src/aspect';
 import { DEFAULT_SUBTITLE_STYLE, scaleStyleToFrame } from '../src/subtitles';
-import { bandHeightForFrame, bandLayoutFor, clearOfHeadline, DEFAULT_HEADLINE_STYLE, scaleHeadlineToFrame } from '../src/headline';
+import { bandHeightForFrame, bandLayoutFor, clearOfHeadline, DEFAULT_HEADLINE_STYLE, HEADLINE_SAFE_TOP, scaleHeadlineToFrame } from '../src/headline';
 import { styleForPreset } from '../src/subtitlePresets';
 import { applyPosition } from '../src/subtitlePositions';
 
@@ -102,29 +102,45 @@ describe('scaleHeadlineToFrame', () => {
     expect(landscape.playResY).toBe(1080);
   });
 
-  it('takes no room from a picture the letterboxing already left space above', () => {
-    // The client's case: a 3840x2160 clip in a vertical frame sits 1080x607,
-    // so 656px of black is already there and the 420px band fits inside it.
-    // Reserving the band regardless shrank nothing but pushed the picture
-    // 210px further down, which is the gap they saw under the headline.
+  it('puts the band in the black above a letterboxed picture, right against it', () => {
+    // A 3840x2160 clip in a vertical frame sits 1080x608 with 656px of black
+    // above it — room for the 420px band. Pinned to the frame's edge instead,
+    // the title was stranded with the video floating far below it.
     const frame = aspectRatioFor('9_16');
     const band = bandHeightForFrame(frame);
-    expect(bandLayoutFor(frame, { width: 3840, height: 2160 }, band).reserve).toBe(0);
+    const layout = bandLayoutFor(frame, { width: 3840, height: 2160 }, band);
+
+    expect(layout.overPicture).toBe(false);
+    expect(layout.bandTop).toBeGreaterThan(0);
+    expect(layout.bandTop + band).toBe(layout.pictureTop);
   });
 
-  it('takes the whole band from a picture that fills the frame', () => {
-    // Shot vertically on a phone: no bars anywhere, so every pixel the
-    // headline occupies has to come out of the picture.
+  it('lays the band over a picture that fills the frame instead of shrinking it', () => {
+    // The client's complaint: a vertical phone clip came back 844x1500 with
+    // black on three sides so the headline could have a strip of its own.
+    // The picture keeps the whole frame; the headline goes over its top.
     const frame = aspectRatioFor('9_16');
     const band = bandHeightForFrame(frame);
-    expect(bandLayoutFor(frame, { width: 1080, height: 1920 }, band).reserve).toBe(band);
+    const layout = bandLayoutFor(frame, { width: 1080, height: 1920 }, band);
+
+    expect(layout.pictureTop).toBe(0);
+    expect(layout.overPicture).toBe(true);
   });
 
-  it('keeps the headline off the picture whatever shape the source is', () => {
-    // The property that matters, checked rather than reasoned about: after
-    // reserving, the picture's top edge must still clear the band. A headline
-    // over a speaker's forehead is invisible from here and obvious in the
-    // finished video.
+  it('keeps a band laid over the picture below the platforms\' own header', () => {
+    // Reels, TikTok and Shorts draw their header across the top of the
+    // video; a title at the very edge is half under it once posted.
+    for (const ratio of ASPECT_RATIOS) {
+      const band = bandHeightForFrame(ratio);
+      const layout = bandLayoutFor(ratio, { width: 1080, height: 1920 }, band);
+      if (!layout.overPicture) continue;
+      expect(layout.bandTop).toBe(Math.round(HEADLINE_SAFE_TOP * (ratio.height / REFERENCE_FRAME.height)));
+    }
+  });
+
+  it('never moves the picture to make room for a headline', () => {
+    // Where the picture lands is decided by the source and the frame alone —
+    // the same centring the filter graph does with no headline at all.
     for (const ratio of ASPECT_RATIOS) {
       const band = bandHeightForFrame(ratio);
       for (const source of [
@@ -135,53 +151,30 @@ describe('scaleHeadlineToFrame', () => {
         { width: 1080, height: 1520 },
         { width: 2160, height: 3840 },
       ]) {
-        const reserve = bandLayoutFor(ratio, source, band).reserve;
-        const fitted = Math.min(
-          ratio.height - reserve,
-          (ratio.width * source.height) / source.width
-        );
-        const top = (ratio.height + reserve - fitted) / 2;
-        expect(top).toBeGreaterThanOrEqual(band - 1);
+        const fitted = Math.min(ratio.height, (ratio.width * source.height) / source.width);
+        const expectedTop = Math.round((ratio.height - fitted) / 2);
+        expect(bandLayoutFor(ratio, source, band).pictureTop).toBe(expectedTop);
+        expect(bandLayoutFor(ratio, source, 0).pictureTop).toBe(expectedTop);
       }
     }
   });
 
-  it('sits the band against the picture, not against the frame', () => {
-    // The second half of the same complaint. Reserving nothing leaves a
-    // letterboxed picture floating in the middle of the frame; a band still
-    // pinned to the top edge then has nothing under it, and the gap simply
-    // moves from below the headline to above it.
-    const frame = aspectRatioFor('9_16');
-    const band = bandHeightForFrame(frame);
-    const layout = bandLayoutFor(frame, { width: 3840, height: 2160 }, band);
-
-    expect(layout.bandTop).toBeGreaterThan(0);
-    // Directly above: the band's bottom edge is the picture's top edge.
-    expect(layout.bandTop + band).toBe(layout.pictureTop);
-  });
-
-  it('keeps the band at the top of the frame when the picture fills it', () => {
-    // A phone-shot vertical source has no black to sit in, so the band is at
-    // the frame's edge exactly as it always was.
-    const frame = aspectRatioFor('9_16');
-    const band = bandHeightForFrame(frame);
-    const layout = bandLayoutFor(frame, { width: 1080, height: 1920 }, band);
-    expect(layout.bandTop).toBe(0);
-    expect(layout.pictureTop).toBe(band);
-  });
-
-  it('never lets the band start above the frame', () => {
+  it('keeps the band inside the frame and says when it covers the picture', () => {
     for (const ratio of ASPECT_RATIOS) {
       const band = bandHeightForFrame(ratio);
       for (const source of [
         { width: 3840, height: 2160 },
         { width: 1080, height: 1920 },
         { width: 1440, height: 1080 },
+        { width: 1080, height: 1350 },
         { width: 2160, height: 3840 },
       ]) {
         const layout = bandLayoutFor(ratio, source, band);
         expect(layout.bandTop).toBeGreaterThanOrEqual(0);
-        expect(layout.bandTop + band).toBeLessThanOrEqual(layout.pictureTop + 1);
+        expect(layout.bandTop + band).toBeLessThanOrEqual(ratio.height);
+        // overPicture is what turns the outline on; wrong here means white
+        // letters on a white wall, or a heavy stroke on plain black.
+        expect(layout.overPicture).toBe(layout.bandTop + band > layout.pictureTop);
       }
     }
   });
@@ -199,19 +192,22 @@ describe('scaleHeadlineToFrame', () => {
     expect(cleared.marginV).toBeGreaterThan(layout.bandTop + band);
   });
 
-  it('falls back to the whole band when the source shape is unknown', () => {
-    // A probe that could not read the dimensions must not be answered with a
-    // guess that puts the headline on someone's face.
+  it('treats an unknown source shape as filling the frame', () => {
+    // The commonest upload by far, and the guess that still leaves a usable
+    // video: the picture untouched, the headline over its top.
     const frame = aspectRatioFor('9_16');
     const band = bandHeightForFrame(frame);
-    expect(bandLayoutFor(frame, null, band).reserve).toBe(band);
-    expect(bandLayoutFor(frame, { width: 0, height: 0 }, band).reserve).toBe(band);
+    for (const unknown of [null, { width: 0, height: 0 }]) {
+      const layout = bandLayoutFor(frame, unknown, band);
+      expect(layout.pictureTop).toBe(0);
+      expect(layout.overPicture).toBe(true);
+    }
   });
 
-  it('agrees with the band the filter graph reserves', () => {
-    // Two files compute this: headline.ts draws inside the band, ffmpeg.ts
-    // leaves it empty. If they ever disagree the headline lands on the
-    // speaker's face, and only a finished render shows it.
+  it('draws the headline in the band the captions are kept clear of', () => {
+    // Two places compute this: headline.ts draws inside the band, the
+    // pipeline pushes top captions below it. If they disagree the two sets of
+    // words overlap, and only a finished render shows it.
     for (const ratio of ASPECT_RATIOS) {
       expect(scaleHeadlineToFrame(DEFAULT_HEADLINE_STYLE, ratio).bandHeight).toBe(bandHeightForFrame(ratio));
     }

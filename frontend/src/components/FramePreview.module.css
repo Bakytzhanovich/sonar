@@ -36,6 +36,17 @@
   pointer-events: none;
 }
 
+/* Over the picture the renderer outlines the letters and drops a soft shadow
+   (outlineFor/shadowFor in headline.ts, about 5% and 4% of the type size).
+   em here is the headline's own size, so the stroke scales with it the same
+   way. Without this the preview would promise clean letters over a bright
+   background that the render then draws outlined — or the other way round. */
+.bandOverPicture {
+  -webkit-text-stroke: 0.1em #000;
+  paint-order: stroke fill;
+  text-shadow: 0.04em 0.04em 0.04em rgba(0, 0, 0, 0.5);
+}
+
 /* One line per span: the wrapping has already been done, by the renderer's own
    function, and the browser must not re-wrap it somewhere else. */
 .headlineLine { display: block; white-space: nowrap; }

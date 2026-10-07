@@ -530,7 +530,7 @@ export default function VideoEditView() {
                   />
                   <span className={styles.fieldHint}>
                     {headline
-                      ? `Полоса сверху, видео сдвинется вниз · ${headline.length}/${headlineMaxChars}`
+                      ? `Встанет сверху, видео останется целым · ${headline.length}/${headlineMaxChars}`
                       : 'Пусто — плашки не будет, видео займёт весь кадр'}
                   </span>
                 </label>
