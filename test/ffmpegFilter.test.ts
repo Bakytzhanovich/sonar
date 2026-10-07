@@ -70,6 +70,15 @@ describe('buildConcatFilter', () => {
     }
   });
 
+  it('drops baked-in bars before fitting, from both the picture and its fill', () => {
+    const filter = buildConcatFilter(segments, undefined, undefined, false, undefined, aspectRatioFor('9_16'), { x: 0, y: 420, width: 1080, height: 1080 });
+    expect(filter).toContain('[vcat]crop=1080:1080:0:420,split=2[fitfg][fitbg]');
+  });
+
+  it('crops nothing when no bars were found', () => {
+    expect(buildConcatFilter(segments)).toContain('[vcat]split=2[fitfg][fitbg]');
+  });
+
   it('never shrinks the picture to make room for a headline', () => {
     // A headline used to take a strip of the frame off the picture: a
     // vertical clip came back 844x1500 with black on three sides, which is

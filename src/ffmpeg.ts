@@ -119,6 +119,18 @@ export interface ProbeResult {
   hasAudio: boolean;
   width: number | null;
   height: number | null;
+  /**
+   * Black bars baked into the source itself, as the region worth keeping.
+   * Null when there are none; absent on a probe saved before this existed.
+   */
+  crop?: CropRect | null;
+}
+
+export interface CropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export class FfmpegError extends Error {
@@ -257,6 +269,101 @@ export async function probe(filePath: string): Promise<ProbeResult> {
   };
 }
 
+// Where in the clip the bar detector looks. Several points rather than one:
+// a dark opening shot reads as a black frame with a bright strip in it, and
+// only the picture's later moments say where the real edges are.
+const BAR_SAMPLE_POINTS = [0.1, 0.3, 0.5, 0.7, 0.9];
+// Frames per sample. cropdetect keeps the widest box it has seen across them,
+// which rides over a single dark frame within the sample.
+const BAR_SAMPLE_FRAMES = 4;
+/** Less than this share of a side removed is noise, not a bar. */
+const MIN_BAR_SHARE = 0.02;
+/**
+ * More than this share of a side "removed" is not a bar either — it is a
+ * dark video, and cropping it would throw away the picture.
+ */
+const MAX_BAR_SHARE = 0.6;
+
+/**
+ * Black bars baked into a source — a clip exported letterboxed, a screen
+ * recording of a vertical player — found so the render can drop them.
+ *
+ * Without this the bars are part of "the picture": fitted, centred and
+ * captioned like content. A client's clip with a third of its height black
+ * came back with the headline in that black and the video far below it, and
+ * nothing the layout does can tell black that was filmed from black that was
+ * added.
+ *
+ * Never fails the job: a detector that cannot run means no crop, which is
+ * exactly what every render did before it existed.
+ */
+export async function detectBars(inputPath: string, durationSec: number, size: { width: number | null; height: number | null }): Promise<CropRect | null> {
+  if (!size.width || !size.height || !Number.isFinite(durationSec) || durationSec <= 0) return null;
+  const samples: CropRect[] = [];
+  for (const point of BAR_SAMPLE_POINTS) {
+    try {
+      const { stderr } = await run(FFMPEG, [
+        '-hide_banner',
+        '-ss', (durationSec * point).toFixed(3),
+        '-i', inputPath,
+        '-frames:v', String(BAR_SAMPLE_FRAMES),
+        // limit 24 of 255 is "black" with room for compression noise; round
+        // 2 keeps the box on even pixels, which yuv420p needs; reset 0 keeps
+        // the widest box over the sample's frames.
+        '-vf', 'cropdetect=limit=24:round=2:reset=0',
+        '-an', '-f', 'null', '-',
+      ]);
+      const found = parseCropdetect(stderr);
+      if (found) samples.push(found);
+    } catch {
+      // One unreadable point says nothing about the others.
+    }
+  }
+  return mergeBarSamples(samples, { width: size.width, height: size.height });
+}
+
+/** The last box cropdetect reported, which with reset=0 is its widest. */
+export function parseCropdetect(stderr: string): CropRect | null {
+  const matches = [...stderr.matchAll(/crop=(-?\d+):(-?\d+):(-?\d+):(-?\d+)/g)];
+  const last = matches.at(-1);
+  if (!last) return null;
+  const [width, height, x, y] = last.slice(1, 5).map(Number);
+  // An all-black frame is reported as a negative or empty box.
+  if (width <= 0 || height <= 0 || x < 0 || y < 0) return null;
+  return { x, y, width, height };
+}
+
+/**
+ * One box from several samples, or null when cropping would do more harm
+ * than good.
+ *
+ * The union, not the average: anything visible at any sampled moment is
+ * picture, and a crop that cut it would cut it out of the whole video.
+ */
+export function mergeBarSamples(samples: CropRect[], size: { width: number; height: number }): CropRect | null {
+  if (samples.length === 0) return null;
+  const left = Math.min(...samples.map((r) => r.x));
+  const top = Math.min(...samples.map((r) => r.y));
+  const right = Math.min(size.width, Math.max(...samples.map((r) => r.x + r.width)));
+  const bottom = Math.min(size.height, Math.max(...samples.map((r) => r.y + r.height)));
+  const box = { x: left, y: top, width: right - left, height: bottom - top };
+
+  const removedX = 1 - box.width / size.width;
+  const removedY = 1 - box.height / size.height;
+  if (removedX > MAX_BAR_SHARE || removedY > MAX_BAR_SHARE) return null;
+  // Each axis on its own: a 2px sliver on the sides should not be cropped
+  // just because the top had a real bar.
+  const cropX = removedX >= MIN_BAR_SHARE;
+  const cropY = removedY >= MIN_BAR_SHARE;
+  if (!cropX && !cropY) return null;
+  return {
+    x: cropX ? box.x : 0,
+    y: cropY ? box.y : 0,
+    width: cropX ? box.width : size.width,
+    height: cropY ? box.height : size.height,
+  };
+}
+
 // Extracts mono 16kHz audio — the format Whisper wants. Sending the original
 // video to the transcription API instead would upload tens of megabytes per
 // job (and hit the API's 25MB limit on longer clips) to transmit information
@@ -390,7 +497,8 @@ export function buildConcatFilter(
   denoiseModelPath?: string,
   cleanedAudio = false,
   headlinePath?: string,
-  frame: FrameSize = DEFAULT_FRAME
+  frame: FrameSize = DEFAULT_FRAME,
+  crop?: CropRect | null
 ): string {
   const parts: string[] = [];
   const labels: string[] = [];
@@ -436,7 +544,7 @@ export function buildConcatFilter(
   // After the captions, so the band is drawn over anything that overlaps it.
   const headlineFilter = headlinePath ? `,ass=filename=${escapeFilterPath(headlinePath)}${fontsDir}` : '';
   parts.push(
-    `${buildFitChain('[vcat]', frame)},fps=${OUTPUT_FPS}` +
+    `${buildFitChain('[vcat]', frame, crop)},fps=${OUTPUT_FPS}` +
       `${subtitleFilter}${headlineFilter},format=yuv420p[vout]`
   );
 
@@ -459,13 +567,16 @@ export function buildConcatFilter(
  * featureless by design, so the detail lost is detail nobody sees, and it
  * keeps the extra pass cheap on a worker capped at two cores.
  */
-export function buildFitChain(input: string, frame: FrameSize): string {
+export function buildFitChain(input: string, frame: FrameSize, crop?: CropRect | null): string {
   // Even dimensions: the encoder rejects odd ones for yuv420p.
   const even = (n: number) => Math.max(2, 2 * Math.round(n / 2));
   const smallW = even(frame.width / 4);
   const smallH = even(frame.height / 4);
+  // Bars baked into the source go first, so neither the picture nor the fill
+  // behind it carries them — see detectBars.
+  const trim = crop ? `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y},` : '';
   return (
-    `${input}split=2[fitfg][fitbg];\n` +
+    `${input}${trim}split=2[fitfg][fitbg];\n` +
     `[fitbg]scale=${smallW}:${smallH}:force_original_aspect_ratio=increase,crop=${smallW}:${smallH},` +
     `gblur=sigma=10,eq=brightness=-0.12,scale=${frame.width}:${frame.height},setsar=1[fitblur];\n` +
     `[fitfg]scale=${frame.width}:${frame.height}:force_original_aspect_ratio=decrease,setsar=1[fitpic];\n` +
@@ -495,11 +606,13 @@ export interface RenderOptions {
   // libass sizes everything relative to their PlayRes, so a mismatch here
   // renders captions at the wrong size and says nothing about it.
   frame?: FrameSize;
+  // Bars baked into the source, from detectBars. Dropped before the fit.
+  crop?: CropRect | null;
   onProgress?: (fraction: number) => void;
 }
 
 export async function renderSegments(options: RenderOptions): Promise<void> {
-  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, headlinePath, frame = DEFAULT_FRAME, onProgress } = options;
+  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, headlinePath, frame = DEFAULT_FRAME, crop, onProgress } = options;
   if (segments.length === 0) throw new FfmpegError('no segments to render', '');
 
   // The graph is written to a file rather than passed as an argument: at a
@@ -508,7 +621,7 @@ export async function renderSegments(options: RenderOptions): Promise<void> {
   const filterPath = path.join(workDir, 'filter.txt');
   await fs.writeFile(
     filterPath,
-    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath), headlinePath, frame),
+    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath), headlinePath, frame, crop),
     'utf-8'
   );
 

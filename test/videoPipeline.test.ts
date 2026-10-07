@@ -45,6 +45,7 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
     ffmpeg: {
       available: async () => true,
       probe: async () => ({ durationSec: 6, hasAudio: true, width: 1080, height: 1920 }),
+      detectBars: async () => null,
       extractAudio: async (_input, output) => { await fs.writeFile(output, 'fake-audio'); },
       render: async ({ outputPath }) => { await fs.writeFile(outputPath, 'rendered'); },
       poster: async (_input, output) => { await fs.writeFile(output, 'poster-bytes'); },
@@ -215,6 +216,33 @@ describe('smart cut pipeline', () => {
     expect(render.mock.calls[0][0]).toMatchObject({
       segments: [{ start: 0, end: 1.12 }, { start: 4.88, end: 6 }],
     });
+  });
+
+  it('drops bars baked into the source and remembers the crop with the probe', async () => {
+    // A clip exported letterboxed: the black is part of the file, and only
+    // the detector can tell it from picture. The crop rides on the probe
+    // artifact so a revision crops the same way without looking again.
+    await seedJob(db);
+    const crop = { x: 0, y: 420, width: 1080, height: 1080 };
+    const render = vi.fn(async ({ outputPath }: { outputPath: string }) => { await fs.writeFile(outputPath, 'rendered'); });
+    await runSmartCutJobs(db, new Date(), deps({ ffmpeg: { ...deps().ffmpeg, detectBars: async () => crop, render: render as never } }));
+
+    expect(render.mock.calls[0][0]).toMatchObject({ crop });
+    const job = await readJob(db, 'job-1');
+    expect(job!.artifacts.probe?.crop).toEqual(crop);
+  });
+
+  it('renders uncropped when the bar detector fails', async () => {
+    // It is an improvement, not a requirement: a detector that cannot run
+    // must leave the render exactly as it was before detection existed.
+    await seedJob(db);
+    const render = vi.fn(async ({ outputPath }: { outputPath: string }) => { await fs.writeFile(outputPath, 'rendered'); });
+    const detectBars = async () => { throw new Error('cropdetect missing'); };
+    await runSmartCutJobs(db, new Date(), deps({ ffmpeg: { ...deps().ffmpeg, detectBars: detectBars as never, render: render as never } }));
+
+    const job = await readJob(db, 'job-1');
+    expect(job!.status).toBe('completed');
+    expect(render.mock.calls[0][0]).toMatchObject({ crop: null });
   });
 
   it('fails a clip with no audio track before paying for transcription', async () => {

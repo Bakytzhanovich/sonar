@@ -325,7 +325,15 @@ export type VideoFailureReason =
 // writes its own key and never rewrites an earlier one, which is what lets a
 // retry skip straight to the stage that failed.
 export interface VideoJobArtifacts {
-  probe?: { durationSec: number; hasAudio: boolean; width: number | null; height: number | null };
+  probe?: {
+    durationSec: number;
+    hasAudio: boolean;
+    width: number | null;
+    height: number | null;
+    // Bars baked into the source (ffmpeg.ts detectBars). Absent on a probe
+    // saved before detection existed — those render uncropped, as they did.
+    crop?: { x: number; y: number; width: number; height: number } | null;
+  };
   transcript?: { words: Array<{ word: string; start: number; end: number }>; language: string | null };
   plan?: {
     segments: Array<{ start: number; end: number }>;

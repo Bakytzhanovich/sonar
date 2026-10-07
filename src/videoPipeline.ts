@@ -5,7 +5,7 @@ import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
 import { fontFileFor, loadFontMetrics, measureAssText } from './fontMetrics';
 import { applySubtitleAxes } from './subtitleAxes';
-import { denoiseModelAvailable, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
+import { denoiseModelAvailable, detectBars, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
 import {
   DEFAULT_SMART_CUT_OPTIONS,
   normalizeManualSegments,
@@ -117,6 +117,7 @@ export interface PipelineDeps {
   ffmpeg: {
     available: typeof ffmpegAvailable;
     probe: typeof probe;
+    detectBars: typeof detectBars;
     extractAudio: typeof extractAudio;
     render: typeof renderSegments;
     poster: typeof extractPosterFrame;
@@ -152,7 +153,7 @@ export function defaultPipelineDeps(): PipelineDeps {
     smartCutOptions: DEFAULT_SMART_CUT_OPTIONS,
     subtitleStyle: DEFAULT_SUBTITLE_STYLE,
     chunkOptions: DEFAULT_CHUNK_OPTIONS,
-    ffmpeg: { available: ffmpegAvailable, probe, extractAudio, render: renderSegments, poster: extractPosterFrame, denoiseAvailable: denoiseModelAvailable, measureNoise },
+    ffmpeg: { available: ffmpegAvailable, probe, detectBars, extractAudio, render: renderSegments, poster: extractPosterFrame, denoiseAvailable: denoiseModelAvailable, measureNoise },
     findBreaths: runBreathPass,
     tightenTimings: runSpeechTimingPass,
     cleanAudio: cleanAudioTrack,
@@ -359,6 +360,13 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     if (probeResult.durationSec > MAX_SOURCE_DURATION_SEC) {
       throw new PipelineError('video_too_long', `${Math.round(probeResult.durationSec)}s`);
     }
+    // Part of the probe artifact so a revision or a preview, which inherit
+    // it, crop the same source the same way without looking again. A failed
+    // look is no crop, which is what every render did before this existed.
+    const crop = await deps.ffmpeg
+      .detectBars(sourcePath, probeResult.durationSec, probeResult)
+      .catch(() => null);
+    probeResult = { ...probeResult, crop };
     await saveArtifact(db, job, 'probe', probeResult);
   }
 
@@ -523,8 +531,12 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   // Where the picture and the band land in this frame. Computed once, from the
   // probe, and shared by the two things that have to agree about it: the .ass
   // that draws the headline and the captions that must stay clear of it.
-  const sourceSize =
-    probeResult.width && probeResult.height
+  // The picture as it will be fitted: after baked-in bars are dropped, which
+  // is the whole point of dropping them — the headline then sits against the
+  // real picture rather than against black that was part of the file.
+  const sourceSize = probeResult.crop
+    ? { width: probeResult.crop.width, height: probeResult.crop.height }
+    : probeResult.width && probeResult.height
       ? { width: probeResult.width, height: probeResult.height }
       : null;
   const bandLayout = bandLayoutFor(frame, sourceSize, bandHeightForFrame(frame));
@@ -670,8 +682,7 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       // their contents against their own PlayRes, so padding to a different
       // shape here would rescale the text with the picture.
       frame,
-      // How much black the letterboxing already leaves is what decides whether
-      // the headline needs room taken from the picture at all.
+      crop: probeResult.crop,
       // A missing model file must not fail the render: the job still produces
       // a correct cut, just without the noise removal it asked for.
       // The recorded decision, not a re-evaluation: the card already told the
