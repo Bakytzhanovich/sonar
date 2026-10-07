@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  DEFAULT_HEADLINE_STYLE,
   HEADLINE_BAND_HEIGHT,
   HEADLINE_MAX_CHARS,
   buildHeadlineAss,
@@ -90,20 +89,13 @@ describe('buildHeadlineAss', () => {
     expect(size(three)).toBeLessThan(size(two));
   });
 
-  it('outlines the letters only when they sit over the picture', () => {
-    // Over the picture, white letters on a white wall vanish without a
-    // stroke; over plain black a stroke only thickens them.
-    const outlineAndShadow = (ass: string) => {
-      const fields = ass.match(/Style: Headline,.*$/m)![0].split(',');
-      // Outline and Shadow are the 17th and 18th fields of the Format line.
-      return [Number(fields[16]), Number(fields[17])];
-    };
-    const overBlack = buildHeadlineAss('ТЕКСТ', { ...DEFAULT_HEADLINE_STYLE, overPicture: false })!;
-    const overPicture = buildHeadlineAss('ТЕКСТ', { ...DEFAULT_HEADLINE_STYLE, overPicture: true })!;
-    expect(outlineAndShadow(overBlack)).toEqual([0, 0]);
-    const [outline, shadow] = outlineAndShadow(overPicture);
-    expect(outline).toBeGreaterThan(0);
-    expect(shadow).toBeGreaterThan(0);
+  it('outlines the letters, since there is always video behind them', () => {
+    // The picture or the blurred fill around it — never plain black — so
+    // white letters on a white wall would vanish without a stroke.
+    const fields = buildHeadlineAss('ТЕКСТ')!.match(/Style: Headline,.*$/m)![0].split(',');
+    // Outline and Shadow are the 17th and 18th fields of the Format line.
+    expect(Number(fields[16])).toBeGreaterThan(0);
+    expect(Number(fields[17])).toBeGreaterThan(0);
   });
 
   it('holds the headline for the whole clip', () => {

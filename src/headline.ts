@@ -10,9 +10,10 @@
 // The picture is never shrunk to make room. It used to be: a vertical clip
 // with a headline came back 844x1500 inside a 1080x1920 frame, black on three
 // sides, and clients read that as the product spoiling a video that was fine
-// when they uploaded it. Now the band uses black the letterboxing already
+// when they uploaded it. Now the band uses the fill the letterboxing already
 // left, when there is enough of it, and otherwise sits over the top of the
-// picture with an outline and shadow to stay legible on any background.
+// picture. Either way there is video behind the letters — the fill is a
+// blurred copy of the picture, not black — so they are always outlined.
 
 import { REFERENCE_FRAME, type FrameSize } from './aspect';
 import { headlineColour, headlineFont, headlineSize } from './headlineStyles';
@@ -46,12 +47,6 @@ export interface HeadlineStyle {
    * than staying at the edge with nothing underneath.
    */
   bandTop: number;
-  /**
-   * True when the band is drawn over the picture rather than over black, so
-   * the letters need an outline and a shadow to read against whatever the
-   * video happens to show behind them.
-   */
-  overPicture: boolean;
 }
 
 export const DEFAULT_HEADLINE_STYLE: HeadlineStyle = {
@@ -66,7 +61,6 @@ export const DEFAULT_HEADLINE_STYLE: HeadlineStyle = {
   playResY: 1920,
   bandHeight: HEADLINE_BAND_HEIGHT,
   bandTop: 0,
-  overPicture: false,
 };
 
 /**
@@ -108,8 +102,6 @@ export interface BandLayout {
   pictureTop: number;
   /** Where the band starts. */
   bandTop: number;
-  /** Whether the band covers part of the picture rather than only black. */
-  overPicture: boolean;
 }
 
 /**
@@ -119,13 +111,13 @@ export interface BandLayout {
  * ffmpeg.ts does with a source is decided by the source and the frame alone.
  * That leaves two cases:
  *
- * - The letterboxing left at least a band's worth of black above the picture
+ * - The letterboxing left at least a band's worth of fill above the picture
  *   (a landscape clip in a vertical frame). The band sits directly on top of
- *   the picture, in that black — not pinned to the frame's edge, which left a
+ *   the picture, in that fill — not pinned to the frame's edge, which left a
  *   client's title stranded with the video floating far below it.
- * - It did not (anything shot upright on a phone, where there is no black at
+ * - It did not (anything shot upright on a phone, where there is no fill at
  *   all). The band goes over the top of the picture, below the platforms' own
- *   header, and the text gets an outline so it reads over any background.
+ *   header.
  *
  * An unknown source shape is treated as filling the frame — the commonest
  * upload by far, and the case where the result is still a usable video.
@@ -136,13 +128,10 @@ export function bandLayoutFor(frame: FrameSize, source: FrameSize | null, bandHe
       ? Math.min(frame.height, (frame.width * source.height) / source.width)
       : frame.height;
   const pictureTop = Math.round((frame.height - fitted) / 2);
-  if (bandHeight <= 0) return { pictureTop, bandTop: 0, overPicture: false };
+  if (bandHeight <= 0) return { pictureTop, bandTop: 0 };
 
-  if (pictureTop >= bandHeight) {
-    return { pictureTop, bandTop: pictureTop - bandHeight, overPicture: false };
-  }
-  const safeTop = Math.round(HEADLINE_SAFE_TOP * (frame.height / REFERENCE_FRAME.height));
-  return { pictureTop, bandTop: safeTop, overPicture: true };
+  if (pictureTop >= bandHeight) return { pictureTop, bandTop: pictureTop - bandHeight };
+  return { pictureTop, bandTop: Math.round(HEADLINE_SAFE_TOP * (frame.height / REFERENCE_FRAME.height)) };
 }
 
 /**
@@ -349,10 +338,10 @@ export function buildHeadlineAss(rawText: string, style: HeadlineStyle = DEFAULT
   const styles = [
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    // Over black the letters need nothing: an outline there only thickens
-    // them. Over the picture they need both — the outline for a bright
+    // There is always video behind the letters — the picture, or the blurred
+    // fill around it — so they always need both: the outline for a bright
     // background, the soft shadow to lift them off a busy one.
-    `Style: Headline,${style.fontName},${fontSize},${style.primaryColour},${style.primaryColour},&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${style.overPicture ? outlineFor(fontSize) : 0},${style.overPicture ? shadowFor(fontSize) : 0},5,60,60,0,1`,
+    `Style: Headline,${style.fontName},${fontSize},${style.primaryColour},${style.primaryColour},&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${outlineFor(fontSize)},${shadowFor(fontSize)},5,60,60,0,1`,
   ].join('\n');
 
   // \an5 centres on \pos, which is the middle of the band — so one line and

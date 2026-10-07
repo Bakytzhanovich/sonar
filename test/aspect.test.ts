@@ -110,7 +110,6 @@ describe('scaleHeadlineToFrame', () => {
     const band = bandHeightForFrame(frame);
     const layout = bandLayoutFor(frame, { width: 3840, height: 2160 }, band);
 
-    expect(layout.overPicture).toBe(false);
     expect(layout.bandTop).toBeGreaterThan(0);
     expect(layout.bandTop + band).toBe(layout.pictureTop);
   });
@@ -124,7 +123,7 @@ describe('scaleHeadlineToFrame', () => {
     const layout = bandLayoutFor(frame, { width: 1080, height: 1920 }, band);
 
     expect(layout.pictureTop).toBe(0);
-    expect(layout.overPicture).toBe(true);
+    expect(layout.bandTop + band).toBeGreaterThan(layout.pictureTop);
   });
 
   it('keeps a band laid over the picture below the platforms\' own header', () => {
@@ -133,7 +132,7 @@ describe('scaleHeadlineToFrame', () => {
     for (const ratio of ASPECT_RATIOS) {
       const band = bandHeightForFrame(ratio);
       const layout = bandLayoutFor(ratio, { width: 1080, height: 1920 }, band);
-      if (!layout.overPicture) continue;
+      if (layout.bandTop + band <= layout.pictureTop) continue;
       expect(layout.bandTop).toBe(Math.round(HEADLINE_SAFE_TOP * (ratio.height / REFERENCE_FRAME.height)));
     }
   });
@@ -159,7 +158,7 @@ describe('scaleHeadlineToFrame', () => {
     }
   });
 
-  it('keeps the band inside the frame and says when it covers the picture', () => {
+  it('keeps the band inside the frame', () => {
     for (const ratio of ASPECT_RATIOS) {
       const band = bandHeightForFrame(ratio);
       for (const source of [
@@ -172,9 +171,6 @@ describe('scaleHeadlineToFrame', () => {
         const layout = bandLayoutFor(ratio, source, band);
         expect(layout.bandTop).toBeGreaterThanOrEqual(0);
         expect(layout.bandTop + band).toBeLessThanOrEqual(ratio.height);
-        // overPicture is what turns the outline on; wrong here means white
-        // letters on a white wall, or a heavy stroke on plain black.
-        expect(layout.overPicture).toBe(layout.bandTop + band > layout.pictureTop);
       }
     }
   });
@@ -200,7 +196,6 @@ describe('scaleHeadlineToFrame', () => {
     for (const unknown of [null, { width: 0, height: 0 }]) {
       const layout = bandLayoutFor(frame, unknown, band);
       expect(layout.pictureTop).toBe(0);
-      expect(layout.overPicture).toBe(true);
     }
   });
 

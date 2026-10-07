@@ -640,7 +640,6 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
         // frame from the source's own shape, and scaling it from the reference
         // frame would be scaling a number that was never in that space.
         bandTop: bandLayout.bandTop,
-        overPicture: bandLayout.overPicture,
       })
     : null;
   if (headlineAss) {

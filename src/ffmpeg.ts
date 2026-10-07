@@ -421,11 +421,7 @@ export function buildConcatFilter(
   } else if (denoiseModelPath) {
     parts.push(`[acat]${buildDenoiseChain(denoiseModelPath)}[aout]`);
   }
-  // force_original_aspect_ratio=decrease + pad keeps a source that is not
-  // exactly 9:16 (a 4:3 phone clip, a 1:1 export) intact with bars rather
-  // than cropping the speaker's head off.
-  //
-  // The ass filter goes LAST, after scale/pad: libass renders at the frame
+  // The ass filter goes LAST, after the picture is fitted: libass renders at the frame
   // size it is given, so burning captions before the scale would resample the
   // text along with the picture and soften every edge. It also sits inside
   // this graph rather than in a separate -vf pass — ffmpeg rejects -vf and
@@ -440,12 +436,41 @@ export function buildConcatFilter(
   // After the captions, so the band is drawn over anything that overlaps it.
   const headlineFilter = headlinePath ? `,ass=filename=${escapeFilterPath(headlinePath)}${fontsDir}` : '';
   parts.push(
-    `[vcat]scale=${frame.width}:${frame.height}:force_original_aspect_ratio=decrease,` +
-      `pad=${frame.width}:${frame.height}:(ow-iw)/2:(oh-ih)/2,fps=${OUTPUT_FPS}` +
+    `${buildFitChain('[vcat]', frame)},fps=${OUTPUT_FPS}` +
       `${subtitleFilter}${headlineFilter},format=yuv420p[vout]`
   );
 
   return parts.join(';\n');
+}
+
+/**
+ * Fits the picture into the frame whole, over a blurred copy of itself.
+ *
+ * Whole, never cropped: a source that is not the frame's shape (a landscape
+ * clip in a vertical frame, a 4:3 phone clip) would otherwise lose the
+ * speaker's head or the edges of the shot. What fills the rest used to be
+ * black, and a landscape clip in a Reels frame came back as a strip in a sea
+ * of it — what clients meant by the format "not working". The fill is now the
+ * same video scaled up to cover the frame, blurred and darkened a little, the
+ * way phone editors do it. When the source already has the frame's shape the
+ * picture covers it entirely and nothing of the fill shows.
+ *
+ * The blur runs at a quarter of the frame size and is scaled back up: it is
+ * featureless by design, so the detail lost is detail nobody sees, and it
+ * keeps the extra pass cheap on a worker capped at two cores.
+ */
+export function buildFitChain(input: string, frame: FrameSize): string {
+  // Even dimensions: the encoder rejects odd ones for yuv420p.
+  const even = (n: number) => Math.max(2, 2 * Math.round(n / 2));
+  const smallW = even(frame.width / 4);
+  const smallH = even(frame.height / 4);
+  return (
+    `${input}split=2[fitfg][fitbg];\n` +
+    `[fitbg]scale=${smallW}:${smallH}:force_original_aspect_ratio=increase,crop=${smallW}:${smallH},` +
+    `gblur=sigma=10,eq=brightness=-0.12,scale=${frame.width}:${frame.height},setsar=1[fitblur];\n` +
+    `[fitfg]scale=${frame.width}:${frame.height}:force_original_aspect_ratio=decrease,setsar=1[fitpic];\n` +
+    `[fitblur][fitpic]overlay=(W-w)/2:(H-h)/2`
+  );
 }
 
 export interface RenderOptions {

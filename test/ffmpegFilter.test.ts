@@ -34,10 +34,9 @@ describe('buildConcatFilter', () => {
     expect(filter).toContain('afade=t=out:st=1.9850');
   });
 
-  it('normalizes the output to 1080x1920 at 30fps with padding, not cropping', () => {
+  it('normalizes the output to 1080x1920 at 30fps, fitting the picture whole', () => {
     const filter = buildConcatFilter(segments);
-    expect(filter).toContain(`scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease`);
-    expect(filter).toContain(`pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}`);
+    expect(filter).toContain(`[fitfg]scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease`);
     expect(filter).toContain(`fps=${OUTPUT_FPS}`);
   });
 
@@ -46,14 +45,29 @@ describe('buildConcatFilter', () => {
     expect(filter).toContain('concat=n=1:v=1:a=1[vcat][aout]');
   });
 
-  it('pads to whichever frame it is given, still without cropping', () => {
+  it('fits the picture to whichever frame it is given, never cropping it', () => {
     const landscape = aspectRatioFor('16_9');
     const filter = buildConcatFilter(segments, undefined, undefined, false, undefined, landscape);
-    expect(filter).toContain('scale=1920:1080:force_original_aspect_ratio=decrease');
-    expect(filter).toContain('pad=1920:1080');
-    // The choice of frame must never turn into a crop: a vertical source in a
-    // landscape frame gets bars at the sides, not its top and bottom removed.
-    expect(filter).not.toContain('crop=');
+    // The choice of frame must never turn into a crop of the picture: a
+    // vertical source in a landscape frame keeps its top and bottom. Only the
+    // blurred fill behind it is cropped, to cover the frame.
+    const picture = filter.split('\n').find((line) => line.startsWith('[fitfg]'))!;
+    expect(picture).toContain('scale=1920:1080:force_original_aspect_ratio=decrease');
+    expect(picture).not.toContain('crop=');
+  });
+
+  it('fills the frame around the picture with a blurred copy, not black', () => {
+    // A landscape clip in a Reels frame came back as a strip in a sea of
+    // black, which is what clients meant by the format "not working".
+    for (const id of ['9_16', '1_1', '16_9']) {
+      const frame = aspectRatioFor(id);
+      const filter = buildConcatFilter(segments, undefined, undefined, false, undefined, frame);
+      expect(filter).toContain('[vcat]split=2[fitfg][fitbg]');
+      expect(filter).toMatch(/\[fitbg\]scale=\d+:\d+:force_original_aspect_ratio=increase,crop=\d+:\d+,gblur=/);
+      expect(filter).toContain(`scale=${frame.width}:${frame.height},setsar=1[fitblur]`);
+      expect(filter).toContain('[fitblur][fitpic]overlay=(W-w)/2:(H-h)/2');
+      expect(filter).not.toContain('pad=');
+    }
   });
 
   it('never shrinks the picture to make room for a headline', () => {
@@ -65,7 +79,7 @@ describe('buildConcatFilter', () => {
       const frame = aspectRatioFor(id);
       const withHeadline = buildConcatFilter(segments, undefined, undefined, false, '/tmp/headline.ass', frame);
       const without = buildConcatFilter(segments, undefined, undefined, false, undefined, frame);
-      const fit = `scale=${frame.width}:${frame.height}:force_original_aspect_ratio=decrease,pad=${frame.width}:${frame.height}:(ow-iw)/2:(oh-ih)/2`;
+      const fit = `[fitfg]scale=${frame.width}:${frame.height}:force_original_aspect_ratio=decrease`;
       expect(withHeadline).toContain(fit);
       expect(without).toContain(fit);
     }

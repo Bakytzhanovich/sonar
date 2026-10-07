@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import CaptionOverlay, { type CaptionLine, type CaptionLook } from './CaptionOverlay';
 import styles from './FramePreview.module.css';
 // The renderer's own geometry, imported rather than restated. Where the band
@@ -47,6 +47,17 @@ export default function FramePreview({
   // header. Until then it is taken to fill the frame, which is what the
   // renderer assumes too when it cannot measure the source.
   const [source, setSource] = useState<{ width: number; height: number } | null>(null);
+  // The blurred fill behind the picture is a second, muted copy of the same
+  // video kept in step with the one that has controls — the render fills the
+  // frame with the moving picture, and a still would promise something else.
+  const fill = useRef<HTMLVideoElement>(null);
+  const follow = (main: HTMLVideoElement) => {
+    const copy = fill.current;
+    if (!copy) return;
+    if (Math.abs(copy.currentTime - main.currentTime) > 0.3) copy.currentTime = main.currentTime;
+    if (main.paused) copy.pause();
+    else void copy.play().catch(() => {});
+  };
 
   const frame = aspectRatioFor(aspectRatio);
   const text = sanitizeHeadline(headline);
@@ -77,9 +88,10 @@ export default function FramePreview({
 
   return (
     <div className={styles.frame} style={{ aspectRatio: `${frame.width} / ${frame.height}` }}>
-      {/* The picture fitted into the whole frame and centred — the same
-          scale-and-pad the ffmpeg filter graph does. The headline never takes
-          room from it. */}
+      {/* The picture fitted into the whole frame and centred over a blurred
+          copy of itself — the same fit buildFitChain does in the render. The
+          headline never takes room from it. */}
+      <video className={styles.fill} ref={fill} src={src} muted playsInline preload="metadata" aria-hidden="true" tabIndex={-1} />
       <div className={styles.picture} style={{ top: 0, height: '100%' }}>
         <video
           className={styles.video}
@@ -91,12 +103,15 @@ export default function FramePreview({
             const { videoWidth, videoHeight } = e.currentTarget;
             if (videoWidth && videoHeight) setSource({ width: videoWidth, height: videoHeight });
           }}
+          onPlay={(e) => follow(e.currentTarget)}
+          onPause={(e) => follow(e.currentTarget)}
+          onSeeked={(e) => follow(e.currentTarget)}
         />
       </div>
 
       {lines.length > 0 && (
         <div
-          className={`${styles.band} ${layout.overPicture ? styles.bandOverPicture : ''}`}
+          className={styles.band}
           style={{
             top: pct(layout.bandTop),
             height: pct(band),
