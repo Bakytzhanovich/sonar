@@ -55,6 +55,9 @@ docker logs -f sonar-worker
 [worker] smart-cut worker started, polling every 5000ms, concurrency 1
 ```
 
+Если контейнер сразу падает с `SESSION_SECRET must be set` — эта строка в
+`.env.worker` пустая.
+
 Предупреждение `SECURITY WARNING: The SSL modes ...` от библиотеки `pg` —
 безвредно. Если вместо `R2/S3` написано `локальная ФС` — в `.env.worker` не
 заданы переменные `STORAGE_*`.
