@@ -2,9 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import request from 'supertest';
 import type { Express } from 'express';
-import { exec, queryOne, type Db } from '../src/db';
+import { applyMigrations, exec, queryOne, type Db } from '../src/db';
 import { createApp } from '../src/api';
-import { advanceRenderJobs } from '../src/videoRender';
 import { claimSmartCutJobs, posterKeyForOutput, posterTimeFor, processSmartCutJob, runSmartCutJobs, shouldDenoise, shouldReview, type PipelineDeps, type StorageIo } from '../src/videoPipeline';
 import { DEFAULT_SMART_CUT_OPTIONS } from '../src/smartCut';
 import type { VideoEditJob } from '../src/types';
@@ -426,7 +425,30 @@ describe('smart cut job claiming', () => {
     expect(await claimSmartCutJobs(db, muchLater, 5)).toHaveLength(1);
   });
 
-  it('never claims jobs belonging to the mocked preset pipeline', async () => {
+  it('closes a retired-template job left "processing", and only that', async () => {
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES (?, 'T', ?)`, TENANT, `${TENANT}@example.com`);
+    await exec(
+      db,
+      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, status) VALUES ('preset-stuck', ?, 'https://x/v.mp4', 'auto_crop_916', 'processing')`,
+      TENANT
+    );
+    await seedJob(db); // a smart_cut job, also processing
+
+    const client = await db.connect();
+    try {
+      await applyMigrations(client);
+    } finally {
+      client.release();
+    }
+
+    expect(await queryOne(db, `SELECT status, failure_reason FROM video_edit_jobs WHERE id = 'preset-stuck'`)).toEqual({
+      status: 'failed',
+      failure_reason: 'template_retired',
+    });
+    expect((await readJob(db, 'job-1')).status).toBe('processing');
+  });
+
+  it('never claims jobs left over from the retired preset pipeline', async () => {
     await exec(db, `INSERT INTO tenants (id, name, email) VALUES (?, 'T', ?)`, TENANT, `${TENANT}@example.com`);
     await exec(
       db,
@@ -437,21 +459,6 @@ describe('smart cut job claiming', () => {
   });
 });
 
-describe('separation from the mocked preset ticker', () => {
-  let db: Db;
-  beforeEach(async () => { db = await createTestDb(); });
-  afterEach(async () => { if (db) await dropTestDb(db); });
-
-  it('the mock ticker leaves smart_cut jobs alone', async () => {
-    await seedJob(db);
-    // Enough ticks to have carried a preset job all the way to 100%.
-    for (let i = 0; i < 5; i++) await advanceRenderJobs(db);
-
-    const job = await readJob(db, 'job-1');
-    expect(job!.progress_percent).toBe(0);
-    expect(job!.status).toBe('processing');
-  });
-});
 
 describe('video upload + smart cut API', () => {
   let app: Express;
@@ -474,6 +481,17 @@ describe('video upload + smart cut API', () => {
       .send({ contentType: 'video/mp4' });
     return res.body.objectKey as string;
   }
+
+  it('refuses the retired Level 1-2 templates instead of faking a render', async () => {
+    const apiKey = await tenantKey('sc-retired@example.com');
+    for (const template of ['auto_crop_916', 'template_with_transitions']) {
+      const res = await request(app)
+        .post('/api/video-edit-jobs')
+        .set('Authorization', `Bearer ${apiKey}`)
+        .send({ template, sourceVideoUrl: 'https://example.com/v.mp4' });
+      expect(res.status).toBe(400);
+    }
+  });
 
   it('records the frame format the caller asked for', async () => {
     const apiKey = await tenantKey('sc-aspect@example.com');

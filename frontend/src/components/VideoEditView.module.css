@@ -37,59 +37,12 @@
 .fieldLabel { color: var(--foreground); font-size: var(--text-sm); font-weight: 650; }
 .field .input { width: 100%; padding: 10px 12px; font-size: var(--text-base); }
 
-.templateLabel { margin: 20px 0 8px; }
-
-.templateGrid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-}
-
-/* Selectable cards, not a bare <select> — the two templates differ enough
- * (crop-only vs. templated transitions) that seeing both descriptions at
- * once beats reading one truncated line in a dropdown at a time. */
-.templateCard {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: start;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--foreground);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 150ms ease, background 150ms ease;
-}
-
-.templateCard:hover {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-}
-
-.templateCardActive {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.templateLevel {
-  color: var(--accent);
-  font-size: var(--text-xs);
-  font-weight: 800;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
-.templateTitle { font-size: var(--text-base); font-weight: 650; }
-.templateDesc { color: var(--foreground-muted); font-size: var(--text-sm); line-height: 1.4; }
-
 .submitButton { margin-top: 16px; padding: 10px 18px; font-size: var(--text-base); }
 
 .queue { margin-top: 32px; }
 .queueHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .queueHeader h2 { margin: 0; font-size: var(--text-xl); }
 .queueCount { color: var(--foreground-muted); font-size: var(--text-sm); }
-.queueHint { margin: 4px 0 16px; color: var(--foreground-muted); font-size: var(--text-xs); }
 
 .jobList { display: flex; flex-direction: column; gap: 10px; }
 
@@ -149,7 +102,6 @@
 
 @media (max-width: 760px) {
   .hero { align-items: start; flex-direction: column; }
-  .templateGrid { grid-template-columns: 1fr; }
 
   /* On a phone the whole page is the app. Vertical space is the scarce
    * resource: the intro cost half a screen before the first control, and

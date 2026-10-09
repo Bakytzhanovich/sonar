@@ -5,7 +5,6 @@ import { exec, type Db } from '../src/db';
 import { createApp } from '../src/api';
 import { notify, listNotifications } from '../src/notifications';
 import { publishDuePosts } from '../src/publisher';
-import { advanceRenderJobs } from '../src/videoRender';
 import { createTestDb, dropTestDb } from './dbTestHelper';
 
 // Posts carry a video now; any key under the tenant's own uploads will do.
@@ -73,22 +72,6 @@ describe('notifications fire from real publisher/render flows', () => {
     expect(['post_published', 'post_failed']).toContain(notifications[0].type);
   });
 
-  it('advanceRenderJobs notifies once a job resolves, not on intermediate progress ticks', async () => {
-    await exec(
-      db,
-      `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, status, progress_percent) VALUES ('job-1', 't1', 'url', 'auto_crop_916', 'processing', 0)`
-    );
-
-    await advanceRenderJobs(db); // 0 -> 25%, not resolved yet
-    expect(await listNotifications(db, 't1', false)).toHaveLength(0);
-
-    await advanceRenderJobs(db); // 25 -> 50
-    await advanceRenderJobs(db); // 50 -> 75
-    await advanceRenderJobs(db); // 75 -> 100, resolves
-    const notifications = await listNotifications(db, 't1', false);
-    expect(notifications).toHaveLength(1);
-    expect(['video_completed', 'video_failed']).toContain(notifications[0].type);
-  });
 });
 
 describe('push + notifications API', () => {

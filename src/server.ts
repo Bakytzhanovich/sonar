@@ -4,12 +4,10 @@ import { purgeTranscriptCache } from './accountDeletion';
 import { maintainTokens } from './platformAccounts';
 import { publishDuePosts } from './publisher';
 import { keyringFromEnv } from './tokenVault';
-import { advanceRenderJobs } from './videoRender';
 import { assertMockWebhookConfig } from './webhookAuth';
 
 const PORT = Number(process.env.PORT ?? 4001);
 const PUBLISH_POLL_INTERVAL_MS = 15_000;
-const RENDER_POLL_INTERVAL_MS = 15_000;
 // Hourly: tokens are renewed a week ahead, so this has days of slack, and
 // each pass is one cheap query when nothing is due.
 const TOKEN_UPKEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -49,17 +47,6 @@ async function main() {
       })
       .catch((err) => console.error('[publisher] tick failed', err));
   }, PUBLISH_POLL_INTERVAL_MS);
-
-  // Same polling approach for Module 8's mocked render jobs — a job needs
-  // ~4 ticks (~1 min) to go from 0% to resolved, simulating a real
-  // Shotstack/Creatomate render instead of resolving instantly.
-  setInterval(() => {
-    advanceRenderJobs(db)
-      .then(({ advanced }) => {
-        if (advanced > 0) console.log(`[render] advanced ${advanced} job(s)`);
-      })
-      .catch((err) => console.error('[render] tick failed', err));
-  }, RENDER_POLL_INTERVAL_MS);
 
   // Cached transcripts are the text of people's speech, kept to spare a second
   // transcription bill — for a month, not forever. Here rather than in the

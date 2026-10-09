@@ -176,26 +176,6 @@ describe('security: multi-tenancy isolation of the job processors', () => {
     expect(own.body.processed).toBe(1);
   });
 
-  it('process-tick leaves another tenant render jobs alone', async () => {
-    const keyA = await createTenant(app, 'a@example.com');
-    const keyB = await createTenant(app, 'b@example.com');
-
-    const job = (
-      await request(app)
-        .post('/api/video-edit-jobs')
-        .set('Authorization', `Bearer ${keyA}`)
-        .send({ sourceVideoUrl: 'https://example.com/v.mp4', template: 'auto_crop_916' })
-    ).body.job;
-
-    const res = await request(app).post('/api/video-edit-jobs/process-tick').set('Authorization', `Bearer ${keyB}`).send({});
-    expect(res.body.advanced).toBe(0);
-
-    const row = await queryOne<{ progress_percent: number }>(db, `SELECT progress_percent FROM video_edit_jobs WHERE id = ?`, job.id);
-    expect(row?.progress_percent).toBe(0);
-
-    const own = await request(app).post('/api/video-edit-jobs/process-tick').set('Authorization', `Bearer ${keyA}`).send({});
-    expect(own.body.advanced).toBe(1);
-  });
 });
 
 describe('security: right to erasure (личные данные, закон РК)', () => {

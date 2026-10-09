@@ -769,9 +769,6 @@ export const api = {
 
   // ---- Module 8: Video editing, Levels 1-2 (mocked) -----------------------
 
-  createVideoJob: (config: ApiConfig, sourceVideoUrl: string, template: VideoTemplate) =>
-    apiRequest(config, 'POST', '/api/video-edit-jobs', { sourceVideoUrl, template }) as Promise<{ job: VideoEditJob }>,
-
   // ---- Module 8, Level 3: own ffmpeg engine ------------------------------
 
   /** `size` lets the server refuse an oversized file before it is uploaded. */
@@ -863,8 +860,6 @@ export const api = {
     apiRequest(config, 'POST', `/api/video-edit-jobs/${jobId}/preview`, { segments, ...look }) as Promise<{
       job: VideoEditJob;
     }>,
-
-  processVideoTick: (config: ApiConfig) => apiRequest(config, 'POST', '/api/video-edit-jobs/process-tick') as Promise<{ advanced: number }>,
 
   // ---- Push notifications (shared by Modules 5 and 8) ---------------------
 

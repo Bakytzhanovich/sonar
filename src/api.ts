@@ -53,7 +53,6 @@ import { PRIVACY_POLICY_VERSION } from './privacyPolicy';
 import { eraseContactFromPlan, generateContentPlan, getContentPlan, NotEnoughDataError, planReadiness, scriptFor, writeTopicScript } from './contentTopics';
 import { addDays, autoFillWeek, isDay, listEntries } from './contentCalendar';
 import { computeContentRecommendations } from './contentRecommendations';
-import { advanceRenderJobs } from './videoRender';
 import { assToRgb } from './assColour';
 import { fontFileFor, loadFontMetrics } from './fontMetrics';
 import { DEFAULT_POSTER_OPTIONS } from './subtitles';
@@ -2363,9 +2362,14 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     }
   }));
 
-  // ---- Module 8: Video editing, Levels 1-2 (mocked Shotstack/Creatomate) --
+  // ---- Module 8: Video editing ---------------------------------------------
 
-  const VIDEO_TEMPLATES: VideoTemplate[] = ['auto_crop_916', 'template_with_transitions', 'ai_smart_cut'];
+  // Only the real pipeline. Levels 1-2 (Shotstack/Creatomate) were a mock that
+  // advanced on a timer and handed back a link to a file that did not exist;
+  // they are gone until a real integration replaces them, and ai_smart_cut
+  // already does what Level 1 promised. Older rows may still carry those
+  // template names, which is why VideoTemplate keeps them for reading.
+  const VIDEO_TEMPLATES: VideoTemplate[] = ['ai_smart_cut'];
 
   // Level 3 needs the actual file, which the Level 1-2 presets never did
   // (they take a URL string). The browser uploads straight to object storage
@@ -2502,14 +2506,6 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       );
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
     }
-
-    const sourceVideoUrl = typeof req.body?.sourceVideoUrl === 'string' ? req.body.sourceVideoUrl.trim() : '';
-    if (!sourceVideoUrl) return res.status(400).json({ error: 'sourceVideoUrl is required' });
-
-    const id = randomUUID();
-    await exec(db, `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template) VALUES (?, ?, ?, ?)`, id, tenantId, sourceVideoUrl, template);
-
-    res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
   }));
 
   // A finished render, as a link that saves instead of playing. Falls back to
@@ -2886,10 +2882,6 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     );
 
     res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
-  }));
-
-  app.post('/api/video-edit-jobs/process-tick', asyncHandler(async (_req, res) => {
-    res.json(await advanceRenderJobs(db, new Date(), res.locals.tenantId as string));
   }));
 
   // ---- Push notifications (shared by Modules 5 and 8) ---------------------

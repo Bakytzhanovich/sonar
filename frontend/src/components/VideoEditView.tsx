@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { plural } from '@/lib/plural';
-import { api, type AspectRatioOption, type HeadlineOption, type PosterLayout, type SubtitlePosition, type SubtitlePreset, type VideoEditJob, type VideoTemplate } from '@/lib/api';
+import { api, type AspectRatioOption, type HeadlineOption, type PosterLayout, type SubtitlePosition, type SubtitlePreset, type VideoEditJob } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
 import { STAFF_BOOTSTRAP_AVAILABLE } from '@/lib/useApiAccess';
@@ -22,33 +22,15 @@ import styles from './VideoEditView.module.css';
 // worth shouting. Fixed rather than generated, because the word to emphasise
 // is chosen server-side for a real render and a second heuristic in the
 // browser would be a third thing to keep in step.
-// The mock pipelines (levels 1 and 2) and their controls exist for
-// development: they return a link to a file that is never made. Shown only
-// where the staff tools are — never on the deployed site customers use.
-const MOCK_PIPELINES_VISIBLE = STAFF_BOOTSTRAP_AVAILABLE;
-
 const SAMPLE_CAPTION = { words: ['каждая', 'твоя', 'история'], emphasis: 2 };
 
-const TEMPLATES: { value: VideoTemplate; level: string; title: string; description: string }[] = [
-  {
-    value: 'ai_smart_cut',
-    level: 'Уровень 3 · ИИ',
-    title: 'ИИ-монтаж (Smart Cut)',
-    description: 'Расшифровка речи, вырезание пауз и слов-паразитов, динамические субтитры. Нужен файл, а не ссылка.',
-  },
-  {
-    value: 'auto_crop_916',
-    level: 'Уровень 1',
-    title: 'Автонарезка 9:16 + субтитры',
-    description: 'Быстрый кроп под вертикальный формат Reels/Shorts с автоматическими субтитрами.',
-  },
-  {
-    value: 'template_with_transitions',
-    level: 'Уровень 2',
-    title: 'Шаблонный монтаж',
-    description: 'Готовые переходы между сценами по шаблону — для более собранного ролика.',
-  },
-];
+// What a job is called in the list. Only one kind can be made now; the two
+// older names belong to the retired Level 1-2 mock and survive only on old rows.
+const TEMPLATE_TITLE: Record<string, string> = {
+  ai_smart_cut: 'ИИ-монтаж',
+  auto_crop_916: 'Старый шаблон',
+  template_with_transitions: 'Старый шаблон',
+};
 
 // The tabs of the look panel. Subtitles and the headline share three of them
 // by name, which is why the panel always says which of the two it is changing.
@@ -112,6 +94,7 @@ const FAILURE_LABEL: Record<string, string> = {
   render_failed: 'Ошибка рендера',
   upload_failed: 'Не удалось сохранить результат',
   video_processing_error: 'Ошибка обработки',
+  template_retired: 'Этот шаблон больше не поддерживается — смонтируйте ролик заново через ИИ-монтаж',
 };
 // "processing" reuses --accent (an active-right-now state, same precedent
 // as the pulse indicator), "completed" reuses Scheduler's "published"
@@ -147,8 +130,6 @@ export default function VideoEditView() {
   const [session] = useSession();
   const hasAccess = Boolean(apiKey) || session !== null;
 
-  const [sourceVideoUrl, setSourceVideoUrl] = useState('https://example.com/my-video.mp4');
-  const [template, setTemplate] = useState<VideoTemplate>('ai_smart_cut');
   const [file, setFile] = useState<File | null>(null);
   // A local preview of the chosen file. The browser already holds the bytes,
   // so this costs no upload, no render and no request — and without it every
@@ -316,18 +297,6 @@ export default function VideoEditView() {
     return () => clearInterval(id);
   }, [hasAccess, jobs, load]);
 
-  async function submit() {
-    if (template === 'ai_smart_cut') return submitSmartCut();
-    if (!sourceVideoUrl.trim()) return;
-    try {
-      await api.createVideoJob(config, sourceVideoUrl.trim(), template);
-      await load();
-      setStatus('Job создан, рендер пошёл (мок Shotstack/Creatomate)');
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   // Three steps, because the file never passes through our API: ask for a
   // presigned URL, PUT the bytes straight at storage, then create the job
   // referencing the key we were given.
@@ -399,16 +368,6 @@ export default function VideoEditView() {
     }
   }
 
-  async function tickNow() {
-    try {
-      const res = await api.processVideoTick(config);
-      await load();
-      setStatus(`Продвинуто job'ов: ${res.advanced}`);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   const hasHeadline = headline.trim() !== '';
   const processingCount = jobs.filter((j) => j.status === 'processing' && !j.awaiting_worker).length;
 
@@ -416,13 +375,9 @@ export default function VideoEditView() {
   // no key means every request 401s, so say that before asking for a file.
   const blockedReason = !hasAccess
     ? 'Чтобы смонтировать, нужен аккаунт:'
-    : template === 'ai_smart_cut'
-      ? file
-        ? null
-        : 'Выберите файл видео — ИИ-монтажу нужен сам файл, а не ссылка.'
-      : sourceVideoUrl.trim()
-        ? null
-        : 'Укажите ссылку на исходник.';
+    : file
+      ? null
+      : 'Выберите файл видео — ИИ-монтажу нужен сам файл, а не ссылка.';
 
   return (
     <div className={styles.page}>
@@ -449,9 +404,6 @@ export default function VideoEditView() {
               Шумную запись почистит сам, а если речь распознана неуверенно, покажет субтитры на проверку
               перед монтажом.
             </p>
-            {MOCK_PIPELINES_VISIBLE && (
-              <p className={styles.lead}>Только в разработке: шаблоны уровней 1–2 — заглушки, источник там просто ссылка.</p>
-            )}
           </div>
         </div>
 
@@ -461,8 +413,7 @@ export default function VideoEditView() {
             <h2>Загрузите исходник</h2>
           </div>
 
-          {template === 'ai_smart_cut' ? (
-            <>
+          <>
               {/* The native file input renders as an OS button with English
                   text next to it, which is the single most out-of-place thing
                   on a phone. It stays in the DOM for accessibility and is
@@ -642,47 +593,8 @@ export default function VideoEditView() {
                   )}
                 </div>
               </section>
-            </>
-          ) : (
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Ссылка на видео</span>
-              <input
-                className={`${controls.input} ${styles.input}`}
-                placeholder="https://example.com/my-video.mp4"
-                value={sourceVideoUrl}
-                onChange={(e) => setSourceVideoUrl(e.target.value)}
-              />
-            </label>
-          )}
-
-          {/* Levels 1 and 2 are still mocks — they hand back a link to a file
-              that does not exist. Offered to a customer, the choice is between
-              the real thing and nothing, and it sat last on the screen while
-              deciding which settings above even applied. So outside
-              development there is one template, and no picker at all. */}
-          {MOCK_PIPELINES_VISIBLE && (
-          <>
-          <div className={styles.templateLabel}>
-            <span className={styles.fieldLabel}>Шаблон монтажа</span>
-          </div>
-          <div className={styles.templateGrid} role="radiogroup" aria-label="Шаблон монтажа">
-            {TEMPLATES.map((t) => (
-              <button
-                key={t.value}
-                type="button"
-                role="radio"
-                aria-checked={template === t.value}
-                className={`${styles.templateCard} ${template === t.value ? styles.templateCardActive : ''}`}
-                onClick={() => setTemplate(t.value)}
-              >
-                <span className={styles.templateLevel}>{t.level}</span>
-                <span className={styles.templateTitle}>{t.title}</span>
-                <span className={styles.templateDesc}>{t.description}</span>
-              </button>
-            ))}
-          </div>
           </>
-          )}
+
 
           {/* On a phone this becomes a fixed bar at the bottom. It needs to be
               a real element with its own background: a bare fixed button lets
@@ -691,10 +603,10 @@ export default function VideoEditView() {
           <div className={styles.actionBar}>
             <button
               className={`${controls.buttonPrimary} ${styles.submitButton}`}
-              onClick={submit}
+              onClick={submitSmartCut}
               disabled={uploading || blockedReason !== null}
             >
-              {uploading ? 'Загружаю…' : template === 'ai_smart_cut' ? 'Смонтировать' : 'Запустить рендер'}
+              {uploading ? 'Загружаю…' : 'Смонтировать'}
             </button>
           {/* A disabled button that does not say what it is waiting for reads
             * as broken rather than as blocked. */}
@@ -736,23 +648,13 @@ export default function VideoEditView() {
             <h2>Мои ролики</h2>
             <span className={styles.queueCount}>{jobs.length}</span>
           </div>
-          {/* A remote control for the mock pipelines, which advance on a
-              timer. To a customer it said only that something was unfinished. */}
-          {MOCK_PIPELINES_VISIBLE && (
-            <>
-              <p className={styles.queueHint}>Без реальной очереди рендер продвигается по таймеру — эта кнопка не ждёт его.</p>
-              <button className={controls.buttonSecondary} onClick={tickNow}>
-                Продвинуть рендер сейчас
-              </button>
-            </>
-          )}
 
           {jobs.length > 0 && (
             <div className={styles.jobList}>
               {jobs.map((j) => (
                 <div key={j.id} className={styles.jobCard} style={{ '--job-color': STATUS_COLOR[j.status] } as React.CSSProperties}>
                   <div className={styles.jobHeader}>
-                    <span className={styles.jobTemplate}>{TEMPLATES.find((t) => t.value === j.template)?.title ?? j.template}</span>
+                    <span className={styles.jobTemplate}>{TEMPLATE_TITLE[j.template] ?? j.template}</span>
                     <span className={styles.statusBadge}>
                       {j.awaiting_worker ? 'В очереди' : STATUS_LABEL[j.status]}
                     </span>

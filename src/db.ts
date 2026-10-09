@@ -319,9 +319,14 @@ const MIGRATIONS: string[] = [
   // Who a contact is, as the platform names them (see subscribers in schema.sql).
   `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS display_name TEXT`,
   `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS username TEXT`,
+  // Levels 1-2 were a mock advanced by a timer that no longer exists. A job
+  // of theirs still "processing" would say so forever; it is closed with a
+  // reason instead. Idempotent: nothing matches once it has run.
+  `UPDATE video_edit_jobs SET status = 'failed', failure_reason = 'template_retired', completed_at = now()
+   WHERE pipeline = 'preset' AND status = 'processing'`,
 ];
 
-async function applyMigrations(client: PoolClient): Promise<void> {
+export async function applyMigrations(client: PoolClient): Promise<void> {
   for (const statement of MIGRATIONS) {
     await client.query(statement);
   }
