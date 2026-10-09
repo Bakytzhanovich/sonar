@@ -43,3 +43,11 @@
 }
 
 .single { display: block; }
+
+/* Which of the two things on the frame the settings are changing. Without it
+   "Шрифт" and "Цвет" read the same for the captions and the headline. */
+.focused {
+  outline: 2px dashed var(--accent);
+  outline-offset: 0.6cqw;
+  border-radius: 1cqw;
+}

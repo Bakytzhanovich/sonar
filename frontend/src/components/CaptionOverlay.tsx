@@ -69,12 +69,15 @@ export default function CaptionOverlay({
   line,
   look,
   topMarginRatio,
+  focused = false,
 }: {
   line: CaptionLine;
   look: CaptionLook;
   /** Where top-aligned captions must start, as a share of the frame height —
    *  set when there is a headline band for them to stay clear of. */
   topMarginRatio?: number;
+  /** Outlined: the thing the settings below are currently changing. */
+  focused?: boolean;
 }) {
   const { preset, poster, sizeScale } = look;
   const family = look.fontFamily || preset.fontFamily;
@@ -124,7 +127,7 @@ export default function CaptionOverlay({
 
   return (
     <div className={`${styles.stage} ${styles[row]}`} style={{ padding: `${margin}cqh 4cqw` }} aria-hidden="true">
-      <div className={styles.block} style={{ fontFamily: `'${family}', sans-serif`, textShadow: stroke }}>
+      <div className={`${styles.block} ${focused ? styles.focused : ''}`} style={{ fontFamily: `'${family}', sans-serif`, textShadow: stroke }}>
         {useEmphasis ? (
           <>
             {line.words.slice(0, line.emphasis!).length > 0 && (

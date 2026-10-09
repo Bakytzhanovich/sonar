@@ -59,3 +59,9 @@
 /* One line per span: the wrapping has already been done, by the renderer's own
    function, and the browser must not re-wrap it somewhere else. */
 .headlineLine { display: block; white-space: nowrap; }
+
+/* Same mark as CaptionOverlay's: the band is what the settings are changing. */
+.focused {
+  outline: 2px dashed var(--accent);
+  outline-offset: -3px;
+}

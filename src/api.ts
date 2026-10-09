@@ -673,7 +673,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       headlineMaxChars: HEADLINE_MAX_CHARS,
       // The headline catalogues travel with the caption ones for the same
       // reason: the picker renders what the renderer actually has.
-      headlineFonts: HEADLINE_FONTS.map(({ id, label, description }) => ({ id, label, description })),
+      headlineFonts: HEADLINE_FONTS.map(({ id, label, description, family }) => ({ id, label, description, family })),
       headlineSizes: HEADLINE_SIZES.map(({ id, label, description }) => ({ id, label, description })),
       // The hex travels so the picker can paint a dot; the ASS form stays
       // server-side, where the renderer is.

@@ -422,3 +422,101 @@
 /* Each picker's own row scrolls, so a column of five of them still leaves
    the preview above as the biggest thing on the screen. */
 .pickers { display: flex; flex-direction: column; gap: 14px; }
+
+/* ---- The look panel ------------------------------------------------------
+ * Frame, then which of the two things is being changed, then its tabs, then
+ * one row of choices. The panel keeps a steady height whatever tab is open,
+ * so switching tabs never moves the frame above it. */
+.studio {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.targetSwitch {
+  /* Two words do not need the width of a laptop screen. */
+  width: 100%;
+  max-width: 420px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.targetButton {
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.targetButtonOn {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.studioTabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--border);
+}
+.studioTabs::-webkit-scrollbar { display: none; }
+
+.studioTab {
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--foreground-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.studioTabOn {
+  color: var(--foreground);
+  border-bottom-color: var(--accent);
+}
+
+.targetButton:focus-visible,
+.studioTab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.studioPanel {
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.studioNote { margin: 0; color: var(--foreground-muted); font-size: var(--text-sm); line-height: 1.45; }
+
+/* On a phone the frame, the switch, the tabs, one row of choices and the
+ * button have to share one screen — at full width a 9:16 frame alone took
+ * three fifths of it and pushed the choices under the button. Capped by
+ * height, in the frame's own proportions, whatever the format. */
+@media (max-width: 760px) {
+  .studio .previewStage > :first-child {
+    width: min(100%, calc(38dvh * var(--frame-ratio, 0.5625)));
+    max-height: none;
+  }
+  .studio { padding-bottom: 8px; }
+}

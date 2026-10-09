@@ -24,6 +24,9 @@ export interface PillOption {
   /** A word after the label — "NEW" on something genuinely new. A list where
    *  everything is flagged flags nothing, so this stays rare. */
   badge?: string;
+  /** Draws the label in this typeface — on font pickers, so a font is chosen
+   *  by how it looks rather than by its name. Empty on "as the style says". */
+  family?: string;
 }
 
 export default function PillPicker({
@@ -67,7 +70,7 @@ export default function PillPicker({
             {option.hex ? (
               <span className={styles.dot} style={{ background: option.hex }} aria-hidden="true" />
             ) : null}
-            {option.label}
+            {option.family ? <span style={{ fontFamily: `'${option.family}', sans-serif` }}>{option.label}</span> : option.label}
             {option.badge ? <span className={styles.badge}>{option.badge}</span> : null}
           </button>
         ))}

@@ -34,6 +34,7 @@ export default function FramePreview({
   headlineChoice,
   captions,
   fontEmRatios,
+  focus = null,
 }: {
   src: string;
   aspectRatio: string;
@@ -42,6 +43,8 @@ export default function FramePreview({
   captions: { line: CaptionLine; look: CaptionLook } | null;
   /** Family to how big libass draws its em (see assEmRatio on the server). */
   fontEmRatios: Record<string, number>;
+  /** Outlines what the settings are currently changing. */
+  focus?: 'captions' | 'headline' | null;
 }) {
   // The source's own shape, known once the browser has read the file's
   // header. Until then it is taken to fill the frame, which is what the
@@ -87,7 +90,13 @@ export default function FramePreview({
   const pct = (px: number) => `${(px / frame.height) * 100}%`;
 
   return (
-    <div className={styles.frame} style={{ aspectRatio: `${frame.width} / ${frame.height}` }}>
+    // --frame-ratio lets a parent cap the frame by HEIGHT (width = height ×
+    // ratio) without knowing the format — the phone editor does, so the
+    // settings under the frame stay on the same screen as it.
+    <div
+      className={styles.frame}
+      style={{ aspectRatio: `${frame.width} / ${frame.height}`, ['--frame-ratio' as string]: frame.width / frame.height }}
+    >
       {/* The picture fitted into the whole frame and centred over a blurred
           copy of itself — the same fit buildFitChain does in the render. The
           headline never takes room from it. */}
@@ -111,7 +120,7 @@ export default function FramePreview({
 
       {lines.length > 0 && (
         <div
-          className={styles.band}
+          className={`${styles.band} ${focus === 'headline' ? styles.focused : ''}`}
           style={{
             top: pct(layout.bandTop),
             height: pct(band),
@@ -133,7 +142,7 @@ export default function FramePreview({
         </div>
       )}
 
-      {captions && <CaptionOverlay line={captions.line} look={captions.look} topMarginRatio={topClearance} />}
+      {captions && <CaptionOverlay line={captions.line} look={captions.look} topMarginRatio={topClearance} focused={focus === 'captions'} />}
     </div>
   );
 }

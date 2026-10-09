@@ -50,6 +50,16 @@ const TEMPLATES: { value: VideoTemplate; level: string; title: string; descripti
   },
 ];
 
+// The tabs of the look panel. Subtitles and the headline share three of them
+// by name, which is why the panel always says which of the two it is changing.
+const SUBTITLE_TABS = [['style', 'Стиль'], ['font', 'Шрифт'], ['color', 'Цвет'], ['size', 'Размер'], ['position', 'Позиция']] as const;
+const HEADLINE_TABS = [['text', 'Текст'], ['font', 'Шрифт'], ['size', 'Размер'], ['color', 'Цвет']] as const;
+type SubtitleTab = (typeof SUBTITLE_TABS)[number][0];
+type HeadlineTab = (typeof HEADLINE_TABS)[number][0];
+// "No captions" is offered as one more style rather than a separate switch:
+// it is the answer to the same question — what should the words look like.
+const NO_SUBTITLES = '__none';
+
 const STATUS_LABEL: Record<string, string> = { processing: 'Рендерится', awaiting_review: 'Проверьте субтитры', completed: 'Готово', failed: 'Ошибка' };
 
 // Languages the speech models transcribe only approximately. Measured on real
@@ -180,6 +190,11 @@ export default function VideoEditView() {
   // was a choice, and what Reels, TikTok and Shorts all want.
   const [aspectRatio, setAspectRatio] = useState('9_16');
   const [removeBreaths, setRemoveBreaths] = useState(false);
+  // Which of the two things on the frame the settings below change, and the
+  // tab open for each — kept apart so switching back lands where you were.
+  const [target, setTarget] = useState<'subs' | 'headline'>('subs');
+  const [subsTab, setSubsTab] = useState<SubtitleTab>('style');
+  const [headTab, setHeadTab] = useState<HeadlineTab>('text');
   // Off by default: removing ambience is right for a street recording and
   // wrong for anything where the background is part of the shot.
   // Line edits for the job currently under review, keyed by job id.
@@ -394,6 +409,7 @@ export default function VideoEditView() {
     }
   }
 
+  const hasHeadline = headline.trim() !== '';
   const processingCount = jobs.filter((j) => j.status === 'processing' && !j.awaiting_worker).length;
 
   // Why the submit button is unavailable, in the order the user hits them:
@@ -475,150 +491,15 @@ export default function VideoEditView() {
                 )}
               </label>
 
-              {/* Shown in the frame that is actually selected, so choosing
-                  1:1 over 9:16 is a thing you see rather than a thing you
-                  imagine. The source keeps its own proportions inside it —
-                  nothing here crops, and a preview that cropped would promise
-                  a framing the renderer does not do. */}
-              {filePreviewUrl && (
-                <div className={styles.previewStage}>
-                  {/* The whole output frame: the headline band, the picture
-                      moved down to make room for it exactly as the renderer
-                      moves it, and the captions over both. Drawn rather than
-                      rendered, so every typeface and colour can be tried at
-                      once — the combinations run to the hundreds. The caption
-                      words are a sample: nothing has been transcribed yet. */}
-                  <FramePreview
-                    src={filePreviewUrl}
-                    aspectRatio={aspectRatio}
-                    headline={headline}
-                    headlineChoice={{ font: headlineFont, size: headlineSize, colour: headlineColor }}
-                    captions={subtitles && captionLook ? { line: SAMPLE_CAPTION, look: captionLook } : null}
-                    fontEmRatios={fontEmRatios}
-                  />
-                  <p className={styles.previewNote}>
-                    {subtitles && captionLook
-                      ? 'Так встанет кадр, заголовок и субтитры. Текст субтитров здесь — пример: настоящие возьмутся из вашей речи.'
-                      : 'Так встанет кадр и заголовок.'}
-                  </p>
-                </div>
-              )}
-
+              {/* About the recording, chosen once: the frame it goes into and
+                  what to do with its sound. Everything after is about the look. */}
               <div className={styles.controls}>
-                {/* First, because it is the canvas everything below is placed
-                    into: the band, the captions and their margins are all
-                    fractions of this frame. */}
                 <PillPicker
                   label="Формат кадра"
                   options={aspectRatios}
                   value={aspectRatio}
                   onChange={setAspectRatio}
                 />
-
-                {/* Then the headline — the one thing here nobody can generate
-                    for you — and the limit is shown while typing rather than
-                    enforced by a renderer that silently drops the overflow. */}
-                <label className={styles.field}>
-                  <span className={styles.fieldLabel}>Заголовок на плашке</span>
-                  <input
-                    className={controls.input}
-                    value={headline}
-                    onChange={(e) => setHeadline(e.target.value.slice(0, headlineMaxChars))}
-                    maxLength={headlineMaxChars}
-                    placeholder="Например: Брось работу прямо сейчас"
-                    aria-label="Заголовок на плашке"
-                  />
-                  <span className={styles.fieldHint}>
-                    {headline
-                      ? `Встанет сверху, видео останется целым · ${headline.length}/${headlineMaxChars}`
-                      : 'Пусто — плашки не будет, видео займёт весь кадр'}
-                  </span>
-                </label>
-
-                {/* Only once there is a headline to style. Shown over an empty
-                    field they are three controls for something that will not
-                    be rendered. */}
-                {headline.trim() !== '' && headlineFonts.length > 0 && (
-                  <div className={styles.pickers}>
-                    <PillPicker
-                      label="Шрифт заголовка"
-                      options={headlineFonts}
-                      value={headlineFont}
-                      onChange={setHeadlineFont}
-                    />
-                    <PillPicker
-                      label="Размер заголовка"
-                      options={headlineSizes}
-                      value={headlineSize}
-                      onChange={setHeadlineSize}
-                    />
-                    <PillPicker
-                      label="Цвет заголовка"
-                      options={headlineColors}
-                      value={headlineColor}
-                      onChange={setHeadlineColor}
-                    />
-                  </div>
-                )}
-
-                {/* Directly above the subtitle settings it switches on and
-                    off. It used to sit between the headline and them, with
-                    the breath switch in between, so the control and the
-                    things it governed were three blocks apart. */}
-                <Switch
-                  checked={subtitles}
-                  onChange={setSubtitles}
-                  label="Вжечь динамические субтитры"
-                />
-
-                {/* Only shown when there is something to style. */}
-                {/* Rows rather than dropdowns. These are chosen by
-                    comparing, and a select shows one option at a time — most
-                    obvious on the colours, where a list of words becomes a
-                    palette the moment each one carries its own dot. The
-                    chosen option's description sits in the row's header, so
-                    the explanation costs no extra line per pill. */}
-                {subtitles && (
-                  <div className={styles.pickers}>
-                    <PillPicker
-                      label="Стиль субтитров"
-                      options={presets}
-                      value={subtitlePreset}
-                      onChange={setSubtitlePreset}
-                    />
-                    <PillPicker
-                      label="Шрифт"
-                      options={subtitleFonts}
-                      value={subtitleFont}
-                      onChange={setSubtitleFont}
-                    />
-                    <PillPicker
-                      label="Цвет"
-                      options={subtitleColors}
-                      value={subtitleColor}
-                      onChange={setSubtitleColor}
-                    />
-                    <PillPicker
-                      label="Размер"
-                      options={subtitleSizes}
-                      value={subtitleSize}
-                      onChange={setSubtitleSize}
-                    />
-                    {/* Placement is its own axis, not part of a style: the
-                        same typography belongs over the face on one clip
-                        and under it on the next. */}
-                    <PillPicker
-                      label="Положение"
-                      options={positions}
-                      value={subtitlePosition}
-                      onChange={setSubtitlePosition}
-                    />
-                  </div>
-                )}
-
-                {/* Last: it is about the sound, not the look, and everything
-                    above it is about the look. The hint says what it does
-                    for the person — how it works is not their problem. */}
                 <Switch
                   checked={removeBreaths}
                   onChange={setRemoveBreaths}
@@ -626,6 +507,141 @@ export default function VideoEditView() {
                   hint="Вырезает вдохи между фразами"
                 />
               </div>
+
+              {/* The look, laid out the way phone editors (CapCut, Instagram)
+                  do it: the frame on top, then what you are changing, then one
+                  row of choices. It replaced ten pickers stacked in a column —
+                  every option still here, but the frame no longer scrolls away
+                  while you choose, and only one row is on screen at a time. */}
+              <section className={styles.studio} aria-label="Оформление">
+                {/* Shown in the frame that is actually selected, so choosing
+                    1:1 over 9:16 is a thing you see rather than a thing you
+                    imagine. Drawn rather than rendered, so every typeface and
+                    colour can be tried at once; the caption words are a sample,
+                    since nothing has been transcribed yet. */}
+                {filePreviewUrl && (
+                  <div className={styles.previewStage}>
+                    <FramePreview
+                      src={filePreviewUrl}
+                      aspectRatio={aspectRatio}
+                      headline={headline}
+                      headlineChoice={{ font: headlineFont, size: headlineSize, colour: headlineColor }}
+                      captions={subtitles && captionLook ? { line: SAMPLE_CAPTION, look: captionLook } : null}
+                      fontEmRatios={fontEmRatios}
+                      focus={target === 'subs' ? 'captions' : 'headline'}
+                    />
+                    <p className={styles.previewNote}>
+                      Пунктиром выделено то, что вы меняете.{subtitles && captionLook ? ' Слова субтитров — пример: настоящие возьмутся из вашей речи.' : ''}
+                    </p>
+                  </div>
+                )}
+
+                {/* First the thing, then its settings. "Шрифт" and "Цвет"
+                    exist for both, and without saying which one is being
+                    changed people set the headline colour looking for the
+                    captions'. */}
+                <div className={styles.targetSwitch} role="group" aria-label="Что меняем">
+                  {(['subs', 'headline'] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      aria-pressed={target === t}
+                      className={`${styles.targetButton} ${target === t ? styles.targetButtonOn : ''}`}
+                      onClick={() => setTarget(t)}
+                    >
+                      {t === 'subs' ? 'Субтитры' : 'Заголовок'}
+                    </button>
+                  ))}
+                </div>
+
+                <div className={styles.studioTabs} role="group" aria-label={target === 'subs' ? 'Настройки субтитров' : 'Настройки заголовка'}>
+                  {(target === 'subs' ? SUBTITLE_TABS : HEADLINE_TABS).map(([id, name]) => {
+                    const on = (target === 'subs' ? subsTab : headTab) === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        aria-pressed={on}
+                        className={`${styles.studioTab} ${on ? styles.studioTabOn : ''}`}
+                        onClick={() => (target === 'subs' ? setSubsTab(id as SubtitleTab) : setHeadTab(id as HeadlineTab))}
+                      >
+                        {name}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className={styles.studioPanel}>
+                  {target === 'subs' ? (
+                    <>
+                      {subsTab === 'style' && (
+                        <PillPicker
+                          label="Стиль субтитров"
+                          options={[...presets, { id: NO_SUBTITLES, label: 'Без субтитров', description: 'Видео без подписей' }]}
+                          value={subtitles ? subtitlePreset : NO_SUBTITLES}
+                          onChange={(id) => {
+                            if (id === NO_SUBTITLES) return setSubtitles(false);
+                            setSubtitles(true);
+                            setSubtitlePreset(id);
+                          }}
+                        />
+                      )}
+                      {subsTab === 'font' && (
+                        <PillPicker label="Шрифт субтитров" options={subtitleFonts} value={subtitleFont} onChange={setSubtitleFont} disabled={!subtitles} />
+                      )}
+                      {subsTab === 'color' && (
+                        <PillPicker label="Цвет подсветки слова" options={subtitleColors} value={subtitleColor} onChange={setSubtitleColor} disabled={!subtitles} />
+                      )}
+                      {subsTab === 'size' && (
+                        <PillPicker label="Размер субтитров" options={subtitleSizes} value={subtitleSize} onChange={setSubtitleSize} disabled={!subtitles} />
+                      )}
+                      {/* Placement is its own axis, not part of a style: the
+                          same typography belongs over the face on one clip
+                          and under it on the next. */}
+                      {subsTab === 'position' && (
+                        <PillPicker label="Где стоят субтитры" options={positions} value={subtitlePosition} onChange={setSubtitlePosition} disabled={!subtitles} />
+                      )}
+                      {!subtitles && subsTab !== 'style' && (
+                        <p className={styles.studioNote}>Субтитры выключены — выберите стиль во вкладке «Стиль».</p>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {/* The limit is shown while typing rather than enforced
+                          by a renderer that silently drops the overflow. */}
+                      {headTab === 'text' && (
+                        <label className={styles.field}>
+                          <span className={styles.fieldLabel}>Текст заголовка</span>
+                          <input
+                            className={controls.input}
+                            value={headline}
+                            onChange={(e) => setHeadline(e.target.value.slice(0, headlineMaxChars))}
+                            maxLength={headlineMaxChars}
+                            placeholder="Например: Брось работу прямо сейчас"
+                          />
+                          <span className={styles.fieldHint}>
+                            {headline
+                              ? `Встанет сверху, видео останется целым · ${headline.length}/${headlineMaxChars}`
+                              : 'Пусто — плашки не будет, видео займёт весь кадр'}
+                          </span>
+                        </label>
+                      )}
+                      {headTab === 'font' && (
+                        <PillPicker label="Шрифт заголовка" options={headlineFonts} value={headlineFont} onChange={setHeadlineFont} disabled={!hasHeadline} />
+                      )}
+                      {headTab === 'size' && (
+                        <PillPicker label="Размер заголовка" options={headlineSizes} value={headlineSize} onChange={setHeadlineSize} disabled={!hasHeadline} />
+                      )}
+                      {headTab === 'color' && (
+                        <PillPicker label="Цвет заголовка" options={headlineColors} value={headlineColor} onChange={setHeadlineColor} disabled={!hasHeadline} />
+                      )}
+                      {!hasHeadline && headTab !== 'text' && (
+                        <p className={styles.studioNote}>Сначала напишите текст во вкладке «Текст» — без него плашки не будет.</p>
+                      )}
+                    </>
+                  )}
+                </div>
+              </section>
             </>
           ) : (
             <label className={styles.field}>

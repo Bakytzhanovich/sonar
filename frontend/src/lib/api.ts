@@ -361,6 +361,8 @@ export interface HeadlineOption {
   id: string;
   label: string;
   description: string;
+  /** The typeface itself, on font options — so a choice can be shown in it. */
+  family?: string;
 }
 
 // Shape of the finished frame. Picks the canvas the render pads into — it
