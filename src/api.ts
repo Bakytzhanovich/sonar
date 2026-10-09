@@ -68,6 +68,7 @@ import { getOrCreateVapidKeys } from './vapidKeys';
 import type {
   Bot,
   Carousel,
+  ContactProfile,
   CarouselSlide,
   FlowDefinition,
   GeneratedScript,
@@ -898,6 +899,9 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       botId: bot.id,
       externalUserId: DEMO_EXTERNAL_USER_ID,
       messageText,
+      // Named, so the first contact a new customer meets in their CRM reads
+      // as a person and says plainly it is not a real one.
+      profile: { displayName: 'Демо-контакт' },
       isTest: false,
     });
     const subscriber = await queryOne<Subscriber>(
@@ -2945,6 +2949,17 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   }));
 
   // ---- Incoming message handling -----------------------------------------
+  // A sender's name and handle as the event gives them — trimmed, capped, and
+  // dropped when blank. The handle loses a leading "@" and anything Instagram
+  // would not allow in one, since it is shown back as "@handle" and a stray
+  // character there reads as the person's real name being wrong.
+  function parseContactProfile(body: unknown): ContactProfile {
+    const b = (body ?? {}) as { name?: unknown; username?: unknown };
+    const displayName = typeof b.name === 'string' ? b.name.trim().slice(0, 100) : '';
+    const username = typeof b.username === 'string' ? b.username.trim().replace(/^@+/, '').replace(/[^A-Za-z0-9._]/g, '').slice(0, 30) : '';
+    return { ...(displayName ? { displayName } : {}), ...(username ? { username } : {}) };
+  }
+
   // Shared by the two entry points below: the public mock webhook (Meta's
   // stand-in) and the authenticated in-product simulator. Both must apply
   // the same event_id dedup contract that the real POST /webhooks/instagram
@@ -2954,7 +2969,8 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     eventId: string,
     externalUserId: string,
     messageText: string,
-    rawPayload: unknown
+    rawPayload: unknown,
+    profile: ContactProfile = {}
   ): Promise<{ status: 'already_processed' } | { outcome: Awaited<ReturnType<typeof runFlow>> }> {
     const claimed = await tryClaimWebhookEvent(db, eventId, bot.id, rawPayload);
     if (!claimed) return { status: 'already_processed' };
@@ -2964,6 +2980,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       botId: bot.id,
       externalUserId,
       messageText,
+      profile,
       isTest: false,
     });
 
@@ -2989,12 +3006,13 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     if (!messageText) return res.status(400).json({ error: 'messageText is required' });
 
     const eventId = randomUUID();
+    const profile = parseContactProfile(req.body);
     const result = await handleIncomingMessage(bot, eventId, externalUserId, messageText, {
       source: 'in_product_simulator',
       eventId,
       externalUserId,
       messageText,
-    });
+    }, profile);
     res.json(result);
   }));
 
@@ -3026,7 +3044,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     const bot = await queryOne<Bot>(db, `SELECT * FROM bots WHERE external_account_id = ?`, externalAccountId);
     if (!bot) return res.status(404).json({ error: 'unknown externalAccountId' });
 
-    res.json(await handleIncomingMessage(bot, eventId, externalUserId, messageText, req.body));
+    res.json(await handleIncomingMessage(bot, eventId, externalUserId, messageText, req.body, parseContactProfile(req.body)));
   }));
 
   // Not every error reaching here is the server's fault. express.json()

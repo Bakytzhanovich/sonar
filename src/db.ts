@@ -316,6 +316,9 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE reel_analyses ADD COLUMN IF NOT EXISTS audio_hash TEXT`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_consent_at TIMESTAMPTZ`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_policy_version TEXT`,
+  // Who a contact is, as the platform names them (see subscribers in schema.sql).
+  `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS display_name TEXT`,
+  `ALTER TABLE subscribers ADD COLUMN IF NOT EXISTS username TEXT`,
 ];
 
 async function applyMigrations(client: PoolClient): Promise<void> {

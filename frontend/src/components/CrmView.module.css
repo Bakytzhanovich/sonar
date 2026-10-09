@@ -965,6 +965,13 @@
   white-space: nowrap;
 }
 
+.contactHandle {
+  display: block;
+  color: var(--foreground-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
 .activityState {
   display: inline-flex;
   align-items: center;

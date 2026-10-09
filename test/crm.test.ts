@@ -52,6 +52,37 @@ describe('CRM: subscribers, tags, notes, timeline', () => {
     expect(res.body.subscribers[0]).toMatchObject({ external_user_id: 'u1', lead_status: 'new', tags: [] });
   });
 
+  it('keeps the name and handle a message carries, and a nameless message does not erase them', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    const send = (body: object, eventId: string) =>
+      request(app)
+        .post('/webhooks/mock/instagram')
+        .set('x-sonar-webhook-secret', 'test-mock-webhook-secret')
+        .send({ eventId, externalAccountId: 'ig-crm', externalUserId: '17841400000001', messageText: 'сколько стоит?', ...body });
+    const list = async () =>
+      (await request(app).get(`/api/bots/${botId}/subscribers`).set('Authorization', `Bearer ${apiKey}`)).body.subscribers;
+
+    // "@" and a stray space are not part of an Instagram handle.
+    await send({ name: '  Айгерим Сапарова ', username: '@aigerim.fit almaty' }, 'evt-n1');
+    expect((await list())[0]).toMatchObject({ display_name: 'Айгерим Сапарова', username: 'aigerim.fitalmaty' });
+
+    await send({}, 'evt-n2');
+    expect((await list())[0]).toMatchObject({ display_name: 'Айгерим Сапарова', username: 'aigerim.fitalmaty' });
+
+    await send({ name: 'Айгерим С.' }, 'evt-n3');
+    expect((await list())[0]).toMatchObject({ display_name: 'Айгерим С.', username: 'aigerim.fitalmaty' });
+  });
+
+  it('a contact with no name on record has nulls, not empty strings', async () => {
+    const { apiKey } = await createTenant(app);
+    const botId = await createBot(app, apiKey);
+    await messageBot(app, 'ig-crm', 'u-anon', 'привет', 'evt-a1');
+
+    const res = await request(app).get(`/api/bots/${botId}/subscribers`).set('Authorization', `Bearer ${apiKey}`);
+    expect(res.body.subscribers[0]).toMatchObject({ display_name: null, username: null });
+  });
+
   it('gets a subscriber profile and updates lead status', async () => {
     const { apiKey } = await createTenant(app);
     const botId = await createBot(app, apiKey);

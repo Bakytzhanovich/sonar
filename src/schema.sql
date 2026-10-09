@@ -99,6 +99,13 @@ CREATE TABLE subscribers (
   -- separate table because it's 1:1 and single-valued — there's exactly
   -- one current status per subscriber, not a history of them.
   lead_status        TEXT NOT NULL DEFAULT 'new', -- new | in_progress | client
+  -- Who the contact is, as the platform names them. external_user_id is an
+  -- opaque platform id (Instagram's is a long number), and a CRM showing
+  -- that told the blogger nothing about who wrote. Both nullable: Instagram's
+  -- message webhook carries only the id, and the profile is a separate
+  -- Graph API call — until it is made, the id is all there is.
+  display_name       TEXT,
+  username           TEXT,
   UNIQUE (bot_id, external_user_id)
 );
 

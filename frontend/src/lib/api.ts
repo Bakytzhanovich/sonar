@@ -95,6 +95,9 @@ export interface Subscriber {
   first_seen_at: string;
   last_interacted_at: string;
   lead_status: LeadStatus;
+  /** How the platform names the contact; null until it has said. */
+  display_name: string | null;
+  username: string | null;
   tags: Tag[];
 }
 

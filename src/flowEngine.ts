@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { exec, isUniqueViolation, queryOne, type Db } from './db';
 import { getActiveTriggersForBot, hasRunToday, matchTrigger } from './triggerMatcher';
 import type {
+  ContactProfile,
   Flow,
   FlowDefinition,
   FlowRunFailureReason,
@@ -19,6 +20,8 @@ export interface RunFlowInput {
   botId: string;
   externalUserId: string;
   messageText: string;
+  /** How the platform names the sender, when the event carries it. */
+  profile?: ContactProfile;
   /** Test-mode runs never touch subscribers/flow_runs/mock_sent_messages. */
   isTest?: boolean;
   /** Injectable clock, mainly for tests exercising the 24h window. */
@@ -45,7 +48,7 @@ export async function runFlow(db: Db, input: RunFlowInput): Promise<RunFlowOutco
   // exist for anyone who ever messaged the bot, not just people whose
   // message happened to match a keyword. Previously a non-matching
   // message touched the database at all — that made it invisible to CRM.
-  const subscriber = await findOrCreateSubscriber(db, input.tenantId, input.botId, input.externalUserId, now, isTest);
+  const subscriber = await findOrCreateSubscriber(db, input.tenantId, input.botId, input.externalUserId, now, isTest, input.profile);
   if (!isTest) {
     await logMessage(db, { tenantId: input.tenantId, botId: input.botId, subscriberId: subscriber.id, direction: 'in', content: input.messageText, now });
   }
@@ -140,17 +143,36 @@ async function findOrCreateSubscriber(
   botId: string,
   externalUserId: string,
   now: Date,
-  isTest: boolean
+  isTest: boolean,
+  profile: ContactProfile = {}
 ): Promise<Subscriber> {
+  const displayName = profile.displayName ?? null;
+  const username = profile.username ?? null;
   const existing = await queryOne<Subscriber>(
     db,
-    `SELECT id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at, lead_status
+    `SELECT id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at, lead_status, display_name, username
      FROM subscribers WHERE bot_id = ? AND external_user_id = ?`,
     botId,
     externalUserId
   );
 
-  if (existing) return existing;
+  if (existing) {
+    // A name only ever replaces an older one, never erases it: most events
+    // carry no profile at all, and a missing name is not news that the
+    // person has none.
+    const changed =
+      (displayName !== null && displayName !== existing.display_name) || (username !== null && username !== existing.username);
+    if (changed && !isTest) {
+      await exec(
+        db,
+        `UPDATE subscribers SET display_name = COALESCE(?, display_name), username = COALESCE(?, username) WHERE id = ?`,
+        displayName,
+        username,
+        existing.id
+      );
+    }
+    return { ...existing, display_name: displayName ?? existing.display_name, username: username ?? existing.username };
+  }
 
   const fresh: Subscriber = {
     id: randomUUID(),
@@ -160,6 +182,8 @@ async function findOrCreateSubscriber(
     first_seen_at: now.toISOString(),
     last_interacted_at: now.toISOString(),
     lead_status: 'new',
+    display_name: displayName,
+    username,
   };
 
   // Test mode must not create real subscriber rows either — a synthetic
@@ -169,14 +193,16 @@ async function findOrCreateSubscriber(
     try {
       await exec(
         db,
-        `INSERT INTO subscribers (id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO subscribers (id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at, display_name, username)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         fresh.id,
         fresh.tenant_id,
         fresh.bot_id,
         fresh.external_user_id,
         fresh.first_seen_at,
-        fresh.last_interacted_at
+        fresh.last_interacted_at,
+        displayName,
+        username
       );
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
@@ -189,7 +215,7 @@ async function findOrCreateSubscriber(
       // throwing the message away.
       const winner = await queryOne<Subscriber>(
         db,
-        `SELECT id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at, lead_status
+        `SELECT id, tenant_id, bot_id, external_user_id, first_seen_at, last_interacted_at, lead_status, display_name, username
          FROM subscribers WHERE bot_id = ? AND external_user_id = ?`,
         botId,
         externalUserId

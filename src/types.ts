@@ -103,6 +103,14 @@ export interface Subscriber {
   first_seen_at: string;
   last_interacted_at: string;
   lead_status: LeadStatus;
+  display_name?: string | null;
+  username?: string | null;
+}
+
+/** How the platform names a contact; either part may be unknown. */
+export interface ContactProfile {
+  displayName?: string;
+  username?: string;
 }
 
 export interface WebhookEvent {

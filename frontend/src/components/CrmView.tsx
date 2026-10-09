@@ -46,6 +46,18 @@ function contactInitial(identifier: string): string {
   return identifier.trim().charAt(0).toLocaleUpperCase('ru') || '•';
 }
 
+// The person as the blogger would recognise them: their name, else their
+// handle, and only as a last resort the platform's id — which for Instagram
+// is a long number that says nothing about who wrote.
+function contactName(subscriber: Pick<Subscriber, 'display_name' | 'username' | 'external_user_id'>): string {
+  return subscriber.display_name || (subscriber.username ? `@${subscriber.username}` : subscriber.external_user_id);
+}
+
+/** The handle, when the name above is not already it. */
+function contactHandle(subscriber: Pick<Subscriber, 'display_name' | 'username'>): string | null {
+  return subscriber.display_name && subscriber.username ? `@${subscriber.username}` : null;
+}
+
 function formatRelativeTime(value: string, now: number): string {
   const timestamp = new Date(value).getTime();
   const difference = Math.max(0, now - timestamp);
@@ -200,6 +212,8 @@ export default function CrmView() {
     return subscribers.filter(
       (subscriber) =>
         normalizeSegment(subscriber.external_user_id).includes(query) ||
+        normalizeSegment(subscriber.display_name ?? '').includes(query) ||
+        normalizeSegment(subscriber.username ?? '').includes(query) ||
         subscriber.tags.some((tag) => normalizeSegment(tag.name).includes(query))
     );
   }, [searchQuery, subscribers]);
@@ -645,7 +659,7 @@ export default function CrmView() {
                         <span className={styles.onboardingEyebrow}>Шаг 3 из 4 · CRM</span>
                         <h2 id="crm-onboarding-title" className={styles.onboardingTitle}>Зафиксируйте результат диалога</h2>
                       </div>
-                      {selected && <span className={styles.onboardingContact}>{selected.external_user_id}</span>}
+                      {selected && <span className={styles.onboardingContact}>{contactName(selected)}</span>}
                     </div>
 
                     <p className={styles.onboardingDescription}>
@@ -747,7 +761,7 @@ export default function CrmView() {
                         className={`${controls.input} ${styles.filterInput}`}
                         value={searchQuery}
                         onChange={(event) => setSearchQuery(event.target.value)}
-                        placeholder="ID контакта или тег"
+                        placeholder="Имя, ник или тег"
                         type="search"
                       />
                     </label>
@@ -855,12 +869,12 @@ export default function CrmView() {
                                       type="button"
                                       className={styles.contactButton}
                                       onClick={(event) => void selectSubscriber(subscriber, 'conversation', event.currentTarget)}
-                                      aria-label={`Открыть контакт ${subscriber.external_user_id}`}
+                                      aria-label={`Открыть контакт ${contactName(subscriber)}`}
                                       aria-current={isSelected ? 'true' : undefined}
                                     >
-                                      <span className={styles.contactAvatar} aria-hidden="true">{contactInitial(subscriber.external_user_id)}</span>
+                                      <span className={styles.contactAvatar} aria-hidden="true">{contactInitial(contactName(subscriber).replace(/^@/, ''))}</span>
                                       <span className={styles.contactText}>
-                                        <strong>{subscriber.external_user_id}</strong>
+                                        <strong>{contactName(subscriber)}</strong>
                                         <span>
                                           {active ? (
                                             <>
@@ -898,9 +912,9 @@ export default function CrmView() {
                                 aria-current={subscriber.id === selected?.id ? 'true' : undefined}
                               >
                                 <span className={styles.mobileContactHeading}>
-                                  <span className={styles.contactAvatar} aria-hidden="true">{contactInitial(subscriber.external_user_id)}</span>
+                                  <span className={styles.contactAvatar} aria-hidden="true">{contactInitial(contactName(subscriber).replace(/^@/, ''))}</span>
                                   <span className={styles.contactText}>
-                                    <strong>{subscriber.external_user_id}</strong>
+                                    <strong>{contactName(subscriber)}</strong>
                                     <span>{active ? 'Активность за 15 минут' : formatRelativeTime(subscriber.last_interacted_at, now)}</span>
                                   </span>
                                   <StatusBadge status={subscriber.lead_status} />
@@ -939,9 +953,9 @@ export default function CrmView() {
                                       aria-current={subscriber.id === selected?.id ? 'true' : undefined}
                                     >
                                       <span className={styles.kanbanContact}>
-                                        <span className={styles.contactAvatar} aria-hidden="true">{contactInitial(subscriber.external_user_id)}</span>
+                                        <span className={styles.contactAvatar} aria-hidden="true">{contactInitial(contactName(subscriber).replace(/^@/, ''))}</span>
                                         <span>
-                                          <strong>{subscriber.external_user_id}</strong>
+                                          <strong>{contactName(subscriber)}</strong>
                                           <time dateTime={subscriber.last_interacted_at}>{formatRelativeTime(subscriber.last_interacted_at, now)}</time>
                                         </span>
                                       </span>
@@ -1014,9 +1028,10 @@ export default function CrmView() {
               </div>
 
               <header className={styles.contactHeader}>
-                <span className={`${styles.contactAvatar} ${styles.contactAvatarLarge}`} aria-hidden="true">{contactInitial(selected.external_user_id)}</span>
+                <span className={`${styles.contactAvatar} ${styles.contactAvatarLarge}`} aria-hidden="true">{contactInitial(contactName(selected).replace(/^@/, ''))}</span>
                 <div className={styles.contactHeaderCopy}>
-                  <h2 title={selected.external_user_id}>{selected.external_user_id}</h2>
+                  <h2 title={contactName(selected)}>{contactName(selected)}</h2>
+                  {contactHandle(selected) && <span className={styles.contactHandle}>{contactHandle(selected)}</span>}
                   <span className={styles.activityState}>
                     {selectedActive ? <><LiveDot label="взаимодействовал за последние 15 минут" />Недавняя активность</> : `Последний диалог ${formatRelativeTime(selected.last_interacted_at, now)}`}
                   </span>
