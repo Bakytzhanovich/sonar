@@ -4,6 +4,7 @@ import type { Express } from 'express';
 import type { Db } from '../src/db';
 import { createApp } from '../src/api';
 import { createTestDb, dropTestDb } from './dbTestHelper';
+import { sessionTokenFrom } from './sessionTestHelper';
 import { signSession } from '../src/auth';
 import { queryOne } from '../src/db';
 import { PRIVACY_POLICY_VERSION } from '../src/privacyPolicy';
@@ -28,11 +29,12 @@ describe('auth', () => {
       expect(res.status).toBe(201);
       expect(res.body.user.email).toBe('new@example.com');
       expect(res.body.tenant.id).toBeTruthy();
-      expect(res.body.sessionToken).toBeTruthy();
-      // The session must actually work, not just be present in the response.
+      // Only in the httpOnly cookie — never in a body a page script can read.
+      expect(res.body.sessionToken).toBeUndefined();
       expect(res.body.user.password_hash).toBeUndefined();
 
-      const me = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${res.body.sessionToken}`);
+      // The session must actually work, not just be present.
+      const me = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${sessionTokenFrom(res)}`);
       expect(me.status).toBe(200);
       expect(me.body.user.email).toBe('new@example.com');
       expect(me.body.tenant.id).toBe(res.body.tenant.id);
@@ -89,7 +91,7 @@ describe('auth', () => {
   describe('login', () => {
     async function signup(email: string, password: string) {
       const res = await request(app).post('/api/auth/signup').send({ email, password, consent: true });
-      return res.body as { user: { id: string }; tenant: { id: string }; sessionToken: string };
+      return res.body as { user: { id: string }; tenant: { id: string } };
     }
 
     it('logs in with correct credentials', async () => {
@@ -98,7 +100,8 @@ describe('auth', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.user.email).toBe('login@example.com');
-      expect(res.body.sessionToken).toBeTruthy();
+      expect(res.body.sessionToken).toBeUndefined();
+      expect(sessionTokenFrom(res)).toBeTruthy();
     });
 
     it('rejects an incorrect password with a generic error', async () => {

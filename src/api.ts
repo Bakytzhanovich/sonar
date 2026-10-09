@@ -493,7 +493,10 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     // stays in the body for non-browser clients (the CLI demo, tests, any
     // integration), which cannot receive a cookie jar.
     setSessionCookie(res, sessionToken);
-    res.status(201).json({ user: { id: userId, email }, tenant: { id: tenantId, name: email }, sessionToken });
+    // The token travels only in the httpOnly cookie. Echoing it in the body
+    // put it within reach of any script on the page — the one thing the
+    // cookie exists to prevent — and the frontend never read it from there.
+    res.status(201).json({ user: { id: userId, email }, tenant: { id: tenantId, name: email } });
   }));
 
   app.post('/api/auth/login', authRateLimit, asyncHandler(async (req, res) => {
@@ -549,7 +552,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     const tenant = await queryOne<{ id: string; name: string }>(db, `SELECT id, name FROM tenants WHERE id = ?`, user.tenant_id);
     const sessionToken = signSession({ userId: user.id, tenantId: user.tenant_id });
     setSessionCookie(res, sessionToken);
-    res.json({ user: { id: user.id, email: user.email }, tenant, sessionToken });
+    res.json({ user: { id: user.id, email: user.email }, tenant });
   }));
 
   // Signing out has to happen server-side now: an httpOnly cookie is by

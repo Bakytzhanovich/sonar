@@ -4,6 +4,7 @@ import type { Express } from 'express';
 import { exec, type Db } from '../src/db';
 import { createApp } from '../src/api';
 import { createTestDb, dropTestDb } from './dbTestHelper';
+import { sessionTokenFrom } from './sessionTestHelper';
 import type { Role } from '../src/roles';
 
 // The rules themselves are unit-tested in roles.test.ts. What this file is
@@ -35,7 +36,7 @@ describe('role enforcement over HTTP', () => {
     // Signup always makes an owner — it creates the workspace. A weaker role
     // arrives by invitation, which does not exist yet, so it is set directly.
     await exec(db, `UPDATE users SET role = ? WHERE id = ?`, role, res.body.user.id);
-    return res.body.sessionToken as string;
+    return sessionTokenFrom(res);
   }
 
   const get = (token: string, path: string) => request(app).get(path).set('Authorization', `Bearer ${token}`);
