@@ -357,6 +357,41 @@ export interface SubtitlePosition {
 
 // Typeface, size step and colour for the headline band. Same shape for all
 // three, so one picker component renders any of them.
+// ---- Home (GET /api/home, src/home.ts) --------------------------------------
+
+export interface UnansweredQuestion {
+  subscriberId: string;
+  name: string;
+  text: string;
+  askedAt: string;
+  windowClosesAt: string;
+}
+
+export interface HomeJob {
+  id: string;
+  title: string;
+  status: 'processing' | 'awaiting_review';
+  progress: number;
+}
+
+export interface HomeState {
+  hasBot: boolean;
+  activeDialogs: number;
+  unanswered: UnansweredQuestion[];
+  recentMessages: Array<{ name: string; text: string; at: string }>;
+  jobs: HomeJob[];
+  topic: ContentTopic | null;
+  topicCount: number;
+  nextPost: { caption: string; platform: string; scheduledAt: string } | null;
+  week: { inbound: number; clients: number };
+}
+
+export type NextStep =
+  | { kind: 'reply'; question: UnansweredQuestion; others: number }
+  | { kind: 'review_captions'; job: HomeJob }
+  | { kind: 'film_topic'; topic: ContentTopic }
+  | { kind: 'make_video' };
+
 export interface HeadlineOption {
   id: string;
   label: string;
@@ -742,6 +777,9 @@ export const api = {
     apiRequest(config, 'GET', `/api/content-recommendations${segment ? `?segment=${encodeURIComponent(segment)}` : ''}`) as Promise<{
       recommendations: ContentRecommendation[];
     }>,
+
+  getHome: (config: ApiConfig) =>
+    apiRequest(config, 'GET', '/api/home') as Promise<{ state: HomeState; step: NextStep; more: NextStep[] }>,
 
   getContentPlan: (config: ApiConfig) =>
     apiRequest(config, 'GET', '/api/content-plan') as Promise<{ plan: ContentPlan | null; readiness: PlanReadiness }>,

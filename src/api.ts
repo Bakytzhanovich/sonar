@@ -43,6 +43,7 @@ import { asRole, canPerform, requiredRole, ROLE_LABELS } from './roles';
 import { SMART_CUT_WORKER, isWorkerOnline } from './workerHealth';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
+import { chooseNextStep, gatherHomeState } from './home';
 import { generateCarouselSlides } from './carouselGeneration';
 import { PLATFORM_NAME, publishDuePosts } from './publisher';
 import { authorizeUrl, connectWithCode, instagramConfigFromEnv, signState, verifyState, type InstagramAppConfig } from './instagramAuth';
@@ -1256,6 +1257,15 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     });
 
     res.json({ outcome });
+  }));
+
+  // ---- Home ----------------------------------------------------------------
+  // What is happening across the workspace and the one thing worth doing
+  // next (home.ts). Read-only, and every query inside is scoped to the tenant.
+  app.get('/api/home', asyncHandler(async (_req, res) => {
+    const now = new Date();
+    const state = await gatherHomeState(db, res.locals.tenantId as string, now);
+    res.json({ state, ...chooseNextStep(state, now) });
   }));
 
   // ---- Dashboard -----------------------------------------------------------

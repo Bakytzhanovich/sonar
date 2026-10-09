@@ -12,12 +12,12 @@ import styles from './AuthView.module.css';
 import Brand from './Brand';
 import { forgetWorkspaceSelection } from '@/lib/useDevConfig';
 
-// Where a signed-in person lands. The video editor, not the guided chat-bot
-// tour: that tour walks through keywords and demo contacts, which is the part
-// of the product currently switched off pending the personal-data question,
-// while the editor is the part clients have paid for. Someone who wants the
-// tour can still reach /onboarding from the nav.
-const HOME_ROUTE = '/video';
+// Where a signed-in person lands: the home screen, which says what to do
+// next. Not the guided chat-bot tour — that walks through keywords and demo
+// contacts, the part of the product switched off pending the personal-data
+// question — and home leaves the direct out entirely for a workspace without
+// a bot, leading with the video editor clients have paid for instead.
+const HOME_ROUTE = '/home';
 
 export default function LoginView() {
   const router = useRouter();

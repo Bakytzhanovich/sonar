@@ -1,0 +1,155 @@
+/* The home screen. One large step and its reason, the direct beside it on a
+ * wide screen, a short list of what else is pending, and the week's path. */
+
+.page { min-height: 100dvh; display: flex; flex-direction: column; background: var(--background); color: var(--foreground); }
+
+.main {
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 32px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.loading { margin: 0; color: var(--foreground-muted); font-size: var(--text-sm); }
+
+.top { display: flex; flex-wrap: wrap; gap: var(--space-5); align-items: flex-start; }
+
+/* ---- The step ---------------------------------------------------------- */
+
+.next { flex: 999 1 520px; min-width: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.nextLabel { color: var(--foreground-muted); font-size: var(--text-sm); }
+.next h1 {
+  margin: 0;
+  max-width: 680px;
+  font-size: clamp(26px, 4.2vw, 40px);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
+}
+.nextWhy { margin: 0; max-width: 620px; color: var(--foreground-muted); font-size: var(--text-base); line-height: 1.5; }
+
+.quotes { display: flex; flex-wrap: wrap; gap: var(--space-2); max-width: 680px; }
+
+/* The signature asymmetric bubble: a message that came in, corner squared
+ * where it leaves the sender. */
+.bubbleIn {
+  max-width: 100%;
+  padding: 9px 13px;
+  border-radius: 4px 16px 16px 16px;
+  background: var(--bubble-in-bg);
+  font-size: var(--text-base);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); }
+.primary, .secondary {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 22px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  text-decoration: none;
+}
+
+/* ---- The direct -------------------------------------------------------- */
+
+.direct {
+  flex: 1 1 300px;
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.directHead { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); }
+.directHead h2 { margin: 0; font-size: var(--text-lg); }
+.directHead a { min-height: 44px; display: inline-flex; align-items: center; color: var(--accent); font-size: var(--text-sm); }
+.messages { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-3); }
+.message { display: flex; gap: 10px; align-items: flex-start; }
+.avatar {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+.messageBody { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.messageMeta { color: var(--foreground-muted); font-size: var(--text-sm); }
+.direct .bubbleIn { background: var(--surface-hover); font-size: var(--text-sm); }
+
+/* ---- What else is pending ---------------------------------------------- */
+
+.pending { border-top: 1px solid var(--border); padding-top: var(--space-4); }
+.pending h2 { margin: 0 0 var(--space-2); color: var(--foreground-muted); font-size: var(--text-base); font-weight: 600; }
+.pending ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.pendingRow { min-height: 56px; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; color: var(--foreground); text-decoration: none; }
+.pendingRow:hover strong { color: var(--accent); }
+.pendingIcon {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.pendingText { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pendingText strong { font-size: var(--text-base); font-weight: 600; }
+.pendingText span { color: var(--foreground-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+
+/* ---- The week ---------------------------------------------------------- */
+
+.loop {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--border);
+}
+.loopStage {
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-4);
+  background: var(--background);
+  color: var(--foreground);
+  text-decoration: none;
+}
+.loopStage:hover { background: var(--surface); }
+.loopStage span { color: var(--foreground-muted); font-size: var(--text-sm); }
+.loopStage strong { font-size: var(--text-xl); font-weight: 650; font-variant-numeric: tabular-nums; }
+.loopStage small { color: var(--foreground-muted); font-size: var(--text-xs); }
+
+.primary:focus-visible, .secondary:focus-visible, .pendingRow:focus-visible, .loopStage:focus-visible, .directHead a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  .main { gap: var(--space-5); }
+  .primary { flex: 1; }
+  /* On a phone the step and what follows it share the first screen. The
+   * direct gives way only when there is a list to make room for — with
+   * nothing else pending it fills what would otherwise be empty. The week's
+   * numbers would push everything down, so they stay on wide screens. */
+  .directOptional, .loop { display: none; }
+}

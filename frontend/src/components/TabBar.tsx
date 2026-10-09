@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Bot, Film, Images, LayoutGrid, Send, Sparkles, UserRound, Users, Video } from 'lucide-react';
+import { Bot, Film, House, Images, LayoutGrid, Send, Sparkles, UserRound, Users, Video } from 'lucide-react';
 import type { ModuleRoute } from './ModuleNav';
 import LogoutButton from './LogoutButton';
 import { useSession } from '@/lib/useSession';
@@ -17,14 +17,17 @@ import styles from './TabBar.module.css';
 // Four tabs, not seven: past four the labels shrink to unreadable and the
 // targets stop being thumb-sized. The four are the ones with daily work in
 // them; the rest open from "Ещё".
+// Главная leads: it is where a day starts. The bot editor moved to "Ещё" to
+// make room — it is set up once, not opened daily.
 const PRIMARY: { href: ModuleRoute; label: string; Icon: typeof Bot }[] = [
-  { href: '/bot', label: 'Бот', Icon: Bot },
+  { href: '/home', label: 'Главная', Icon: House },
   { href: '/crm', label: 'CRM', Icon: Users },
   { href: '/video', label: 'Видео', Icon: Video },
   { href: '/content-plan', label: 'План', Icon: LayoutGrid },
 ];
 
 const SECONDARY: { href: ModuleRoute; label: string; Icon: typeof Bot }[] = [
+  { href: '/bot', label: 'Редактор бота', Icon: Bot },
   { href: '/reels', label: 'Рилсы', Icon: Film },
   { href: '/carousels', label: 'Карусели', Icon: Images },
   { href: '/scheduler', label: 'Автопостинг', Icon: Send },

@@ -11,9 +11,10 @@ import styles from './ModuleNav.module.css';
 // module screens, so passing it just renders the nav with nothing marked
 // active, letting onboarding link out to every module without claiming to
 // be one.
-export type ModuleRoute = '/bot' | '/crm' | '/reels' | '/carousels' | '/scheduler' | '/content-plan' | '/video' | '/onboarding' | '/account';
+export type ModuleRoute = '/home' | '/bot' | '/crm' | '/reels' | '/carousels' | '/scheduler' | '/content-plan' | '/video' | '/onboarding' | '/account';
 
 const ITEMS: { href: ModuleRoute; label: string }[] = [
+  { href: '/home', label: 'Главная' },
   { href: '/bot', label: 'Редактор бота' },
   { href: '/crm', label: 'CRM' },
   { href: '/reels', label: 'Рилсы' },
