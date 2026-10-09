@@ -72,15 +72,21 @@
 .toggleVisibility {
   position: absolute;
   top: 50%;
-  right: 10px;
+  right: 0;
   transform: translateY(-50%);
+  /* The eye icon is 20px; the hit area around it is the 44px a thumb needs. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
   border: none;
   background: transparent;
   color: var(--accent);
   font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
-  padding: 4px 2px;
+  padding: 0;
 }
 
 .submit {

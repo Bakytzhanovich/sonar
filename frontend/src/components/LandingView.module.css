@@ -106,6 +106,20 @@
   color: var(--accent);
 }
 
+.loginLink {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding-inline: 4px;
+  color: var(--foreground);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.loginLink:hover {
+  color: var(--accent);
+}
+
 .button {
   min-height: 48px;
   display: inline-flex;
@@ -956,6 +970,11 @@
     display: none;
   }
 
+  /* With the nav gone, this is what pushes the pair to the right edge. */
+  .loginLink {
+    margin-left: auto;
+  }
+
   .headerInner {
     gap: 14px;
   }
@@ -1008,7 +1027,7 @@
   }
 
   .header .buttonCompact {
-    min-height: 42px;
+    min-height: 44px;
     padding: 9px 12px;
     font-size: var(--text-sm);
   }

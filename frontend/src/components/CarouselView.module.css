@@ -10,7 +10,9 @@
 .block { display: flex; flex-direction: column; gap: 10px; }
 .blockTitle { margin: 0; font-size: var(--text-base); font-weight: 700; }
 .blockHint { margin: -4px 0 0; color: var(--foreground-muted); font-size: var(--text-xs); }
-.topic { width: 100%; resize: vertical; font-size: var(--text-base) !important; line-height: 1.4; }
+/* textarea.topic, not !important, to outrank Controls' single-class .input:
+   an !important here also outranked the 16px phone floor in globals.css. */
+textarea.topic { width: 100%; resize: vertical; font-size: var(--text-base); line-height: 1.4; }
 .examples { display: flex; flex-wrap: wrap; gap: 6px; }
 button.example {
   padding: 4px 10px;
@@ -134,7 +136,8 @@ button.thumbActive { border-color: var(--accent); }
 
 @media (pointer: coarse) {
   /* Example topics are tapped, not clicked: give them a finger's height. */
-  button.example { min-height: 36px; padding: 6px 12px; }
+  button.example { min-height: 44px; padding: 6px 14px; }
+  .colorRow input[type='color'] { min-width: 44px; min-height: 44px; }
 }
 
 button.deleteLink { padding: 0 6px; border: 0; color: var(--foreground-muted); background: transparent; font: inherit; font-size: var(--text-sm); cursor: pointer; }

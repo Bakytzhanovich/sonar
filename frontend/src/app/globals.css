@@ -204,6 +204,18 @@ html[data-theme='light'] {
   body {
     padding-bottom: calc(62px + env(safe-area-inset-bottom, 0px));
   }
+
+  /* iOS Safari zooms the whole page when a field under 16px takes focus.
+   * Controls.module.css already sizes .input for touch, but a dozen screens
+   * restyle their own fields with a single-class selector that loads later
+   * and quietly wins — so the floor lives here, and !important is what makes
+   * it a floor rather than one more rule in the cascade. Checkbox, radio,
+   * range, colour and file inputs have no text to zoom into. */
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']),
+  select,
+  textarea {
+    font-size: max(16px, 1em) !important;
+  }
 }
 
 /* ---- Caption typefaces ---------------------------------------------------

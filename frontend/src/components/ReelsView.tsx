@@ -318,9 +318,9 @@ export default function ReelsView() {
           {!selected && (
             <div className={styles.uploadPanel}>
               <span className={styles.eyebrow}>АНАЛИЗ КОНТЕНТА</span>
-              <h2>Найди повторяемую механику</h2>
+              <h2>Найдите повторяемую механику</h2>
               <p>
-                Загрузи чужой рилс, который хорошо зашёл: разберём, чем он цепляет и как устроен, и перепишем под твою
+                Загрузите чужой рилс, который хорошо зашёл: разберём, чем он цепляет и как устроен, и перепишем под вашу
                 нишу.
               </p>
               {/* A file, not a link: the server does not download other
@@ -473,7 +473,7 @@ export default function ReelsView() {
 
               <div className={styles.scriptPanel}>
                 <h3>Переписать под свою нишу</h3>
-                <p className={styles.panelHint}>Та же механика, но про твою тему — готовый текст, который можно сразу записать.</p>
+                <p className={styles.panelHint}>Та же механика, но про вашу тему — готовый текст, который можно сразу записать.</p>
                 <div className={styles.nicheRow}>
                   <input
                     className={controls.input}

@@ -12,6 +12,10 @@
   cursor: pointer;
 }
 .bell:hover, .bell[aria-expanded='true'] { color: var(--accent); border-color: var(--accent); }
+/* Same 44px touch floor as Controls.module.css. */
+@media (max-width: 760px) {
+  .bell { width: 44px; height: 44px; }
+}
 .badge {
   position: absolute;
   top: -4px;

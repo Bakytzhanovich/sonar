@@ -181,6 +181,11 @@ export default function LandingView() {
             <a href="#faq">FAQ</a>
           </nav>
 
+          {/* Outside the nav on purpose: the nav collapses on a phone, and a
+              returning customer had no way in short of typing /login. */}
+          <a className={styles.loginLink} href="/login">
+            Войти
+          </a>
           <a className={`${styles.button} ${styles.buttonCompact}`} href={DEMO_CYCLE_URL}>
             Попробовать демо
           </a>

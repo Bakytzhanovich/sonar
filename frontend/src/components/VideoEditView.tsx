@@ -403,10 +403,10 @@ export default function VideoEditView() {
     : template === 'ai_smart_cut'
       ? file
         ? null
-        : 'Выбери файл видео — ИИ-монтажу нужен сам файл, а не ссылка.'
+        : 'Выберите файл видео — ИИ-монтажу нужен сам файл, а не ссылка.'
       : sourceVideoUrl.trim()
         ? null
-        : 'Укажи ссылку на исходник.';
+        : 'Укажите ссылку на исходник.';
 
   return (
     <div className={styles.page}>
@@ -425,11 +425,11 @@ export default function VideoEditView() {
 
         <div className={styles.hero}>
           <div>
-            <h1>Преврати исходник в ролик</h1>
+            <h1>Превратите исходник в ролик</h1>
             {/* Said in what the person gets, not in how we build it: "Уровень 3"
                 and "мок" were our words, and customers read them here. */}
             <p className={styles.lead}>
-              Загрузи запись — Sonar расшифрует речь, вырежет паузы и слова-паразиты и наложит субтитры.
+              Загрузите запись — Sonar расшифрует речь, вырежет паузы и слова-паразиты и наложит субтитры.
               Шумную запись почистит сам, а если речь распознана неуверенно, покажет субтитры на проверку
               перед монтажом.
             </p>
@@ -442,7 +442,7 @@ export default function VideoEditView() {
         <div className={styles.composer}>
           <div className={styles.composerHead}>
             <span className={styles.eyebrow}>НОВЫЙ ПРОЕКТ</span>
-            <h2>Загрузи исходник</h2>
+            <h2>Загрузите исходник</h2>
           </div>
 
           {template === 'ai_smart_cut' ? (
@@ -498,7 +498,7 @@ export default function VideoEditView() {
                   />
                   <p className={styles.previewNote}>
                     {subtitles && captionLook
-                      ? 'Так встанет кадр, заголовок и субтитры. Текст субтитров здесь — пример: настоящие возьмутся из твоей речи.'
+                      ? 'Так встанет кадр, заголовок и субтитры. Текст субтитров здесь — пример: настоящие возьмутся из вашей речи.'
                       : 'Так встанет кадр и заголовок.'}
                   </p>
                 </div>
@@ -929,7 +929,7 @@ export default function VideoEditView() {
               <div>
                 <div className={styles.emptyIcon}>▶</div>
                 <h2>Готов к первому монтажу</h2>
-                <p>Выбери файл и нажми «Смонтировать».</p>
+                <p>Выберите файл и нажмите «Смонтировать».</p>
               </div>
             </div>
           )}
