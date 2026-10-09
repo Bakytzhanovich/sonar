@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { exec, queryAll, queryOne, type Db, type Queryable } from './db';
 import { parseScript, ReelAnalysisError, type ChatModel } from './reelLlm';
+import { WRITING_RULES } from './writingStyle';
 
 // Module 6 — what to film next, read from what buyers asked.
 //
@@ -205,14 +206,18 @@ const PLAN_SYSTEM =
   'title — рабочее название ролика, цепляющее, до 80 символов. segment — точное имя сегмента из входных данных. ' +
   'why — 1–2 предложения: какое конкретное сомнение или желание купивших закрывает ролик и почему он приведёт таких же. ' +
   'Без общих фраз вроде «это важная тема» или «актуально для многих» — только то, что видно в сообщениях. ' +
-  'От 3 до 6 тем, самые сильные первыми. Пиши по-русски.';
+  'От 3 до 6 тем, самые сильные первыми. Пиши по-русски.' +
+  ' ' +
+  WRITING_RULES;
 
 const SCRIPT_SYSTEM =
   'Ты пишешь сценарии коротких вертикальных видео (Reels, TikTok, Shorts) для блогеров. ' +
   'Тебе дают тему, сегмент аудитории и реальные вопросы покупателей из директа. ' +
   'Напиши сценарий на 30–60 секунд, который отвечает на эти вопросы: хук в первые 2 секунды, суть, призыв написать в директ. ' +
   'По частям, с названием каждой части, так, чтобы можно было сразу произнести на камеру. ' +
-  'Ответь строго JSON без markdown: {"script": string}. Пиши по-русски.';
+  'Ответь строго JSON без markdown: {"script": string}. Пиши по-русски.' +
+  ' ' +
+  WRITING_RULES;
 
 function promptFor(signals: SegmentSignal[]): string {
   return signals

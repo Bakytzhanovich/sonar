@@ -5,6 +5,7 @@ import { exec, queryOne, type Db } from '../src/db';
 import { createApp } from '../src/api';
 import { maskPersonalData, parseTopics } from '../src/contentTopics';
 import type { ChatModel } from '../src/reelLlm';
+import { WRITING_RULES } from '../src/writingStyle';
 import { createTestDb, dropTestDb } from './dbTestHelper';
 
 describe('maskPersonalData', () => {
@@ -65,11 +66,14 @@ describe('content plan API', () => {
   let app: Express;
   let chat: ChatModel;
   let prompts: string[];
+  let systems: string[];
 
   beforeEach(async () => {
     db = await createTestDb();
     prompts = [];
-    chat = async (_system, user) => {
+    systems = [];
+    chat = async (system, user) => {
+      systems.push(system);
       prompts.push(user);
       return JSON.stringify({
         topics: [{ title: 'Йога при боли в спине', segment: 'Йога', why: 'Спрашивали про спину', quotes: ['болит спина после родов'] }],
@@ -131,6 +135,8 @@ describe('content plan API', () => {
     expect(prompts[0]).not.toContain('87012345678');
     // Buyers and the rest are told apart: that difference is the whole signal.
     expect(prompts[0]).toMatch(/Сообщения не купивших:\n- сколько стоит/);
+    // Topic titles are what a blogger films under — written to the same style.
+    expect(systems[0]).toContain(WRITING_RULES);
   });
 
   it('keeps the plan, and says when conversations have moved on since', async () => {

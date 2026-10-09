@@ -1,4 +1,5 @@
 import { ReelAnalysisError, type ChatModel } from './reelLlm';
+import { WRITING_RULES } from './writingStyle';
 
 // Module 4 — a carousel's text from one prompt.
 //
@@ -27,7 +28,9 @@ const SYSTEM_PROMPT =
   'Ты помогаешь блогерам делать карусели для Instagram и TikTok. По теме от пользователя сделай 4–6 слайдов. ' +
   'Первый слайд — цепляющий заголовок темы, последний — призыв (сохранить, написать в директ). ' +
   'Ответь строго JSON без markdown: {"slides": [{"headline": string, "body": string}]}. ' +
-  'headline — короткий заголовок слайда (до 60 символов), body — 1–3 предложения. Пиши по-русски.';
+  'headline — короткий заголовок слайда (до 60 символов), body — 1–3 предложения. Пиши по-русски.' +
+  ' ' +
+  WRITING_RULES;
 
 function clean(value: unknown, max: number): string | null {
   if (typeof value !== 'string') return null;
