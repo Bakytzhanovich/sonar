@@ -76,6 +76,7 @@ import type {
   ScheduledPost,
   Subscriber,
   Trigger,
+  TriggerNode,
   User,
   VideoEditJob,
   VideoTemplate,
@@ -1151,6 +1152,81 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
 
     await exec(db, `UPDATE triggers SET flow_version = ? WHERE id = ?`, toVersion, trigger.id);
     res.json({ trigger: { id: trigger.id, flow_id: trigger.flow_id, flow_version: toVersion } });
+  }));
+
+  // Makes a published version the one the bot answers with. Publishing alone
+  // never did: a trigger is pinned to a version, and binding a second time
+  // with the same keyword was a 409 — so an edited scenario was published and
+  // then never reached a single subscriber. The keyword comes from the
+  // version's own trigger node rather than the request, so what the bot
+  // listens for and what the scenario says cannot drift apart. A flow has
+  // exactly one trigger node, so any other live trigger on this flow is a
+  // leftover from an earlier keyword and is switched off.
+  app.post('/api/flows/:flowId/versions/:version/go-live', asyncHandler(async (req, res) => {
+    const version = parsePositiveInt(req.params.version);
+    if (version === undefined) return res.status(404).json({ error: 'flow not found' });
+    const flow = await queryOne<{ definition: FlowDefinition; status: string; bot_id: string; tenant_id: string }>(
+      db,
+      `SELECT flows.definition, flows.status, flows.bot_id, bots.tenant_id
+       FROM flows JOIN bots ON flows.bot_id = bots.id
+       WHERE flows.id = ? AND flows.version = ?`,
+      req.params.flowId,
+      version
+    );
+    if (!flow || flow.tenant_id !== res.locals.tenantId) return res.status(404).json({ error: 'flow not found' });
+    if (flow.status !== 'published') {
+      return res.status(422).json({ error: 'cannot go live with a version that is not published' });
+    }
+    const triggerNode = flow.definition.nodes.find((n): n is TriggerNode => n.type === 'trigger');
+    if (!triggerNode) return res.status(422).json({ error: 'flow has no trigger' });
+    const { keyword, matchType } = triggerNode.data;
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const current = await queryAll<{ id: string }>(
+        client,
+        `SELECT id FROM triggers WHERE bot_id = ? AND flow_id = ? AND is_active = true ORDER BY created_at DESC FOR UPDATE`,
+        flow.bot_id,
+        req.params.flowId
+      );
+      const [keep, ...stale] = current;
+      for (const t of stale) await exec(client, `UPDATE triggers SET is_active = false WHERE id = ?`, t.id);
+      const triggerId = keep?.id ?? randomUUID();
+      if (keep) {
+        await exec(
+          client,
+          `UPDATE triggers SET flow_version = ?, keyword = ?, match_type = ? WHERE id = ?`,
+          version,
+          keyword,
+          matchType,
+          keep.id
+        );
+      } else {
+        await exec(
+          client,
+          `INSERT INTO triggers (id, bot_id, flow_id, flow_version, keyword, match_type) VALUES (?, ?, ?, ?, ?, ?)`,
+          triggerId,
+          flow.bot_id,
+          req.params.flowId,
+          version,
+          keyword,
+          matchType
+        );
+      }
+      await client.query('COMMIT');
+      res.json({ trigger: { id: triggerId, flow_id: req.params.flowId, flow_version: version, keyword, match_type: matchType, is_active: true } });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      // Another flow on this bot already answers this keyword — the same
+      // unique index that guards POST /triggers, and the same answer.
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({ error: 'a trigger with this keyword already exists for this bot' });
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
   }));
 
   // ---- Test mode ---------------------------------------------------------

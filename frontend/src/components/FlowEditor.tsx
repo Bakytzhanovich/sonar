@@ -192,7 +192,7 @@ export default function FlowEditor() {
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [loadFlowId, setLoadFlowId] = useState('');
   const [loadVersion, setLoadVersion] = useState('1');
-  // What bindTrigger() last successfully bound — not a plain boolean, so
+  // What publish() last put live — not a plain boolean, so
   // "is it still bound" is *derived* every render (see triggerBound below)
   // instead of being a flag this component has to remember to clear at
   // every action that could invalidate it. A boolean flag missed two real
@@ -322,11 +322,17 @@ export default function FlowEditor() {
     try {
       const res = await api.publishFlow(config, target.id, target.version);
       setFlowStatus(res.flow.status);
-      setStatus(`Сценарий опубликован — версия ${res.flow.version}`);
+      // Published and live are one step for the person: a version that is
+      // published but not answering is not something anyone asked for.
+      const live = await api.goLive(config, target.id, target.version);
+      setBoundTrigger({ botId, flowId: target.id, flowVersion: target.version, keyword: live.trigger.keyword, matchType: live.trigger.match_type });
+      setStatus(`Опубликовано — бот отвечает на «${live.trigger.keyword}»`);
     } catch (err) {
       if (err instanceof ApiError && err.status === 422 && Array.isArray((err.body as { errors?: string[] })?.errors)) {
         setErrors((err.body as { errors: string[] }).errors);
         setStatus('Публикация отклонена — см. ошибки ниже');
+      } else if (err instanceof ApiError && err.status === 409) {
+        setStatus(`На слово «${triggerNode?.data.keyword ?? ''}» уже отвечает другой сценарий этого бота — выберите другое ключевое слово.`);
       } else {
         setStatus(err instanceof Error ? err.message : String(err));
       }
@@ -345,24 +351,6 @@ export default function FlowEditor() {
       setFlowVersion(res.flow.version);
       setFlowStatus(res.flow.status);
       setStatus(`Загружено: ${res.flow.id} v${res.flow.version} (${res.flow.status})`);
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : String(err));
-    }
-  }
-
-  async function bindTrigger() {
-    if (!triggerNode || !flowId || flowVersion === null) return setStatus('Сначала опубликуйте сценарий с триггером');
-    try {
-      const res = await api.createTrigger(config, botId, {
-        keyword: triggerNode.data.keyword,
-        matchType: triggerNode.data.matchType,
-        flowId,
-        flowVersion,
-      });
-      setBoundTrigger(
-        res.trigger.is_active ? { botId, flowId, flowVersion, keyword: res.trigger.keyword, matchType: res.trigger.match_type } : null
-      );
-      setStatus(`Бот отвечает на «${res.trigger.keyword}» — работает версия ${res.trigger.flow_version}`);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
     }
@@ -521,11 +509,8 @@ export default function FlowEditor() {
               <button className={controls.buttonPrimary} onClick={publish} disabled={!botId || upToDate}>
                 Опубликовать
               </button>
-              <button className={controls.buttonSecondary} onClick={bindTrigger} disabled={!flowId}>
-                Привязать триггер к боту
-              </button>
             </div>
-            {flowId && hasUnsavedChanges && <p className={styles.hint}>Есть несохранённые изменения — «Опубликовать» сохранит их и выпустит.</p>}
+            {flowId && hasUnsavedChanges && <p className={styles.hint}>Есть несохранённые изменения — «Опубликовать» сохранит их, и бот начнёт отвечать по-новому.</p>}
             {upToDate && <p className={styles.hint}>Изменений нет — эта версия сценария уже опубликована.</p>}
             {triggerBound && (
               <div className={styles.activeBadge}>

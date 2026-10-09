@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
-import type { Db } from '../src/db';
+import { queryAll, type Db } from '../src/db';
 import { createApp } from '../src/api';
 import { createTestDb, dropTestDb } from './dbTestHelper';
 
@@ -401,6 +401,93 @@ describe('flow versioning and rollback', () => {
 
     expect(rollback.status).toBe(200);
     expect(rollback.body.trigger.flow_version).toBe(1);
+  });
+
+  describe('go-live', () => {
+    function definitionWith(keyword: string, text: string) {
+      return {
+        nodes: [
+          { id: 'trig', type: 'trigger', position: { x: 0, y: 0 }, data: { keyword, matchType: 'contains' } },
+          { id: 'msg1', type: 'send_message', position: { x: 0, y: 100 }, data: { text } },
+        ],
+        edges: [{ id: 'e1', source: 'trig', target: 'msg1' }],
+      };
+    }
+
+    async function publishVersion(apiKey: string, flowId: string, definition: object) {
+      const v = await request(app).post(`/api/flows/${flowId}/versions`).set('Authorization', `Bearer ${apiKey}`).send({ definition });
+      await request(app).post(`/api/flows/${flowId}/versions/${v.body.flow.version}/publish`).set('Authorization', `Bearer ${apiKey}`).send();
+      return v.body.flow.version as number;
+    }
+
+    async function botReplyTo(apiKey: string, botId: string, messageText: string) {
+      const res = await request(app).post(`/api/bots/${botId}/test`).set('Authorization', `Bearer ${apiKey}`).send({ externalUserId: `u-${messageText}`, messageText });
+      return res.body.outcome as { status: string; sentMessages?: { content: string }[] };
+    }
+
+    it('creates the trigger on first go-live, keyword taken from the version', async () => {
+      const { apiKey } = await createTenant(app);
+      const botId = await createBot(app, apiKey);
+      const { flowId, flowVersion } = await createPublishedFlow(app, apiKey, botId);
+
+      const res = await request(app).post(`/api/flows/${flowId}/versions/${flowVersion}/go-live`).set('Authorization', `Bearer ${apiKey}`).send();
+
+      expect(res.status).toBe(200);
+      expect(res.body.trigger).toMatchObject({ flow_id: flowId, flow_version: 1, keyword: 'цена', match_type: 'contains', is_active: true });
+      expect((await botReplyTo(apiKey, botId, 'цена?')).sentMessages?.[0].content).toBe('Вот цена');
+    });
+
+    it('moves the live trigger to a newer version, keyword change included', async () => {
+      const { apiKey } = await createTenant(app);
+      const botId = await createBot(app, apiKey);
+      const { flowId, flowVersion } = await createPublishedFlow(app, apiKey, botId);
+      const first = await request(app).post(`/api/flows/${flowId}/versions/${flowVersion}/go-live`).set('Authorization', `Bearer ${apiKey}`).send();
+
+      const v2 = await publishVersion(apiKey, flowId, definitionWith('стоимость', 'Новая цена'));
+      const second = await request(app).post(`/api/flows/${flowId}/versions/${v2}/go-live`).set('Authorization', `Bearer ${apiKey}`).send();
+
+      // The same trigger row, moved — not a second one racing it.
+      expect(second.body.trigger.id).toBe(first.body.trigger.id);
+      expect(second.body.trigger).toMatchObject({ flow_version: 2, keyword: 'стоимость' });
+      expect((await botReplyTo(apiKey, botId, 'какая стоимость')).sentMessages?.[0].content).toBe('Новая цена');
+      expect((await botReplyTo(apiKey, botId, 'цена?')).status).toBe('no_trigger_match');
+    });
+
+    it('switches off a leftover trigger the same flow had under an older keyword', async () => {
+      const { apiKey } = await createTenant(app);
+      const botId = await createBot(app, apiKey);
+      const { flowId, flowVersion } = await createPublishedFlow(app, apiKey, botId);
+      // Bound by hand twice under two keywords, the way the old two-button
+      // editor could leave it.
+      await request(app).post(`/api/bots/${botId}/triggers`).set('Authorization', `Bearer ${apiKey}`).send({ keyword: 'цена', flowId, flowVersion });
+      await request(app).post(`/api/bots/${botId}/triggers`).set('Authorization', `Bearer ${apiKey}`).send({ keyword: 'прайс', flowId, flowVersion });
+
+      const v2 = await publishVersion(apiKey, flowId, definitionWith('цена', 'Новая цена'));
+      await request(app).post(`/api/flows/${flowId}/versions/${v2}/go-live`).set('Authorization', `Bearer ${apiKey}`).send();
+
+      const live = await queryAll<{ keyword: string }>(db, `SELECT keyword FROM triggers WHERE bot_id = ? AND is_active = true`, botId);
+      expect(live.map((t) => t.keyword)).toEqual(['цена']);
+      expect((await botReplyTo(apiKey, botId, 'прайс')).status).toBe('no_trigger_match');
+    });
+
+    it('refuses a draft, another flow’s keyword, and another tenant', async () => {
+      const owner = await createTenant(app, 'owner-live@example.com');
+      const intruder = await createTenant(app, 'intruder-live@example.com');
+      const botId = await createBot(app, owner.apiKey);
+      const { flowId, flowVersion } = await createPublishedFlow(app, owner.apiKey, botId);
+
+      const draft = await request(app).post(`/api/flows/${flowId}/versions`).set('Authorization', `Bearer ${owner.apiKey}`).send({ definition: basicDefinition() });
+      const notPublished = await request(app).post(`/api/flows/${flowId}/versions/${draft.body.flow.version}/go-live`).set('Authorization', `Bearer ${owner.apiKey}`).send();
+      expect(notPublished.status).toBe(422);
+
+      const blocked = await request(app).post(`/api/flows/${flowId}/versions/${flowVersion}/go-live`).set('Authorization', `Bearer ${intruder.apiKey}`).send();
+      expect(blocked.status).toBe(404);
+
+      await request(app).post(`/api/flows/${flowId}/versions/${flowVersion}/go-live`).set('Authorization', `Bearer ${owner.apiKey}`).send();
+      const other = await createPublishedFlow(app, owner.apiKey, botId); // same keyword «цена»
+      const clash = await request(app).post(`/api/flows/${other.flowId}/versions/${other.flowVersion}/go-live`).set('Authorization', `Bearer ${owner.apiKey}`).send();
+      expect(clash.status).toBe(409);
+    });
   });
 
   it('refuses to roll back to a version that was never published', async () => {

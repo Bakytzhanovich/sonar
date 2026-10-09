@@ -560,6 +560,11 @@ export const api = {
   createTrigger: (config: ApiConfig, botId: string, body: { keyword: string; matchType: MatchType; flowId: string; flowVersion: number }) =>
     apiRequest(config, 'POST', `/api/bots/${botId}/triggers`, body),
 
+  // Makes a published version the one the bot answers with; the keyword is
+  // read server-side from that version's trigger node.
+  goLive: (config: ApiConfig, flowId: string, version: number) =>
+    apiRequest(config, 'POST', `/api/flows/${flowId}/versions/${version}/go-live`, {}),
+
   rollbackTrigger: (config: ApiConfig, triggerId: string, toVersion: number) =>
     apiRequest(config, 'POST', `/api/triggers/${triggerId}/rollback`, { toVersion }),
 
