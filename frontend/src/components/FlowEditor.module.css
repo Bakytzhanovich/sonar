@@ -217,7 +217,19 @@
 .inspectorSelect { margin-top: 4px; }
 
 /* React Flow's zoom buttons are 26px — fine for a mouse, a miss for a finger. */
+/* React Flow's own control colours follow the page's color-scheme, so on a
+   dark page the light canvas got near-white icons on white buttons. Pinned
+   to the canvas tokens instead, which never flip. */
+.canvasWrap :global(.react-flow__controls-button) {
+  background: var(--canvas-node-bg);
+  border-bottom-color: var(--canvas-node-border);
+  color: var(--canvas-node-text);
+  fill: var(--canvas-node-text);
+}
+.canvasWrap :global(.react-flow__controls-button:hover) { background: var(--canvas-bg); }
+.canvasWrap :global(.react-flow__controls-button svg) { fill: currentColor; }
+
 @media (pointer: coarse) {
-  .canvasWrap :global(.react-flow__controls-button) { width: 36px; height: 36px; }
+  .canvasWrap :global(.react-flow__controls-button) { width: 44px; height: 44px; }
   .canvasWrap :global(.react-flow__controls-button svg) { max-width: 14px; max-height: 14px; }
 }

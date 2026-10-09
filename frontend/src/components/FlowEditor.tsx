@@ -185,6 +185,11 @@ export default function FlowEditor() {
   const [flowId, setFlowId] = useState<string | null>(null);
   const [flowVersion, setFlowVersion] = useState<number | null>(null);
   const [flowStatus, setFlowStatus] = useState<string | null>(null);
+  // The definition as last saved or loaded, serialized. Publishing acts on a
+  // saved version, so without this an edit made after the last save was
+  // silently left out of what went live — the bot kept answering with the
+  // old text while the canvas showed the new one.
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [loadFlowId, setLoadFlowId] = useState('');
   const [loadVersion, setLoadVersion] = useState('1');
   // What bindTrigger() last successfully bound — not a plain boolean, so
@@ -211,6 +216,9 @@ export default function FlowEditor() {
   const config: ApiConfig = { baseUrl, apiKey };
   const hasTrigger = nodes.some((n) => n.data.kind === 'trigger');
   const selectedNode = nodes.find((n) => n.id === selectedId) ?? null;
+  const snapshot = JSON.stringify(toWireDefinition(nodes, edges));
+  const hasUnsavedChanges = snapshot !== savedSnapshot;
+  const upToDate = flowStatus === 'published' && !hasUnsavedChanges;
   const triggerNode = nodes.find((n): n is CanvasNode & { data: TriggerData } => n.data.kind === 'trigger') ?? null;
   const triggerBound =
     boundTrigger !== null &&
@@ -238,6 +246,7 @@ export default function FlowEditor() {
         const restored = fromWireDefinition(res.flow.definition);
         setNodes(restored.nodes);
         setEdges(restored.edges);
+        setSavedSnapshot(JSON.stringify(toWireDefinition(restored.nodes, restored.edges)));
         setFlowId(res.flow.id);
         setFlowVersion(res.flow.version);
         setFlowStatus(res.flow.status);
@@ -279,33 +288,39 @@ export default function FlowEditor() {
     if (anchor) setEdges((eds) => addEdge({ id: crypto.randomUUID(), source: anchor.id, target: node.id }, eds));
   }
 
-  async function saveDraft() {
+  /** Saves the canvas as a new version; returns it, or null if it failed. */
+  async function saveDraft(): Promise<{ id: string; version: number } | null> {
     setErrors([]);
-    if (!botId) return setStatus('Сначала пройдите первый запуск — он создаст бота');
+    if (!botId) {
+      setStatus('Сначала пройдите первый запуск — он создаст бота');
+      return null;
+    }
     try {
       const definition = toWireDefinition(nodes, edges);
-      if (!flowId) {
-        const res = await api.createFlow(config, botId, definition);
-        setFlowId(res.flow.id);
-        setFlowVersion(res.flow.version);
-        setFlowStatus(res.flow.status);
-        setStatus(`Черновик сохранён — версия ${res.flow.version}`);
-      } else {
-        const res = await api.createFlowVersion(config, flowId, definition);
-        setFlowVersion(res.flow.version);
-        setFlowStatus(res.flow.status);
-        setStatus(`Сохранена версия ${res.flow.version}`);
-      }
+      const res = flowId ? await api.createFlowVersion(config, flowId, definition) : await api.createFlow(config, botId, definition);
+      setFlowId(res.flow.id);
+      setFlowVersion(res.flow.version);
+      setFlowStatus(res.flow.status);
+      setSavedSnapshot(JSON.stringify(definition));
+      setStatus(flowId ? `Сохранена версия ${res.flow.version}` : `Черновик сохранён — версия ${res.flow.version}`);
+      return { id: res.flow.id, version: res.flow.version };
     } catch (err) {
       setStatus(err instanceof Error ? err.message : String(err));
+      return null;
     }
   }
 
   async function publish() {
     setErrors([]);
-    if (!flowId || flowVersion === null) return setStatus('Сначала сохраните черновик');
+    // What goes live is what is on the canvas: unsaved edits become a new
+    // version first, rather than publishing the last saved one behind them.
+    let target = flowId && flowVersion !== null ? { id: flowId, version: flowVersion } : null;
+    if (!target || hasUnsavedChanges) {
+      target = await saveDraft();
+      if (!target) return;
+    }
     try {
-      const res = await api.publishFlow(config, flowId, flowVersion);
+      const res = await api.publishFlow(config, target.id, target.version);
       setFlowStatus(res.flow.status);
       setStatus(`Сценарий опубликован — версия ${res.flow.version}`);
     } catch (err) {
@@ -325,6 +340,7 @@ export default function FlowEditor() {
       const { nodes: n, edges: e } = fromWireDefinition(res.flow.definition);
       setNodes(n);
       setEdges(e);
+      setSavedSnapshot(JSON.stringify(toWireDefinition(n, e)));
       setFlowId(res.flow.id);
       setFlowVersion(res.flow.version);
       setFlowStatus(res.flow.status);
@@ -442,6 +458,9 @@ export default function FlowEditor() {
                 + Сообщение
               </button>
             </div>
+            {/* Said in the panel, not only in a title tooltip: a phone has no
+                hover, so the greyed button gave no reason at all. */}
+            {hasTrigger && <p className={styles.hint}>Триггер уже есть — в сценарии он может быть только один.</p>}
           </div>
 
           {selectedNode && (
@@ -496,16 +515,18 @@ export default function FlowEditor() {
               Сценарий · {flowId ? `версия ${flowVersion}, ${FLOW_STATUS_LABEL[flowStatus ?? ''] ?? flowStatus}` : 'не сохранён'}
             </h4>
             <div className={styles.row}>
-              <button className={controls.buttonSecondary} onClick={saveDraft} disabled={!botId}>
+              <button className={controls.buttonSecondary} onClick={() => void saveDraft()} disabled={!botId || (!!flowId && !hasUnsavedChanges)}>
                 Сохранить черновик
               </button>
-              <button className={controls.buttonPrimary} onClick={publish} disabled={!flowId}>
+              <button className={controls.buttonPrimary} onClick={publish} disabled={!botId || upToDate}>
                 Опубликовать
               </button>
               <button className={controls.buttonSecondary} onClick={bindTrigger} disabled={!flowId}>
                 Привязать триггер к боту
               </button>
             </div>
+            {flowId && hasUnsavedChanges && <p className={styles.hint}>Есть несохранённые изменения — «Опубликовать» сохранит их и выпустит.</p>}
+            {upToDate && <p className={styles.hint}>Изменений нет — эта версия сценария уже опубликована.</p>}
             {triggerBound && (
               <div className={styles.activeBadge}>
                 <span className={styles.activeDot} />
