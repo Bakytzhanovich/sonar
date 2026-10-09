@@ -390,6 +390,15 @@
   font-size: var(--text-base);
 }
 
+.filterSelect {
+  width: 100%;
+}
+
+/* Desktop shows every filter at once; the toggle exists for the phone. */
+.filtersToggle {
+  display: none;
+}
+
 .tagFilterForm {
   min-width: 0;
   display: grid;
@@ -1736,6 +1745,10 @@
  * The onboarding card sat in the upper half with a dead screen below it. It
  * claims the leftover height instead. */
 @media (max-width: 760px) {
+  .filtersToggle { display: inline-flex; justify-content: center; }
+  /* Open while a status or tag filter is set, so an active one is never
+     hidden behind the toggle. */
+  .toolbar:not([data-open]) .extraFilter { display: none; }
   .mainPane { display: flex; flex-direction: column; flex: 1; }
   .mainInner { display: flex; flex-direction: column; flex: 1; }
   .workspaceEmpty,

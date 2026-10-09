@@ -33,6 +33,10 @@
   /* The main pane becomes a column that can stretch, which is what lets the
    * empty state below claim the leftover height. */
   .main { display: flex; flex-direction: column; padding: 14px !important; flex: 1; }
+  /* Only the empty state has a use for that height. With just the upload
+   * form in the pane, stretching left a grey band between it and the
+   * niche scripts below. */
+  .main:not(:has(.emptyState)) { flex: none; }
 
   /* Fills what is left of the screen instead of floating in the middle of
    * it with a dead half-screen underneath. The sidebar above it is short,

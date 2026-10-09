@@ -366,7 +366,7 @@ export default function CarouselView() {
                 </button>
               ))}
             </div>
-            <PillPicker label="Стиль" options={styleOptions} value={presetId} onChange={chooseStyle} />
+            {presets.length > 0 && <PillPicker label="Стиль" options={styleOptions} value={presetId} onChange={chooseStyle} />}
             <button className={`${controls.buttonPrimary} ${styles.fullButton}`} onClick={generate} disabled={generating || !prompt.trim() || !hasAccess}>
               {generating ? 'Пишу слайды…' : 'Сгенерировать'}
             </button>
@@ -468,7 +468,7 @@ export default function CarouselView() {
                       <span className={styles.fieldLabel}>Текст</span>
                       <textarea className={controls.input} value={current.body} onChange={(e) => edit('body', e.target.value)} rows={6} />
                     </label>
-                    <PillPicker label="Стиль" options={styleOptions} value={presetId} onChange={chooseStyle} />
+                    {presets.length > 0 && <PillPicker label="Стиль" options={styleOptions} value={presetId} onChange={chooseStyle} />}
                   </div>
                 )}
               </div>

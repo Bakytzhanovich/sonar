@@ -296,7 +296,7 @@ export default function ReelsView() {
               className={controls.input}
               value={nicheSearch}
               onChange={(e) => setNicheSearch(e.target.value)}
-              placeholder="Например: фитнес"
+              placeholder="Например: фитнес" aria-label="Ниша"
             />
             <button className={controls.buttonSecondary} onClick={searchByNiche}>
               Найти
@@ -317,7 +317,6 @@ export default function ReelsView() {
         <div className={`${layout.main} ${styles.main}`}>
           {!selected && (
             <div className={styles.uploadPanel}>
-              <span className={styles.eyebrow}>АНАЛИЗ КОНТЕНТА</span>
               <h2>Найдите повторяемую механику</h2>
               <p>
                 Загрузите чужой рилс, который хорошо зашёл: разберём, чем он цепляет и как устроен, и перепишем под вашу

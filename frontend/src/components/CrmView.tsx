@@ -144,6 +144,9 @@ export default function CrmView() {
   // stale value from the previous bot after a switch.
   const [view, setView] = useState<ViewMode>('table');
   const [searchQuery, setSearchQuery] = useState('');
+  // Phone only: status and tag filters fold away so the contacts, not the
+  // form for narrowing them, are what the first screen shows.
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [tagDraft, setTagDraft] = useState('');
   const [tagFilter, setTagFilter] = useState('');
   const [leadStatusFilter, setLeadStatusFilter] = useState<LeadStatus | ''>('');
@@ -628,7 +631,6 @@ export default function CrmView() {
           <div className={styles.mainInner}>
             <section className={styles.pageIntro} aria-labelledby="crm-title">
               <div>
-                <p className={styles.eyebrow}>АУДИТОРИЯ</p>
                 <h1 id="crm-title">Контакты и диалоги</h1>
                 <p className={styles.pageLead}>Смотрите историю общения, фиксируйте статус лида и объединяйте контакты по темам.</p>
               </div>
@@ -749,12 +751,12 @@ export default function CrmView() {
                         aria-pressed={view === 'kanban'}
                         onClick={() => setView('kanban')}
                       >
-                        Kanban
+                        Доска
                       </button>
                     </div>
                   </div>
 
-                  <div className={styles.toolbar}>
+                  <div className={styles.toolbar} data-open={filtersOpen || tagFilter || leadStatusFilter ? 'true' : undefined}>
                     <label className={styles.filterField}>
                       <span>Поиск</span>
                       <input
@@ -766,10 +768,19 @@ export default function CrmView() {
                       />
                     </label>
 
-                    <label className={styles.filterField}>
+                    <button
+                      type="button"
+                      className={`${controls.buttonSecondary} ${styles.filtersToggle}`}
+                      aria-expanded={filtersOpen}
+                      onClick={() => setFiltersOpen((open) => !open)}
+                    >
+                      {filtersOpen ? 'Скрыть фильтры' : 'Статус и теги'}
+                    </button>
+
+                    <label className={`${styles.filterField} ${styles.extraFilter}`}>
                       <span>Статус</span>
                       <Select
-                        className={styles.filterInput}
+                        className={styles.filterSelect}
                         value={leadStatusFilter}
                         onChange={(next) => changeStatusFilter(next as LeadStatus | '')}
                         aria-label="Фильтр по статусу"
@@ -780,7 +791,7 @@ export default function CrmView() {
                       />
                     </label>
 
-                    <form className={styles.tagFilterForm} onSubmit={applyTagFilter}>
+                    <form className={`${styles.tagFilterForm} ${styles.extraFilter}`} onSubmit={applyTagFilter}>
                       <label className={styles.filterField}>
                         <span>Точный тег</span>
                         <input

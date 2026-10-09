@@ -266,7 +266,10 @@
 @media (max-width: 760px) {
   .topicList { grid-template-columns: 1fr; }
   .topicCard { padding: 14px; }
-  .step { flex-wrap: wrap; }
+  .step { flex-wrap: wrap; align-items: flex-start; }
+  /* Without a basis the text shrank to let the button stay beside it — a
+     column a few words wide — and the wrap above never happened. */
+  .stepBody { flex-basis: calc(100% - 40px); }
   .step a { margin-left: 40px; }
 }
 /* A script is prose to read aloud, not code: the input control's own font
