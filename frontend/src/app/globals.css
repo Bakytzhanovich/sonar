@@ -41,20 +41,21 @@
   --radius-lg: 14px;  /* cards, panels, sheets */
   --radius-full: 999px;
 
-  --background: #ffffff;
-  --surface: #f5f7f8;
-  --surface-hover: #ececef;
-  --border: #e2e6ea;
-  --foreground: #12161d;
-  --foreground-muted: #5b6672;
+  --background: #fcf8fa;
+  --surface: #f6eff3;
+  --surface-hover: #eee4ea;
+  --border: #ecdfe6;
+  --foreground: #1f1720;
+  --foreground-muted: #6f6170;
 
-  /* Rose/coral, not the teal we launched with — ChatPlace's own accent is
-   * also a lime-green, so teal was the one color family among the 4
-   * competitors studied (ManyChat, ChatPlace, Trendsee, IntellectDialog)
-   * we didn't yet differ from. Values are WCAG-verified, not eyeballed. */
-  --accent-glow: #fda4af; /* rose-300, decorative only on light bg — ~1.9:1, not for text */
-  --accent: #be123c; /* rose-700, ~6.3:1 on white — safe for text/icons/links */
-  --accent-soft: rgba(190, 18, 60, 0.1);
+  /* «Пудра» (chosen 2026-10-11): warm plum-tinted neutrals and a powder
+   * rose, instead of the cold blue-black and rose we launched with. Rose
+   * stays the brand — every competitor studied took another family (lime
+   * ChatPlace, orange Submagic/Trendsee, white OpusClip, blue
+   * IntellectDialog). Values are WCAG-verified, not eyeballed. */
+  --accent-glow: #f7a8c4; /* powder rose, decorative only on light bg — not for text */
+  --accent: #b0245a; /* raspberry, ~6.1:1 on the cream background — safe for text/icons/links */
+  --accent-soft: rgba(176, 36, 90, 0.09);
 
   --bubble-in-bg: var(--surface);
   --bubble-out-bg: var(--accent-soft);
@@ -75,16 +76,16 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0b0f14;
-    --surface: #12161d;
-    --surface-hover: #1a2029;
-    --border: #1e252e;
-    --foreground: #e6edf3;
-    --foreground-muted: #8b98a5;
+    --background: #151217;
+    --surface: #1e1a21;
+    --surface-hover: #28222c;
+    --border: #2e2733;
+    --foreground: #f4edf2;
+    --foreground-muted: #a698a6;
 
-    --accent-glow: #fda4af;
-    --accent: #fda4af; /* rose-300, ~10.2:1 on graphite — safe for text/icons/links here */
-    --accent-soft: rgba(253, 164, 175, 0.12);
+    --accent-glow: #f7a8c4;
+    --accent: #f7a8c4; /* powder rose, ~10:1 on plum graphite — safe for text/icons/links here */
+    --accent-soft: rgba(247, 168, 196, 0.12);
 
     --bubble-in-bg: var(--surface);
     --bubble-out-bg: var(--accent-soft);
@@ -97,15 +98,15 @@
 }
 
 :root[data-theme='light'] {
-  --background: #ffffff;
-  --surface: #f5f7f8;
-  --surface-hover: #ececef;
-  --border: #e2e6ea;
-  --foreground: #12161d;
-  --foreground-muted: #5b6672;
-  --accent-glow: #fda4af;
-  --accent: #be123c;
-  --accent-soft: rgba(190, 18, 60, 0.1);
+  --background: #fcf8fa;
+  --surface: #f6eff3;
+  --surface-hover: #eee4ea;
+  --border: #ecdfe6;
+  --foreground: #1f1720;
+  --foreground-muted: #6f6170;
+  --accent-glow: #f7a8c4;
+  --accent: #b0245a;
+  --accent-soft: rgba(176, 36, 90, 0.09);
   --status-pending: #b45309;
   --status-scheduled: #1e6fd9;
   --status-published: #7c3aed;
@@ -113,15 +114,15 @@
 }
 
 :root[data-theme='dark'] {
-  --background: #0b0f14;
-  --surface: #12161d;
-  --surface-hover: #1a2029;
-  --border: #1e252e;
-  --foreground: #e6edf3;
-  --foreground-muted: #8b98a5;
-  --accent-glow: #fda4af;
-  --accent: #fda4af;
-  --accent-soft: rgba(253, 164, 175, 0.12);
+  --background: #151217;
+  --surface: #1e1a21;
+  --surface-hover: #28222c;
+  --border: #2e2733;
+  --foreground: #f4edf2;
+  --foreground-muted: #a698a6;
+  --accent-glow: #f7a8c4;
+  --accent: #f7a8c4;
+  --accent-soft: rgba(247, 168, 196, 0.12);
   --status-pending: #f59e0b;
   --status-scheduled: #60a5fa;
   --status-published: #a78bfa;

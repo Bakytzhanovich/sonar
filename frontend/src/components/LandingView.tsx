@@ -1,147 +1,33 @@
 'use client';
 
-import Image from 'next/image';
 import { useEffect, useRef } from 'react';
+import { LANDING_FAQ as FAQ } from './landingContent';
 import styles from './LandingView.module.css';
 
-const DEMO_CYCLE_URL = '/signup';
+// The public landing. Written for a blogger deciding in five seconds what this
+// is: the headline names the three jobs (the direct, reels, what to film), the
+// phone shows the whole loop playing, and every block below is one step of it
+// in the order a blogger lives it. Two things are labelled as waiting for
+// Meta's review — the Instagram bot and auto-posting — because on the live
+// site they work in the demo only, and promising otherwise is the one thing
+// this page must not do. No prices or user counts until there are real ones.
 
-const SIGNAL_STEPS = [
-  {
-    label: 'Сигнал 01',
-    title: 'Бот ловит вопрос',
-    body: 'Человек пишет ключевое слово — бот отвечает по вашему сценарию. В демо сообщение создаётся внутри Sonar, без подключения Instagram.',
-  },
-  {
-    label: 'Сигнал 02',
-    title: 'CRM сохраняет диалог',
-    body: 'Контакт и переписка — в одной карточке. Вы отмечаете, чем человек интересовался и купил ли он.',
-  },
-  {
-    label: 'Сигнал 03',
-    title: 'Видно, что приводит к покупке',
-    body: 'Sonar сравнивает темы по доле купивших и читает, о чём спрашивали именно те, кто купил.',
-  },
-  {
-    label: 'Сигнал 04',
-    title: 'Вопрос становится роликом',
-    body: 'Контент-план превращает вопросы покупателей в темы роликов — с их цитатами, сценарием и днём в календаре.',
-  },
-];
+const SIGNUP_URL = '/signup';
+const LOGIN_URL = '/login';
 
-// Status words a visitor can act on: what works now, and what waits for the
-// platforms' own approval. Kept honest on purpose — the line between the two
-// is the one thing this page must not blur.
-const WORKS = 'Работает';
-const WORKS_AFTER_META = 'Работает · Instagram после Meta';
-
-const PRODUCT_AREAS = [
-  {
-    title: 'Контент-план из вопросов покупателей',
-    body: 'ИИ читает, о чём спрашивали в директе те, кто купил, и предлагает темы роликов. У каждой темы — дословные цитаты покупателей, сценарий в один клик и день в недельном календаре.',
-    status: WORKS,
-    featured: true,
-  },
-  {
-    title: 'ИИ-видеомонтаж',
-    body: 'Загрузите запись: ИИ расшифрует речь — казахский и русский, даже вперемешку, — вырежет паузы и слова-паразиты и наложит субтитры в выбранном стиле. Монтаж можно поправить вручную.',
-    status: WORKS,
-  },
-  {
-    title: 'Автопостинг',
-    body: 'Готовый ролик из монтажа — в очередь одной кнопкой. Расписание, согласование, отмена и правка. Публикация в Instagram готова и включится после проверки Meta; TikTok и YouTube — позже.',
-    status: WORKS_AFTER_META,
-  },
-  {
-    title: 'Анализ рилсов',
-    body: 'Загрузите чужой удачный рилс: ИИ найдёт хук и структуру с точными секундами и перепишет сценарий под вашу нишу.',
-    status: WORKS,
-  },
-  {
-    title: 'Карусели',
-    body: 'Текст слайдов пишет ИИ по одной теме. Дальше правите прямо на слайде, сохраняете стиль бренда и выгружаете PNG.',
-    status: WORKS,
-  },
-  {
-    title: 'Чат-бот и CRM',
-    body: 'Сценарии ответов на визуальном холсте, карточки контактов, статусы, теги, заметки, таблица и канбан. Пока Instagram не подключён, сообщения в демо создаются внутри Sonar.',
-    status: WORKS_AFTER_META,
-    // Last of six: full width, so the grid closes evenly at two and at
-    // three columns instead of leaving one card alone on its row.
-    wide: true,
-  },
-];
-
-const ROADMAP = [
-  {
-    title: 'Instagram по-настоящему',
-    body: 'Директ и публикация в ваш аккаунт: подключение уже готово и включается после проверки нашего приложения в Meta.',
-  },
-  {
-    title: 'TikTok и YouTube Shorts',
-    body: 'Публикация в обе платформы — после их собственных проверок приложения.',
-  },
-  {
-    title: 'Монтаж со стоковыми кадрами',
-    body: 'ИИ сам подберёт кадры под ключевые моменты речи, чтобы ролик не держался на одном говорящем лице.',
-  },
-  {
-    title: 'Тарифы и оплата',
-    body: 'Подписка через платёжного провайдера с сертификацией PCI DSS — данные карт Sonar не хранит.',
-  },
-];
-
-const FAQ = [
-  {
-    question: 'Что уже работает?',
-    answer:
-      'ИИ-видеомонтаж, анализ рилсов, карусели, контент-план из вопросов покупателей и очередь публикаций. Чат-бот и CRM работают на демо-сообщениях, пока не подключён Instagram.',
-  },
-  {
-    question: 'Можно подключить реальный Instagram или TikTok?',
-    answer:
-      'Instagram — сразу после того, как Meta одобрит наше приложение: подключение аккаунта и публикация уже готовы. TikTok и YouTube — следующими, у каждой платформы своя проверка.',
-  },
-  {
-    question: 'Sonar анализирует рилсы с помощью ИИ?',
-    answer:
-      'Да. Загрузите файл рилса — ИИ расшифрует речь, найдёт хук и структуру с точными секундами и перепишет сценарий под вашу нишу. Ссылки Sonar не скачивает: вы загружаете сам файл.',
-  },
-  {
-    question: 'Откуда контент-план берёт темы?',
-    answer:
-      'Из ваших же переписок: ИИ читает, о чём спрашивали купившие, и у каждой темы показывает их дословные цитаты. Тему без настоящей цитаты Sonar не покажет. Телефоны, почты и ники вырезаются до отправки текста в ИИ.',
-  },
-  {
-    question: 'Автопостинг уже работает?',
-    answer:
-      'Очередь, расписание, согласование, отмена и правка постов работают, а ролик из монтажа ставится в очередь одной кнопкой. Публикация в Instagram включится после одобрения Meta, TikTok и YouTube — позже.',
-  },
-  {
-    question: 'Можно зарегистрироваться и начать самостоятельно?',
-    answer:
-      'Да. После регистрации по email первый запуск проведёт через четыре шага: демо-пространство, проверку сценария, демо-диалог в CRM и сигнал для контент-плана. Соцсети при этом подключать не нужно.',
-  },
-  {
-    question: 'Демо отправляет сообщения реальным людям?',
-    answer:
-      'Нет. В демо входящие и исходящие сообщения создаются и хранятся только внутри Sonar, чтобы показать контакт и историю в CRM. Внешние сообщения, комментарии и публикации не создаются.',
-  },
-  {
-    question: 'Сколько стоит Sonar?',
-    answer:
-      'Для демо карта не нужна: подписка не оформляется и списаний нет. Тарифы коммерческой версии объявим отдельно.',
-  },
-];
 
 export default function LandingView() {
   const pageRef = useRef<HTMLDivElement>(null);
 
+  // Blocks rise into view as they are scrolled to. Done here rather than with
+  // CSS scroll timelines, which Safari — half of the phones this page is read
+  // on — does not run. Nothing is hidden for a visitor who asked for less
+  // motion, or whose browser has no observer: the class is only ever added.
   useEffect(() => {
     const page = pageRef.current;
     if (!page || !window.matchMedia('(prefers-reduced-motion: no-preference)').matches || typeof IntersectionObserver === 'undefined') return;
 
-    const blocks = page.querySelectorAll<HTMLElement>('[data-scroll-reveal]');
+    const blocks = page.querySelectorAll<HTMLElement>('[data-reveal]');
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -150,14 +36,12 @@ export default function LandingView() {
           observer.unobserve(entry.target);
         });
       },
-      { threshold: 0.08, rootMargin: '0px 0px -8% 0px' },
+      { threshold: 0.12, rootMargin: '0px 0px -6% 0px' },
     );
-
     blocks.forEach((block) => {
       block.classList.add(styles.revealPending);
       observer.observe(block);
     });
-
     return () => observer.disconnect();
   }, []);
 
@@ -168,366 +52,350 @@ export default function LandingView() {
       </a>
 
       <header className={styles.header}>
-        <div className={`${styles.container} ${styles.headerInner}`}>
+        <div className={`${styles.wrap} ${styles.headerInner}`}>
           <a className={styles.brand} href="#top" aria-label="Sonar — в начало страницы">
-            <span className={styles.brandMark} aria-hidden="true" />
+            <span className={styles.brandMark} aria-hidden="true">
+              <span className={styles.brandDot} />
+              <span className={styles.brandRing} />
+            </span>
             Sonar
           </a>
-
-          <nav className={styles.nav} aria-label="Навигация по лендингу">
-            <a href="#how">Как работает</a>
-            <a href="#inside">Что внутри</a>
-            <a href="#roadmap">Планы</a>
-            <a href="#faq">FAQ</a>
+          <nav className={styles.nav} aria-label="Разделы страницы">
+            <a href="#features">Возможности</a>
+            <a href="#how">Как начать</a>
+            <a href="#faq">Вопросы</a>
           </nav>
-
           {/* Outside the nav on purpose: the nav collapses on a phone, and a
               returning customer had no way in short of typing /login. */}
-          <a className={styles.loginLink} href="/login">
+          <a className={styles.loginLink} href={LOGIN_URL}>
             Войти
           </a>
-          <a className={`${styles.button} ${styles.buttonCompact}`} href={DEMO_CYCLE_URL}>
-            Попробовать демо
+          <a className={`${styles.button} ${styles.buttonCompact}`} href={SIGNUP_URL}>
+            Попробовать
           </a>
         </div>
       </header>
 
       <main id="main-content">
-        <section className={`${styles.section} ${styles.heroSection}`} id="top" aria-labelledby="hero-title">
-          <div className={`${styles.container} ${styles.heroGrid}`}>
-            <div className={styles.heroCopy}>
-              <p className={styles.eyebrow}>SONAR · РАННИЙ ДОСТУП</p>
-              <h1 id="hero-title" className={styles.heroTitle}>
-                Превращайте вопросы аудитории в сделки — и темы для следующего контента.
-              </h1>
-              <p className={styles.heroLead}>
-                Чат-бот, CRM, ИИ-монтаж и автопостинг в одном месте — и контент-план, который строится из вопросов ваших покупателей.
-              </p>
-              <div className={styles.heroActions}>
-                <a className={styles.button} href={DEMO_CYCLE_URL}>
-                  Попробовать демо
-                </a>
-                <a className={styles.textLink} href="#how">
-                  Как это работает <span aria-hidden="true">↓</span>
-                </a>
-              </div>
-              <p className={styles.heroNote}>
-                <strong>4 шага после регистрации по email.</strong> Только демо-данные, без подключения соцсетей, карты и автоматической подписки.
-              </p>
+        <section className={`${styles.wrap} ${styles.hero}`} id="top" aria-labelledby="hero-title">
+          <div className={styles.heroCopy}>
+            <span className={`${styles.chip} ${styles.rise}`}>Для блогеров и экспертов в Instagram</span>
+            <h1 id="hero-title" className={`${styles.heroTitle} ${styles.rise} ${styles.d1}`}>
+              Отвечайте в директ, монтируйте рилсы и решайте, о чём снимать — в одном сервисе для Instagram
+            </h1>
+            <p className={`${styles.heroLead} ${styles.rise} ${styles.d2}`}>
+              Бот отвечает подписчикам, Sonar находит темы в вопросах тех, кто купил, монтирует ролик с субтитрами и
+              ставит его в расписание.
+            </p>
+            <div className={`${styles.heroActions} ${styles.rise} ${styles.d3}`}>
+              <a className={styles.button} href={SIGNUP_URL}>
+                Попробовать бесплатно
+              </a>
+              <a className={styles.buttonGhost} href="#how">
+                Как начать
+              </a>
             </div>
-
-            <div className={styles.heroVisual}>
-              <ol className={styles.signalLoop} aria-label="Цикл данных Sonar">
-                <li><span className={styles.signalDot} aria-hidden="true" />Диалог</li>
-                <li>CRM</li>
-                <li>Сегмент</li>
-                <li>Контент <span className={styles.loopReturn} aria-hidden="true">↺</span></li>
-              </ol>
-              <figure className={styles.productFigure}>
-                <div className={styles.windowBar} aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-                <Image
-                  className={styles.productImage}
-                  src="/landing-topic.png"
-                  width={592}
-                  height={261}
-                  sizes="(max-width: 959px) calc(100vw - 40px), 540px"
-                  preload
-                  alt="Темы роликов в контент-плане Sonar, у каждой — цитата покупателя из директа"
-                />
-                <figcaption>
-                  Темы роликов из вопросов покупателей: у каждой — их дословная цитата. Пример на демо-данных.
-                </figcaption>
-              </figure>
-            </div>
-          </div>
-
-          <ul className={`${styles.container} ${styles.trustStrip}`} aria-label="Условия демо">
-            <li>
-              <span className={styles.trustDot} aria-hidden="true" />
-              <div>
-                <strong>Только внутри Sonar</strong>
-                <span>Демо не отправляет сообщения реальным людям или в соцсети.</span>
-              </div>
-            </li>
-            <li>
-              <span className={styles.trustDot} aria-hidden="true" />
-              <div>
-                <strong>Без карты и списаний</strong>
-                <span>Платёжного шага и автоматической подписки нет.</span>
-              </div>
-            </li>
-            <li>
-              <span className={styles.trustDot} aria-hidden="true" />
-              <div>
-                <strong>Честные статусы</strong>
-                <span>Что работает, а что ждёт подключения соцсетей, — отмечено отдельно.</span>
-              </div>
-            </li>
-          </ul>
-        </section>
-
-        <section className={styles.section} aria-labelledby="difference-title">
-          <div className={styles.container}>
-            <div className={styles.sectionIntro}>
-              <p className={styles.eyebrow}>ГЛАВНОЕ ОТЛИЧИЕ</p>
-              <h2 id="difference-title" className={styles.sectionTitle}>
-                Просмотры показывают внимание. CRM — кто становится клиентом.
-              </h2>
-              <p className={styles.sectionLead}>
-                Контент и продажи часто живут в разных инструментах. Sonar возвращает ручную CRM-разметку в контент-план: зафиксированный сигнал становится не отчётом, а следующим действием.
-              </p>
-            </div>
-
-            <div className={styles.questionGrid}>
-              <article className={styles.questionCard}>
-                <p className={styles.questionLabel}>Автоматизация</p>
-                <h3>Кто написал?</h3>
-                <p>Ловит ключевое слово и запускает сценарий ответа.</p>
-              </article>
-              <article className={styles.questionCard}>
-                <p className={styles.questionLabel}>CRM</p>
-                <h3>Кто стал клиентом?</h3>
-                <p>Сохраняет контекст; пользователь назначает тег сегмента и статус лида.</p>
-              </article>
-              <article className={`${styles.questionCard} ${styles.questionCardAccent}`}>
-                <p className={styles.questionLabel}>Sonar</p>
-                <h3>Какую тему взять следующей?</h3>
-                <p>Связывает результат продаж с приоритетом контента.</p>
-              </article>
-            </div>
-          </div>
-        </section>
-
-        <section className={`${styles.section} ${styles.surfaceSection}`} id="how" aria-labelledby="how-title">
-          <div className={styles.container}>
-            <div className={styles.sectionIntro}>
-              <p className={styles.eyebrow}>ДИАЛОГ → CRM → СЕГМЕНТ → ТЕМА</p>
-              <h2 id="how-title" className={styles.sectionTitle}>Как сигнал проходит через Sonar</h2>
-            </div>
-
-            <div className={styles.workflowGrid}>
-              <ol className={styles.workflowList}>
-                {SIGNAL_STEPS.map((step) => (
-                  <li key={step.label} className={styles.workflowItem}>
-                    <span className={styles.workflowIndex}>{step.label}</span>
-                    <div>
-                      <h3>{step.title}</h3>
-                      <p>{step.body}</p>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-
-              <figure className={styles.demoFigure}>
-                <div className={styles.demoHeader}>
-                  <span className={styles.demoAvatar} aria-hidden="true">A</span>
-                  <div>
-                    <strong>Демонстрационный сценарий</strong>
-                    <span>ключевое слово: «план»</span>
-                  </div>
-                </div>
-                <div className={styles.demoMessages}>
-                  <p className={styles.messageIncoming}>Хочу план запуска</p>
-                  <p className={styles.messageOutgoing}>Отправлю чек-лист. Подскажите, вы запускаете курс или консультацию?</p>
-                  <div className={styles.crmSignal}>
-                    <span>CRM</span>
-                    <strong>Контакт и переписка сохранены</strong>
-                    <span>Тег и статус задаёт пользователь</span>
-                  </div>
-                </div>
-                <figcaption>Демо-диалог сохраняется автоматически; тег и статус пользователь назначает на следующем шаге в CRM.</figcaption>
-              </figure>
-            </div>
-          </div>
-        </section>
-
-        <section className={styles.section} aria-labelledby="proof-title">
-          <div className={styles.container}>
-            <div className={styles.sectionIntro}>
-              <p className={styles.eyebrow}>ПРОВЕРЯЕМО ПРОДУКТОМ</p>
-              <h2 id="proof-title" className={styles.sectionTitle}>Что можно проверить сразу после регистрации</h2>
-              <p className={styles.sectionLead}>
-                CRM на демо-данных, как она выглядит у вас. Рядом — четыре шага первого запуска.
-              </p>
-            </div>
-
-            <div className={styles.proofGrid}>
-              <figure className={styles.productFigure}>
-                <div className={styles.windowBar} aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-                <div className={styles.imageStage}>
-                  <Image
-                    className={styles.productImage}
-                    src="/landing-crm.png"
-                    width={1280}
-                    height={640}
-                    sizes="(max-width: 719px) calc(100vw - 40px), (max-width: 1199px) calc(50vw - 40px), 556px"
-                    alt="CRM Sonar с карточкой подписчика и историей переписки"
-                  />
-                </div>
-                <figcaption>
-                  <strong>CRM · демо-данные.</strong> Контакт, статус, теги и вся переписка — в одной карточке.
-                </figcaption>
-              </figure>
-
-              <ol className={styles.proofSteps} aria-label="Четыре шага первого запуска">
-                <li>
-                  <span>01</span>
-                  <div><strong>Создать демо-сценарий</strong><p>Ключевое слово и ответ сохраняются в отдельном тестовом пространстве.</p></div>
-                </li>
-                <li>
-                  <span>02</span>
-                  <div><strong>Проверить без записи</strong><p>Тестовый запуск проверяет сценарий, ничего не записывая в CRM.</p></div>
-                </li>
-                <li>
-                  <span>03</span>
-                  <div><strong>Открыть демо-диалог</strong><p>Один тестовый контакт и его переписка сохраняются внутри CRM.</p></div>
-                </li>
-                <li>
-                  <span>04</span>
-                  <div><strong>Назначить сегмент</strong><p>После ручного тега и статуса контент-план показывает объяснимый приоритет.</p></div>
-                </li>
-              </ol>
-            </div>
-          </div>
-        </section>
-
-        <section className={`${styles.section} ${styles.insideSection}`} id="inside" aria-labelledby="inside-title">
-          <div className={styles.container}>
-            <div className={styles.sectionIntro}>
-              <p className={styles.eyebrow}>ЧТО ВНУТРИ</p>
-              <h2 id="inside-title" className={styles.sectionTitle}>Рабочий цикл — с честными статусами</h2>
-              <p className={styles.sectionLead}>
-                Что работает уже сейчас, а что включится после подключения соцсетей. Без обещаний раньше времени.
-              </p>
-            </div>
-
-            <ul className={styles.areaGrid}>
-              {PRODUCT_AREAS.map((area) => (
-                <li
-                  key={area.title}
-                  className={`${styles.areaCard} ${'featured' in area && area.featured ? styles.areaCardFeatured : ''} ${'wide' in area && area.wide ? styles.areaCardWide : ''}`}
-                  data-scroll-reveal
-                >
-                  <span className={styles.statusLabel}>{area.status}</span>
-                  <h3>{area.title}</h3>
-                  <p>{area.body}</p>
-                </li>
-              ))}
+            <ul className={`${styles.heroFacts} ${styles.rise} ${styles.d4}`}>
+              <li>Понимает казахский и русский — даже вперемешку</li>
+              <li>Демо без карты и без подключения соцсетей</li>
             </ul>
           </div>
+
+          <PhoneLoop />
         </section>
 
-        <section className={styles.section} aria-labelledby="principle-title">
-          <div className={styles.container}>
-            <div className={styles.principleGrid}>
-              <div>
-                <p className={styles.eyebrow}>НЕ НАБОР ГЕНЕРАТОРОВ</p>
-                <h2 id="principle-title" className={styles.sectionTitle}>Главный модуль Sonar — связь между модулями</h2>
+        <section className={styles.wrap} aria-label="Что заменяет Sonar" data-reveal>
+          <div className={styles.replaces}>
+            <div>
+              <span>Вместо монтажёра</span>
+              <strong>рилс за минуты</strong>
+            </div>
+            <div>
+              <span>Вместо менеджера в директе</span>
+              <strong>ответ за секунды</strong>
+            </div>
+            <div>
+              <span>Вместо контент-стратега</span>
+              <strong>темы от покупателей</strong>
+            </div>
+            <div className={styles.replacesSonar}>
+              <span>Sonar</span>
+              <strong>всё в одном месте</strong>
+            </div>
+          </div>
+        </section>
+
+        <section id="features" className={`${styles.wrap} ${styles.features}`} aria-label="Возможности">
+          <article className={styles.feature} data-reveal>
+            <div className={`${styles.card} ${styles.demo}`} aria-hidden="true">
+              <div className={styles.chatHead}>
+                <span className={styles.avatar}>А</span>
+                <span>
+                  <strong>Айгерим</strong>
+                  <small>написала под рилсом «план»</small>
+                </span>
               </div>
-              <div className={styles.principleCopy}>
-                <p>Бот может ответить. CRM может сохранить контакт. Генератор может предложить текст.</p>
-                <p>Идея Sonar — связать эти действия так, чтобы вопросы подписчиков и статусы лидов влияли на следующую тему в работе.</p>
-                <p className={styles.formula}>Диалог → CRM → сегмент → приоритет темы</p>
+              <span className={`${styles.bubbleIn} ${styles.loop1}`}>план</span>
+              <span className={`${styles.bubbleOut} ${styles.loop2}`}>Держите чек-лист! Подскажите, вы запускаете курс или консультацию?</span>
+              <span className={`${styles.bubbleIn} ${styles.loop3}`}>Курс. А можно в рассрочку через Kaspi?</span>
+            </div>
+            <div className={styles.featureCopy}>
+              <span className={styles.chip}>
+                Чат-бот и CRM <em className={styles.soon}>Instagram — после одобрения Meta</em>
+              </span>
+              <h2>Бот отвечает в директ, пока вы снимаете</h2>
+              <p>Человек пишет слово под рилсом — бот присылает обещанное и задаёт вопрос. Все диалоги и покупки — в одной CRM.</p>
+              <ul className={styles.ticks}>
+                <li>Ответ по ключевому слову за секунды</li>
+                <li>Карточка каждого человека: переписка, теги, купил или нет</li>
+                <li>Напоминает ответить, пока Instagram ещё разрешает написать</li>
+              </ul>
+            </div>
+          </article>
+
+          <article className={styles.feature} data-reveal>
+            <div className={styles.featureCopy}>
+              <span className={`${styles.chip} ${styles.chipAccent}`}>Контент-план</span>
+              <h2>О чём снимать — подскажут те, кто у вас купил</h2>
+              <p>
+                Sonar читает директ и находит, о чём спрашивали именно покупатели — не все подписчики. Каждая тема ролика —
+                с их дословными словами, чтобы вы отвечали на настоящий вопрос.
+              </p>
+              <ul className={styles.ticks}>
+                <li>Отделяет вопросы купивших от остальных</li>
+                <li>Тема без цитаты покупателя не попадёт в план</li>
+                <li>Сценарий ролика — в один клик</li>
+              </ul>
+            </div>
+            <div className={`${styles.card} ${styles.demo}`} aria-hidden="true">
+              <small className={styles.demoLabel}>Спрашивали купившие</small>
+              <span className={styles.bubbleIn}>подойдёт ли курс, если болит спина после родов?</span>
+              <span className={styles.bubbleIn}>у меня диастаз, мне можно?</span>
+              <span className={styles.arrowDown}>↓</span>
+              <div className={styles.topicCard}>
+                <small>Тема для ролика</small>
+                <strong>Можно ли заниматься йогой с больной спиной после родов</strong>
+              </div>
+            </div>
+          </article>
+
+          <article className={styles.feature} data-reveal>
+            <div className={`${styles.card} ${styles.demo}`} aria-hidden="true">
+              <div className={styles.timelineHead}>
+                <small>Ваша запись</small>
+                <small>паузы исчезают</small>
+              </div>
+              <div className={styles.timeline}>
+                <span style={{ flex: 3 }} />
+                <i />
+                <span style={{ flex: 2 }} />
+                <i />
+                <span style={{ flex: 4 }} />
+                <i />
+                <span style={{ flex: 2 }} />
+              </div>
+              <div className={styles.timelineHead}>
+                <small>1:42 исходник</small>
+                <strong>0:58 готовый ролик</strong>
+              </div>
+            </div>
+            <div className={styles.featureCopy}>
+              <span className={styles.chip}>ИИ-монтаж</span>
+              <h2>Загрузите запись — получите готовый рилс</h2>
+              <p>Без таймлайна и монтажёра. Sonar слушает речь и делает то, на что обычно уходит вечер.</p>
+              <ul className={styles.ticks}>
+                <li>Вырезает паузы, «эээ» и вздохи</li>
+                <li>Вжигает субтитры с подсветкой слова, которое звучит</li>
+                <li>Понимает казахский, русский и речь вперемешку</li>
+                <li>Вертикаль для Reels, квадрат, горизонталь — без чёрных полос</li>
+              </ul>
+            </div>
+          </article>
+
+          <article className={styles.feature} data-reveal>
+            <div className={styles.featureCopy}>
+              <span className={styles.chip}>
+                Автопостинг <em className={styles.soon}>после одобрения Meta</em>
+              </span>
+              <h2>Ролик выйдет сам — в нужный день и час</h2>
+              <p>Поставьте готовый рилс в расписание и занимайтесь своими делами. Sonar опубликует его и напишет, когда пост вышел.</p>
+              <ul className={styles.ticks}>
+                <li>Календарь публикаций на неделю вперёд</li>
+                <li>Согласование: пост не выйдет, пока его не одобрят — удобно агентствам</li>
+                <li>Бережёт аккаунт: не публикует слишком часто и следит за лимитами Instagram</li>
+              </ul>
+            </div>
+            <div className={`${styles.card} ${styles.demo}`} aria-hidden="true">
+              <div className={styles.timelineHead}>
+                <small>Эта неделя</small>
+                <small>Instagram</small>
+              </div>
+              <div className={styles.week}>
+                {['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'].map((d) => (
+                  <small key={d}>{d}</small>
+                ))}
+              </div>
+              <div className={styles.week}>
+                <span />
+                <span className={styles.weekQuiet}>19:00</span>
+                <span />
+                <span />
+                <span className={styles.weekPost}>19:00 рилс</span>
+                <span />
+                <span />
+              </div>
+              <div className={styles.postRow}>
+                «Йога после родов: можно?» <small>пятница, 19:00 · запланирован</small>
+              </div>
+            </div>
+          </article>
+
+          <div className={styles.more} data-reveal>
+            <h2 className={styles.sectionTitle}>Ещё в Sonar</h2>
+            <div className={styles.moreGrid}>
+              <div className={styles.card}>
+                <strong>Разбор чужих рилсов</strong>
+                <p>Загрузите ролик, который хорошо зашёл: Sonar покажет хук и структуру и перепишет сценарий под вашу нишу.</p>
+              </div>
+              <div className={styles.card}>
+                <strong>Карусели одним запросом</strong>
+                <p>Напишите тему — получите готовые слайды в цветах вашего бренда.</p>
+              </div>
+              <div className={styles.card}>
+                <strong>Уведомления на телефон</strong>
+                <p>Ролик готов, пост вышел, кто-то ждёт ответа — узнаете сразу.</p>
               </div>
             </div>
           </div>
         </section>
 
-        <section className={`${styles.section} ${styles.surfaceSection}`} id="roadmap" aria-labelledby="roadmap-title">
-          <div className={styles.container}>
-            <div className={styles.sectionIntro}>
-              <p className={styles.eyebrow}>ПЛАНЫ</p>
-              <h2 id="roadmap-title" className={styles.sectionTitle}>Что нужно подключить до production-версии</h2>
-              <p className={styles.sectionLead}>Без выдуманных дат и процентов готовности — только следующий проверяемый слой продукта.</p>
-            </div>
-
-            <ol className={styles.roadmapList}>
-              {ROADMAP.map((item, index) => (
-                <li key={item.title}>
-                  <span className={styles.roadmapNumber}>{String(index + 1).padStart(2, '0')}</span>
-                  <div>
-                    <h3>{item.title}</h3>
-                    <p>{item.body}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </div>
+        <section id="how" className={`${styles.wrap} ${styles.how}`} aria-labelledby="how-title" data-reveal>
+          <h2 id="how-title" className={styles.sectionTitle}>
+            Как начать
+          </h2>
+          <ol className={styles.steps}>
+            <li className={styles.card}>
+              <span className={styles.stepNo}>1</span>
+              <strong>Зарегистрируйтесь</strong>
+              <p>По email, без карты. Первый запуск проведёт по шагам на демо-данных.</p>
+            </li>
+            <li className={styles.card}>
+              <span className={styles.stepNo}>2</span>
+              <strong>Загрузите видео</strong>
+              <p>Выберите стиль субтитров и посмотрите результат прямо на кадре — до монтажа.</p>
+            </li>
+            <li className={styles.card}>
+              <span className={styles.stepNo}>3</span>
+              <strong>Заберите ролик</strong>
+              <p>Скачайте готовый рилс или поставьте в расписание.</p>
+            </li>
+          </ol>
         </section>
 
-        <section className={styles.section} aria-labelledby="trust-principle-title">
-          <div className={styles.container}>
-            <div className={styles.trustPrincipleBlock} data-scroll-reveal>
-              <div className={styles.trustPrincipleCopy}>
-                <p className={styles.eyebrow}>ПРИНЦИП SONAR</p>
-                <h2 id="trust-principle-title" className={styles.sectionTitle}>Меньше магии — больше проверяемой связи</h2>
-                <p>
-                  Ценность Sonar не в количестве генераторов. Важно, чтобы рекомендацию можно было проверить: для какой аудитории тема, сколько из неё купили и что именно они спрашивали.
-                </p>
-                <p>
-                  Поэтому рядом с каждой темой — дословные цитаты ваших покупателей. ИИ ускоряет работу, а не придумывает за вас.
-                </p>
-              </div>
-            </div>
-          </div>
+        <section id="faq" className={`${styles.wrap} ${styles.faq}`} aria-labelledby="faq-title" data-reveal>
+          <h2 id="faq-title" className={styles.sectionTitle}>
+            Вопросы
+          </h2>
+          {FAQ.map((item) => (
+            <details key={item.question} className={styles.card}>
+              <summary>{item.question}</summary>
+              <p>{item.answer}</p>
+            </details>
+          ))}
         </section>
 
-        <section className={`${styles.section} ${styles.faqSection}`} id="faq" aria-labelledby="faq-title" data-scroll-reveal>
-          <div className={styles.container}>
-            <div className={styles.sectionIntro}>
-              <p className={styles.eyebrow}>FAQ</p>
-              <h2 id="faq-title" className={styles.sectionTitle}>Частые вопросы о текущей сборке</h2>
-            </div>
-
-            <div className={styles.faqList}>
-              {FAQ.map((item) => (
-                <details key={item.question} className={styles.faqItem}>
-                  <summary>{item.question}</summary>
-                  <p>{item.answer}</p>
-                </details>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className={`${styles.section} ${styles.closingSection}`} aria-labelledby="closing-title">
-          <div className={styles.container}>
-            <div className={styles.closingPanel}>
-              <div>
-                <p className={styles.eyebrow}>ДЕМО-ЦИКЛ</p>
-                <h2 id="closing-title" className={styles.sectionTitle}>Посмотрите, как сигнал превращается в рабочий процесс</h2>
-                <p>
-                  Четыре шага — и вы увидите, как вопрос подписчика превращается в тему для следующего ролика.
-                </p>
-              </div>
-              <div className={styles.closingAction}>
-                <a className={styles.button} href={DEMO_CYCLE_URL}>Попробовать демо</a>
-                <span>Регистрация по email · демо-данные · без карты и подключения соцсетей.</span>
-              </div>
-            </div>
+        <section className={styles.wrap} aria-labelledby="closing-title" data-reveal>
+          <div className={styles.closing}>
+            <h2 id="closing-title" className={styles.sectionTitle}>
+              Директ, ролики и публикации — в одном месте
+            </h2>
+            <p>Попробуйте бесплатно: загрузите запись с телефона и получите готовый рилс с субтитрами.</p>
+            <a className={styles.button} href={SIGNUP_URL}>
+              Попробовать бесплатно
+            </a>
           </div>
         </section>
       </main>
 
       <footer className={styles.footer}>
-        <div className={`${styles.container} ${styles.footerInner}`}>
-          <a className={styles.brand} href="#top" aria-label="Sonar — в начало страницы">
-            <span className={styles.brandMark} aria-hidden="true" />
-            Sonar
-          </a>
-          <p>Чат-бот, CRM и контент-план в одной цепочке данных.</p>
-          <a href="#inside">Текущий статус продукта</a>
+        <div className={`${styles.wrap} ${styles.footerInner}`}>
+          <strong>Sonar</strong>
           <a href="/privacy">Конфиденциальность</a>
+          <a href={LOGIN_URL}>Войти</a>
         </div>
       </footer>
+    </div>
+  );
+}
+
+/** The whole loop in one phone, a scene every three seconds. Decorative —
+ *  the same story is told in words right next to it. */
+function PhoneLoop() {
+  return (
+    <div className={`${styles.phoneWrap} ${styles.rise} ${styles.d2}`} aria-hidden="true">
+      <div className={styles.phone}>
+        <div className={styles.scene}>
+          <div className={styles.chatHead}>
+            <span className={styles.avatar}>А</span>
+            <strong>Айгерим</strong>
+          </div>
+          <span className={styles.bubbleIn}>план</span>
+          <span className={styles.bubbleOut}>Держите чек-лист! Вы запускаете курс или консультацию?</span>
+          <span className={styles.bubbleIn}>Курс. А если болит спина после родов — подойдёт?</span>
+          <small className={styles.sceneCaption}>1 · Бот ответил в директ</small>
+        </div>
+
+        <div className={`${styles.scene} ${styles.s2}`}>
+          <small className={styles.demoLabel}>Спрашивали купившие</small>
+          <span className={styles.bubbleIn}>подойдёт ли курс, если болит спина после родов?</span>
+          <span className={styles.bubbleIn}>у меня диастаз, мне можно?</span>
+          <div className={styles.topicCard}>
+            <small>Тема для ролика</small>
+            <strong>Йога с больной спиной после родов — можно ли?</strong>
+          </div>
+          <small className={styles.sceneCaption}>2 · Тема из вопросов покупателей</small>
+        </div>
+
+        <div className={`${styles.scene} ${styles.s3} ${styles.reel}`}>
+          <span className={styles.reelBody} />
+          <span className={styles.reelHead} />
+          <span className={styles.reelBand}>Йога после родов: можно?</span>
+          <span className={styles.reelWords}>
+            <b>каждая</b>
+            <b>твоя</b>
+            <b>история</b>
+          </span>
+          <small className={styles.sceneCaptionLight}>3 · Рилс смонтирован с субтитрами</small>
+        </div>
+
+        <div className={`${styles.scene} ${styles.s4}`}>
+          <small className={styles.demoLabel}>Публикации на неделе</small>
+          <div className={styles.week}>
+            {['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'].map((d) => (
+              <small key={d}>{d}</small>
+            ))}
+          </div>
+          <div className={`${styles.week} ${styles.weekTall}`}>
+            <span />
+            <span />
+            <span className={styles.weekPostPlain} />
+            <span />
+            <span className={styles.weekPostPlain} />
+            <span />
+            <span />
+          </div>
+          <div className={styles.postRow}>
+            Йога после родов: можно? <small>пятница, 19:00 · запланирован</small>
+          </div>
+          <small className={styles.sceneCaption}>4 · Выйдет по расписанию</small>
+        </div>
+      </div>
+      <div className={styles.sceneDots}>
+        <span />
+        <span className={styles.s2} />
+        <span className={styles.s3} />
+        <span className={styles.s4} />
+      </div>
     </div>
   );
 }
