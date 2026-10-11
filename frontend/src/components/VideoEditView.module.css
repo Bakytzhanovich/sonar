@@ -389,6 +389,7 @@
 }
 
 .targetSwitch {
+  position: relative;
   /* Two words do not need the width of a laptop screen. */
   width: 100%;
   max-width: 420px;
@@ -402,6 +403,9 @@
 }
 
 .targetButton {
+  position: relative;
+  z-index: 1;
+  transition: color 200ms ease;
   min-height: 44px;
   border: 0;
   border-radius: var(--radius-sm);
@@ -414,9 +418,23 @@
 }
 
 .targetButtonOn {
-  background: var(--foreground);
   color: var(--background);
 }
+
+/* The light pill behind the chosen half: one element that slides between
+   them, so the eye follows the switch instead of seeing it blink. */
+.targetSwitch::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 4px;
+  width: calc(50% - 6px);
+  border-radius: var(--radius-sm);
+  background: var(--foreground);
+  transition: transform 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.targetSwitch[data-target='headline']::before { transform: translateX(calc(100% + 4px)); }
 
 .studioTabs {
   display: flex;
@@ -444,6 +462,11 @@
 .studioTabOn {
   color: var(--foreground);
   border-bottom-color: var(--accent);
+}
+.studioTab { transition: color 180ms ease, border-color 180ms ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .targetSwitch::before, .targetButton, .studioTab { transition: none; }
 }
 
 .targetButton:focus-visible,

@@ -491,7 +491,7 @@ export default function VideoEditView() {
                     exist for both, and without saying which one is being
                     changed people set the headline colour looking for the
                     captions'. */}
-                <div className={styles.targetSwitch} role="group" aria-label="Что меняем">
+                <div className={styles.targetSwitch} data-target={target} role="group" aria-label="Что меняем">
                   {(['subs', 'headline'] as const).map((t) => (
                     <button
                       key={t}

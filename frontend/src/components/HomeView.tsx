@@ -98,7 +98,15 @@ export default function HomeView() {
         {!hasAccess && <NoticeBanner>{MISSING_API_KEY_MESSAGE}</NoticeBanner>}
         <StatusMessage>{status}</StatusMessage>
 
-        {hasAccess && !data && !status && <p className={styles.loading}>Собираю, что происходит…</p>}
+        {/* Shaped like what is coming, so nothing jumps when it arrives. */}
+        {hasAccess && !data && !status && (
+          <div className={styles.loading} aria-label="Загружаю">
+            <span className="skeleton" style={{ width: 120, height: 14 }} />
+            <span className="skeleton" style={{ width: '70%', height: 40 }} />
+            <span className="skeleton" style={{ width: '50%', height: 18 }} />
+            <span className="skeleton" style={{ width: 200, height: 48 }} />
+          </div>
+        )}
 
         {data && state && (
           <>
@@ -157,10 +165,10 @@ export default function HomeView() {
                 analyser alone does not. Wide screens only: on a phone it
                 would push the list above off the first screen. */}
             <section className={styles.loop} aria-label="Неделя">
-              <Link href="/crm" className={styles.loopStage}><span>Директ</span><strong>{state.week.inbound}</strong><small>{plural(state.week.inbound, ['сообщение', 'сообщения', 'сообщений'])} за неделю</small></Link>
-              <Link href="/crm" className={styles.loopStage}><span>Купили</span><strong>{state.week.clients}</strong><small>отмечены в CRM</small></Link>
-              <Link href="/content-plan" className={styles.loopStage}><span>Темы</span><strong>{state.topicCount}</strong><small>из вопросов купивших</small></Link>
-              <Link href="/video" className={styles.loopStage}><span>Монтаж</span><strong>{rendering.length}</strong><small>в работе</small></Link>
+              <Link href="/crm" className={styles.loopStage}><span>Директ</span><strong><CountUp value={state.week.inbound} /></strong><small>{plural(state.week.inbound, ['сообщение', 'сообщения', 'сообщений'])} за неделю</small></Link>
+              <Link href="/crm" className={styles.loopStage}><span>Купили</span><strong><CountUp value={state.week.clients} /></strong><small>отмечены в CRM</small></Link>
+              <Link href="/content-plan" className={styles.loopStage}><span>Темы</span><strong><CountUp value={state.topicCount} /></strong><small>из вопросов купивших</small></Link>
+              <Link href="/video" className={styles.loopStage}><span>Монтаж</span><strong><CountUp value={rendering.length} /></strong><small>в работе</small></Link>
               <Link href="/scheduler" className={styles.loopStage}><span>Публикация</span><strong>{state.nextPost ? when(state.nextPost.scheduledAt) : '—'}</strong><small>{state.nextPost ? PLATFORM[state.nextPost.platform] ?? state.nextPost.platform : 'ничего не запланировано'}</small></Link>
             </section>
           </>
@@ -170,6 +178,26 @@ export default function HomeView() {
       <TabBar current="/home" />
     </div>
   );
+}
+
+/** A number that counts up to itself once, the first time it is shown. Off
+ *  for anyone who asked for less motion — they get the number at once. */
+function CountUp({ value }: { value: number }) {
+  const [shown, setShown] = useState(0);
+  const still = value === 0 || !window.matchMedia('(prefers-reduced-motion: no-preference)').matches;
+  useEffect(() => {
+    if (still) return;
+    const start = performance.now();
+    let frame = 0;
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / 700);
+      setShown(Math.round(value * (1 - Math.pow(1 - p, 3))));
+      if (p < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [value, still]);
+  return <>{still ? value : shown}</>;
 }
 
 function NextStepCard({ step, now }: { step: NextStep; now: number }) {
