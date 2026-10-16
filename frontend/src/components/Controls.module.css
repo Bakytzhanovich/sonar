@@ -27,7 +27,7 @@
   font-family: inherit;
   /* Felt, not seen: colour eases on hover and the button gives a little
      under a finger, the way native controls do. */
-  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, transform 120ms ease;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, filter 150ms ease, transform 120ms ease;
   border-radius: var(--radius-sm);
   padding: 6px 12px;
   font-size: var(--text-sm);
@@ -167,8 +167,7 @@
   }
 }
 
+/* buttonPrimary and buttonSecondary compose buttonBase, so this covers them. */
 @media (prefers-reduced-motion: no-preference) {
-  .buttonBase:active:not(:disabled),
-  .buttonPrimary:active:not(:disabled),
-  .buttonSecondary:active:not(:disabled) { transform: scale(0.97); }
+  .buttonBase:active:not(:disabled) { transform: scale(0.97); }
 }

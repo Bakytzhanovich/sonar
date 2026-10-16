@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { CalendarClock, Captions, Clapperboard, Lightbulb, MessageCircle } from 'lucide-react';
 import { plural } from '@/lib/plural';
@@ -100,7 +100,8 @@ export default function HomeView() {
 
         {/* Shaped like what is coming, so nothing jumps when it arrives. */}
         {hasAccess && !data && !status && (
-          <div className={styles.loading} aria-label="Загружаю">
+          <div className={styles.loading} role="status">
+            <span className="visually-hidden">Загружаю</span>
             <span className="skeleton" style={{ width: 120, height: 14 }} />
             <span className="skeleton" style={{ width: '70%', height: 40 }} />
             <span className="skeleton" style={{ width: '50%', height: 18 }} />
@@ -180,24 +181,37 @@ export default function HomeView() {
   );
 }
 
-/** A number that counts up to itself once, the first time it is shown. Off
- *  for anyone who asked for less motion — they get the number at once. */
+/** A number that counts up to itself when first shown, and from the old value
+ *  to the new one when it changes — never back from zero. Off for anyone who
+ *  asked for less motion — they get the number at once. */
 function CountUp({ value }: { value: number }) {
   const [shown, setShown] = useState(0);
-  const still = value === 0 || !window.matchMedia('(prefers-reduced-motion: no-preference)').matches;
-  useEffect(() => {
-    if (still) return;
-    const start = performance.now();
+  const from = useRef(0);
+  // Layout effect: a reduced-motion reader gets the number before the first
+  // paint instead of a frame of 0. Reads matchMedia here, not during render,
+  // so the component stays safe to render on the server.
+  useLayoutEffect(() => {
+    const start = from.current;
+    from.current = value;
+    if (start === value || !window.matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+      setShown(value);
+      return;
+    }
+    const t0 = performance.now();
     let frame = 0;
     const tick = (t: number) => {
-      const p = Math.min(1, (t - start) / 700);
-      setShown(Math.round(value * (1 - Math.pow(1 - p, 3))));
+      const p = Math.min(1, (t - t0) / 700);
+      setShown(Math.round(start + (value - start) * (1 - Math.pow(1 - p, 3))));
       if (p < 1) frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [value, still]);
-  return <>{still ? value : shown}</>;
+    return () => {
+      cancelAnimationFrame(frame);
+      // Interrupted mid-count: the next run starts from where it stopped.
+      from.current = start;
+    };
+  }, [value]);
+  return <>{shown}</>;
 }
 
 function NextStepCard({ step, now }: { step: NextStep; now: number }) {

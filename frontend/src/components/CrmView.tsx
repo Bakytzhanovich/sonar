@@ -831,8 +831,9 @@ export default function CrmView() {
                   )}
 
                   {initialListLoading ? (
-                    <div className={styles.listSkeleton} aria-label="Загружаем контакты">
-                      {Array.from({ length: 5 }, (_, index) => <span key={index} />)}
+                    <div className={styles.listSkeleton} role="status">
+                      <span className="visually-hidden">Загружаем контакты</span>
+                      {Array.from({ length: 5 }, (_, index) => <span key={index} className="skeleton" />)}
                     </div>
                   ) : listError && !listLoaded ? (
                     <div className={styles.listEmpty} role="alert">
@@ -1166,7 +1167,7 @@ export default function CrmView() {
               {detailTab === 'conversation' ? (
                 <section id="conversation-panel" role="tabpanel" aria-labelledby="conversation-tab" className={styles.detailPanel}>
                   {messagesLoading ? (
-                    <div className={styles.detailSkeleton} aria-label="Загружаем переписку"><span /><span /><span /></div>
+                    <div className={styles.detailSkeleton} role="status"><span className="visually-hidden">Загружаем переписку</span><span className="skeleton" /><span className="skeleton" /><span className="skeleton" /></div>
                   ) : messagesError ? (
                     <div className={styles.detailError} role="alert">
                       <p>{messagesError}</p>
@@ -1219,7 +1220,7 @@ export default function CrmView() {
                   </form>
 
                   {notesLoading ? (
-                    <div className={styles.detailSkeleton} aria-label="Загружаем заметки"><span /><span /></div>
+                    <div className={styles.detailSkeleton} role="status"><span className="visually-hidden">Загружаем заметки</span><span className="skeleton" /><span className="skeleton" /></div>
                   ) : notesError ? (
                     <div className={styles.detailError} role="alert">
                       <p>{notesError}</p>

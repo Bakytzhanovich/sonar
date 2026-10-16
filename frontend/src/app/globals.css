@@ -265,26 +265,21 @@ html[data-theme='light'] {
 }
 
 /* ---- Motion ----------------------------------------------------------------
- * One quiet entrance for every product screen: its blocks rise into place in
- * turn, so a screen arrives instead of blinking in. The landing (#main-content)
- * has its own. Ends at transform: none — a fixed bar inside (the editor's
- * action bar) is positioned against the viewport again once it settles —
- * which depends on the fill mode below. */
+ * One quiet entrance for every product screen: it fades in instead of
+ * blinking. The landing (#main-content) has its own.
+ *
+ * On main itself, not on its children: a status line or a banner that mounts
+ * later is a child too, and an error should arrive at once, not fade in after
+ * a stagger delay. And opacity only, no transform: a transform, even while the
+ * entrance runs, makes the block a containing block for position: fixed, and
+ * the editor's bottom action bar showed up mid-form and then jumped down. */
 @media (prefers-reduced-motion: no-preference) {
-  /* backwards, not both: an animation still in effect on transform makes the
-     block a containing block for position: fixed, which pinned the editor's
-     bottom action bar to the middle of the page. backwards drops the effect
-     the moment the entrance ends. */
-  main:not(#main-content) > * { animation: screen-rise 420ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards; }
-  main:not(#main-content) > :nth-child(2) { animation-delay: 50ms; }
-  main:not(#main-content) > :nth-child(3) { animation-delay: 100ms; }
-  main:not(#main-content) > :nth-child(4) { animation-delay: 150ms; }
-  main:not(#main-content) > :nth-child(n + 5) { animation-delay: 200ms; }
+  main:not(#main-content) { animation: screen-in 360ms ease-out backwards; }
 }
 
-@keyframes screen-rise {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: none; }
+@keyframes screen-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* A block of the right size where content will arrive — so the screen does
@@ -300,4 +295,14 @@ html[data-theme='light'] {
 @keyframes skeleton-breathe {
   from { opacity: 0.55; }
   to { opacity: 1; }
+}
+
+/* Text for screen readers only — e.g. what a skeleton stands for. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

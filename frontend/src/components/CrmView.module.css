@@ -478,11 +478,11 @@
   padding: 8px 0;
 }
 
-.listSkeleton span {
+.listSkeleton .skeleton {
   height: 64px;
   margin-inline: 20px;
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  border-radius: 0;
 }
 
 .listEmpty {
@@ -1383,11 +1383,9 @@
   gap: var(--space-2);
 }
 
-.detailSkeleton span {
+.detailSkeleton .skeleton {
   min-height: 54px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
 }
 
 .statusToast {
