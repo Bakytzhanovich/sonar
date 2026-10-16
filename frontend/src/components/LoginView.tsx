@@ -9,15 +9,15 @@ import { API_BASE_URL } from '@/lib/apiConfig';
 import { useSession } from '@/lib/useSession';
 import controls from './Controls.module.css';
 import styles from './AuthView.module.css';
-import Brand from './Brand';
+import AuthShowcase from './AuthShowcase';
 import { forgetWorkspaceSelection } from '@/lib/useDevConfig';
 
-// Where a signed-in person lands: the home screen, which says what to do
-// next. Not the guided chat-bot tour — that walks through keywords and demo
-// contacts, the part of the product switched off pending the personal-data
-// question — and home leaves the direct out entirely for a workspace without
-// a bot, leading with the video editor clients have paid for instead.
-const HOME_ROUTE = '/home';
+// Where a signed-in person lands: straight in the video editor — the part of
+// the product clients have paid for and the one that works end to end today.
+// Home (/home) is one tap away in the nav. Not the guided chat-bot tour: that
+// walks through keywords and demo contacts, the part of the product switched
+// off pending the personal-data question.
+const HOME_ROUTE = '/video';
 
 export default function LoginView() {
   const router = useRouter();
@@ -83,7 +83,7 @@ export default function LoginView() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.brand}><Brand /></div>
+      <AuthShowcase />
       <div className={styles.card}>
         <h1 className={styles.title}>Войти</h1>
         <form className={styles.form} onSubmit={handleSubmit}>

@@ -9,12 +9,12 @@ import { API_BASE_URL } from '@/lib/apiConfig';
 import { useSession } from '@/lib/useSession';
 import controls from './Controls.module.css';
 import styles from './AuthView.module.css';
-import Brand from './Brand';
+import AuthShowcase from './AuthShowcase';
 import { forgetWorkspaceSelection } from '@/lib/useDevConfig';
 
-// Where a new account lands — the same home screen as after signing in (see
-// LoginView): for a workspace with no bot yet it leads with the video editor.
-const HOME_ROUTE = '/home';
+// Where a new account lands — the video editor, as after signing in (see
+// LoginView).
+const HOME_ROUTE = '/video';
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -135,7 +135,7 @@ export default function SignupView() {
 
   return (
     <div className={styles.page}>
-      <div className={styles.brand}><Brand /></div>
+      <AuthShowcase />
       <div className={styles.card}>
         <h1 className={styles.title}>Создать аккаунт</h1>
         {/* Said before the form rather than after a submission: there is no
