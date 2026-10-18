@@ -13,6 +13,8 @@ export interface Session {
   userEmail: string;
   tenantId: string;
   tenantName: string;
+  /** Shows the "Админка" link. Only a hint for the interface: /api/admin checks for itself. */
+  isAdmin?: boolean;
 }
 
 function readStoredSession(): Session | null {

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import LogoutButton from './LogoutButton';
+import { useSession } from '@/lib/useSession';
 import NotificationBellLoader from './NotificationBellLoader';
 import styles from './ModuleNav.module.css';
 
@@ -11,7 +12,7 @@ import styles from './ModuleNav.module.css';
 // module screens, so passing it just renders the nav with nothing marked
 // active, letting onboarding link out to every module without claiming to
 // be one.
-export type ModuleRoute = '/home' | '/bot' | '/crm' | '/reels' | '/carousels' | '/scheduler' | '/content-plan' | '/video' | '/onboarding' | '/account';
+export type ModuleRoute = '/home' | '/bot' | '/crm' | '/reels' | '/carousels' | '/scheduler' | '/content-plan' | '/video' | '/onboarding' | '/account' | '/billing' | '/admin';
 
 const ITEMS: { href: ModuleRoute; label: string }[] = [
   { href: '/home', label: 'Главная' },
@@ -31,6 +32,14 @@ const ITEMS: { href: ModuleRoute; label: string }[] = [
 // styling, just collapsed.
 export default function ModuleNav({ current }: { current: ModuleRoute }) {
   const [open, setOpen] = useState(false);
+  const [session] = useSession();
+  // Beside the account: what the workspace pays for, and — for the owner of
+  // Sonar only — where access is opened.
+  const accountLinks: { href: string; label: string }[] = [
+    { href: '/billing', label: 'Тариф' },
+    ...(session?.isAdmin ? [{ href: '/admin', label: 'Админка' }] : []),
+    { href: '/account', label: 'Аккаунт' },
+  ];
   // Signing out used to exist only on the onboarding screen, which meant that
   // from any of the seven module screens there was no way out of the account
   // at all. It belongs here because this nav is the one thing all of them
@@ -66,10 +75,12 @@ export default function ModuleNav({ current }: { current: ModuleRoute }) {
           )
         )}
         {/* Beside the way out, where a person looks for their account. */}
-        {current === '/account' ? (
-          <span className={styles.active} aria-current="page">Аккаунт</span>
-        ) : (
-          <Link href="/account" className={styles.link}>Аккаунт</Link>
+        {accountLinks.map((item) =>
+          item.href === current ? (
+            <span key={item.href} className={styles.active} aria-current="page">{item.label}</span>
+          ) : (
+            <Link key={item.href} href={item.href} className={styles.link}>{item.label}</Link>
+          )
         )}
         <LogoutButton />
       </nav>
@@ -91,14 +102,17 @@ export default function ModuleNav({ current }: { current: ModuleRoute }) {
                 {item.label}
               </Link>
             ))}
-            <Link
-              href="/account"
-              className={`${styles.mobileLink} ${current === '/account' ? styles.mobileActive : ''}`}
-              aria-current={current === '/account' ? 'page' : undefined}
-              onClick={closeMenu}
-            >
-              Аккаунт
-            </Link>
+            {accountLinks.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`${styles.mobileLink} ${item.href === current ? styles.mobileActive : ''}`}
+                aria-current={item.href === current ? 'page' : undefined}
+                onClick={closeMenu}
+              >
+                {item.label}
+              </Link>
+            ))}
             <LogoutButton variant="stacked" />
           </div>
         )}

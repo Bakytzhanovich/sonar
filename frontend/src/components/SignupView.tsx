@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Eye, EyeOff } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, landingFor, type AccessState } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/apiConfig';
 import { useSession } from '@/lib/useSession';
 import controls from './Controls.module.css';
@@ -12,9 +12,7 @@ import styles from './AuthView.module.css';
 import AuthShowcase from './AuthShowcase';
 import { forgetWorkspaceSelection } from '@/lib/useDevConfig';
 
-// Where a new account lands — the video editor, as after signing in (see
-// LoginView).
-const HOME_ROUTE = '/video';
+// Where a new account lands: see landingFor in lib/api.ts.
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -65,8 +63,8 @@ export default function SignupView() {
 
     api
       .me({ baseUrl: API_BASE_URL })
-      .then(() => {
-        if (!cancelled) router.replace(HOME_ROUTE);
+      .then((res: { user?: { isAdmin?: boolean }; access?: AccessState }) => {
+        if (!cancelled) router.replace(landingFor(res));
       })
       .catch(() => {
         if (cancelled) return;
@@ -106,11 +104,13 @@ export default function SignupView() {
         userEmail: res.user.email,
         tenantId: res.tenant.id,
         tenantName: res.tenant.name,
+        isAdmin: res.user.isAdmin === true,
       };
       // A new person on this browser: the previous one's bot is not theirs.
       forgetWorkspaceSelection();
       setSession(nextSession);
-      router.replace(HOME_ROUTE);
+      // A new account waits for payment wherever payments are switched on.
+      router.replace(landingFor(res));
     } catch (err) {
       if (err instanceof ApiError && err.body && typeof err.body === 'object' && 'error' in err.body) {
         const code = (err.body as { error: string }).error;

@@ -86,6 +86,14 @@ services:
       # cent more. Keep the balance small and auto-recharge OFF.
       - key: SIGNUP_MODE
         value: open
+      # Paid access (src/paidAccess.ts, plans in src/plans.ts) is on in
+      # production by default: a new sign-up gets one free video, then picks a
+      # plan and leaves a number for the Kaspi invoice; the plan opens when
+      # "Оплата получена" is pressed at /admin. ADMIN_EMAILS is who may open
+      # that page — comma-separated Sonar account emails. Unset means nobody
+      # can, and paid plans never open. PAID_ACCESS=off switches it all off.
+      - key: ADMIN_EMAILS
+        sync: false
       # Presented as the x-sonar-admin-secret header to POST /api/tenants,
       # which answers with a tenant API key in plaintext. Not needed unless
       # someone is issuing keys for the API directly — the product's own

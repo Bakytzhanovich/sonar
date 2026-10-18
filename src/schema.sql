@@ -13,7 +13,49 @@ CREATE TABLE tenants (
   id         TEXT PRIMARY KEY,
   name       TEXT NOT NULL,
   email      TEXT NOT NULL UNIQUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Paid access, granted by hand from /admin after a Kaspi invoice is paid
+  -- (src/paidAccess.ts). phone is where the invoice goes, +7XXXXXXXXXX.
+  -- access_forever: workspaces that existed before payments did, and
+  -- staff-created ones; everyone else has access only until access_until.
+  phone          TEXT,
+  access_forever BOOLEAN NOT NULL DEFAULT false,
+  access_until   TIMESTAMPTZ,
+  plan_id        TEXT, -- src/plans.ts; the plan of the current or last paid period
+  -- When access last opened from nothing: a period's video limit counts from
+  -- here at the earliest, not the lapsed period's or the free video.
+  period_started_at TIMESTAMPTZ
+);
+
+-- A plan chosen on the billing page, waiting for its Kaspi invoice to be
+-- paid. pending → paid (the admin pressed "Оплата получена", which opens the
+-- plan) or cancelled (replaced by another choice, or dropped by the admin).
+-- Goes with the account when it is erased.
+CREATE TABLE payment_requests (
+  id         TEXT PRIMARY KEY,
+  tenant_id  TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  plan_id    TEXT NOT NULL,
+  phone      TEXT NOT NULL,
+  amount_kzt INTEGER NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at TIMESTAMPTZ
+);
+CREATE INDEX idx_payment_requests_tenant ON payment_requests(tenant_id, status);
+-- One open request per workspace, held by the database, not only by the
+-- route: two tabs choosing at once must not leave two invoices to send.
+CREATE UNIQUE INDEX idx_payment_requests_one_pending ON payment_requests(tenant_id) WHERE status = 'pending';
+
+-- Every grant and revocation from /admin: who did what to which workspace.
+-- tenant_id is deliberately not a foreign key — the record of a grant
+-- outlives an erased account, and keeps no personal data of it.
+CREATE TABLE admin_actions (
+  id            TEXT PRIMARY KEY,
+  admin_user_id TEXT NOT NULL,
+  tenant_id     TEXT NOT NULL,
+  action        TEXT NOT NULL,
+  days          INTEGER,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- API keys authenticate which tenant an API request is acting as. Only the

@@ -491,6 +491,107 @@ export interface ApiConfig {
 // hook module into this transport layer.
 const SESSION_STORAGE_KEY = 'sonar-session';
 
+/** What sign-in and /me say about the workspace — see src/paidAccess.ts. */
+export type WorkspaceState = 'unlimited' | 'active' | 'trial' | 'expired';
+
+export interface AccessState {
+  state: WorkspaceState;
+  /** Whether the product opens at all; false only when a plan ran out. */
+  active: boolean;
+  forever: boolean;
+  until: string | null;
+}
+
+export interface PlanOffer {
+  id: string;
+  name: string;
+  priceKzt: number;
+  videosPerPeriod: number;
+  features: string[];
+}
+
+export interface PaymentRequest {
+  id: string;
+  planId: string;
+  planName: string;
+  phone: string;
+  amountKzt: number;
+  createdAt: string;
+}
+
+export interface Billing {
+  state: WorkspaceState;
+  until: string | null;
+  plan: { id: string; name: string } | null;
+  videos: { used: number; limit: number | null };
+  phone: string | null;
+  pendingRequest: PaymentRequest | null;
+}
+
+export interface BillingPage extends Billing {
+  periodDays: number;
+  trialVideos: number;
+  plans: PlanOffer[];
+}
+
+export interface AdminRequest {
+  id: string;
+  tenantId: string;
+  email: string;
+  planName: string;
+  phone: string;
+  amountKzt: number;
+  createdAt: string;
+}
+
+export interface AdminAccount {
+  id: string;
+  email: string;
+  phone: string | null;
+  createdAt: string;
+  isAdmin: boolean;
+  state: WorkspaceState;
+  planId: string | null;
+  planName: string | null;
+  until: string | null;
+  videos: { used: number; limit: number | null };
+}
+
+export interface AdminStats {
+  daily: Array<{ day: string; signups: number; revenue: number; payments: number; videos: number }>;
+  totals: { revenue: number; signups: number; videos: number; paying: number; pendingRequests: number };
+  previous: { revenue: number; signups: number; videos: number };
+  byPlan: Array<{ planId: string; name: string; payments: number; revenue: number }>;
+}
+
+export interface AdminAction {
+  id: string;
+  action: string;
+  days: number | null;
+  createdAt: string;
+  adminEmail: string | null;
+  tenantEmail: string | null;
+}
+
+/** Where a workspace chooses and pays for a plan. */
+export const BILLING_ROUTE = '/billing';
+
+/**
+ * The admin's whole job is the panel. Everyone else lands straight in the
+ * video editor — the part of the product clients have paid for and the one
+ * that works end to end today; home is one tap away in the nav. Not the
+ * guided chat-bot tour: that is the part switched off pending the
+ * personal-data question.
+ */
+export const ADMIN_ROUTE = '/admin';
+const PRODUCT_ROUTE = '/video';
+
+/** Where to go after signing in, from the sign-in or /me answer. */
+export function landingFor(res: { user?: { isAdmin?: boolean }; access?: Pick<AccessState, 'active'> }): string {
+  if (res.user?.isAdmin) return ADMIN_ROUTE;
+  return res.access?.active === false ? BILLING_ROUTE : PRODUCT_ROUTE;
+}
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
@@ -522,6 +623,12 @@ async function apiRequest(config: ApiConfig, method: string, path: string, body?
 
   const json = await res.json().catch(() => ({}));
   if (res.status === 401 && !config.apiKey && !isAuthAttempt(path)) onSessionRejected();
+  // Not paid, or out of videos: every screen would otherwise fail its own way,
+  // one 402 at a time. One place sends them all to the page that says why.
+  if (res.status === 402) {
+    const code = (json as { error?: unknown }).error;
+    if (code === 'payment_required' || code === 'video_limit') onPaymentRequired(code === 'video_limit' ? 'limit' : 'locked');
+  }
   if (!res.ok) throw new ApiError(res.status, json);
   return json;
 }
@@ -544,6 +651,20 @@ async function apiRequest(config: ApiConfig, method: string, path: string, body?
 // looked like the form doing nothing.
 function isAuthAttempt(path: string): boolean {
   return path.startsWith('/api/auth/');
+}
+
+// Pages a workspace without a plan may stay on. /account is where it deletes
+// itself — a right that does not wait for payment — and the page's header
+// widgets 402 like everything else; redirecting from there would make
+// deleting the account impossible. /admin answers for itself.
+const OPEN_WITHOUT_ACCESS_PAGES = new Set([BILLING_ROUTE, '/account', '/admin']);
+
+function onPaymentRequired(reason: 'limit' | 'locked'): void {
+  if (typeof window === 'undefined' || OPEN_WITHOUT_ACCESS_PAGES.has(window.location.pathname)) return;
+  // Outside React, and a full load on purpose — the same reason
+  // onSessionRejected reloads: every screen holds its state in hooks.
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+  window.location.assign(`${BILLING_ROUTE}?reason=${reason}`);
 }
 
 function onSessionRejected(): void {
@@ -574,6 +695,25 @@ export const api = {
   // whatever it's given as a Bearer token, so no separate request helper
   // is needed for the two different token kinds.
   me: (config: ApiConfig) => apiRequest(config, 'GET', '/api/auth/me'),
+
+  // ---- Paid access ------------------------------------------------------
+  getBilling: (config: ApiConfig) => apiRequest(config, 'GET', '/api/billing') as Promise<BillingPage>,
+  requestPlan: (config: ApiConfig, planId: string, phone: string) =>
+    apiRequest(config, 'POST', '/api/billing/requests', { planId, phone }) as Promise<Billing>,
+  cancelPlanRequest: (config: ApiConfig) => apiRequest(config, 'DELETE', '/api/billing/requests/current') as Promise<Billing>,
+
+  adminOverview: (config: ApiConfig) =>
+    apiRequest(config, 'GET', '/api/admin/overview') as Promise<{ requests: AdminRequest[]; accounts: AdminAccount[] }>,
+  adminStats: (config: ApiConfig) => apiRequest(config, 'GET', '/api/admin/stats') as Promise<AdminStats>,
+  adminActions: (config: ApiConfig) => apiRequest(config, 'GET', '/api/admin/actions') as Promise<{ actions: AdminAction[] }>,
+  adminMarkPaid: (config: ApiConfig, requestId: string) =>
+    apiRequest(config, 'POST', `/api/admin/requests/${encodeURIComponent(requestId)}/paid`, {}),
+  adminCancelRequest: (config: ApiConfig, requestId: string) =>
+    apiRequest(config, 'POST', `/api/admin/requests/${encodeURIComponent(requestId)}/cancel`, {}),
+  adminGrant: (config: ApiConfig, tenantId: string, days: number, planId?: string) =>
+    apiRequest(config, 'POST', `/api/admin/accounts/${encodeURIComponent(tenantId)}/access`, { days, planId }),
+  adminRevoke: (config: ApiConfig, tenantId: string) =>
+    apiRequest(config, 'POST', `/api/admin/accounts/${encodeURIComponent(tenantId)}/revoke`, {}),
 
   createBot: (config: ApiConfig, name: string, externalAccountId: string) =>
     apiRequest(config, 'POST', '/api/bots', { name, externalAccountId }),
@@ -810,8 +950,8 @@ export const api = {
   // ---- Module 8, Level 3: own ffmpeg engine ------------------------------
 
   /** `size` lets the server refuse an oversized file before it is uploaded. */
-  createVideoUpload: (config: ApiConfig, contentType: string, size?: number) =>
-    apiRequest(config, 'POST', '/api/video-uploads', { contentType, size }) as Promise<VideoUploadTicket>,
+  createVideoUpload: (config: ApiConfig, contentType: string, size?: number, purpose?: 'edit') =>
+    apiRequest(config, 'POST', '/api/video-uploads', { contentType, size, purpose }) as Promise<VideoUploadTicket>,
 
   // No denoise/review flags: the pipeline measures the recording and decides.
   listSubtitlePresets: (config: ApiConfig) =>

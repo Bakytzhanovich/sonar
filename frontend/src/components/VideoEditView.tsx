@@ -305,7 +305,7 @@ export default function VideoEditView() {
     setUploading(true);
     try {
       setStatus('Запрашиваю ссылку для загрузки…');
-      const ticket = await api.createVideoUpload(config, file.type || 'video/mp4', file.size);
+      const ticket = await api.createVideoUpload(config, file.type || 'video/mp4', file.size, 'edit');
 
       setStatus(`Загружаю ${(file.size / 1024 / 1024).toFixed(1)} МБ…`);
       await api.uploadVideoFile(ticket, file);

@@ -4,7 +4,8 @@ import helmet from 'helmet';
 import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { exec, isUniqueViolation, queryAll, queryOne, type Db } from './db';
+import type { PoolClient } from 'pg';
+import { exec, isUniqueViolation, queryAll, queryOne, type Db, type Queryable } from './db';
 import { createApiKeyForTenant, resolveTenantIdFromApiKey } from './apiKeys';
 import { hashPassword, verifyPassword, signSession, verifySession, deriveKey, DUMMY_PASSWORD_HASH } from './auth';
 import { MOCK_WEBHOOK_SECRET_HEADER, isMockWebhookEnabled, verifyMockWebhookSecret } from './webhookAuth';
@@ -65,6 +66,8 @@ import { deleteObject, downloadUrlFor, MAX_SOURCE_BYTES, presign, storageConfigF
 import { localMediaConfigFromEnv, resolveKeyPath, signLocalUrl, verifyLocalUrl } from './localMedia';
 import { notify, listNotifications } from './notifications';
 import { getOrCreateVapidKeys } from './vapidKeys';
+import { isAdminEmail, MAX_GRANT_DAYS, normalizePhone, pathAllowed, planById, usageSince, videoLimit, workspaceState, type AccessRow, type WorkspaceState } from './paidAccess';
+import { PERIOD_DAYS, PLANS, TRIAL_VIDEOS } from './plans';
 import type {
   Bot,
   Carousel,
@@ -133,6 +136,12 @@ export interface AppOptions {
   instagram?: InstagramAppConfig | null;
   /** Every request to Instagram goes through this. Tests pass a fake. */
   instagramFetch?: typeof fetch;
+  /** Whether work needs paid access (src/paidAccess.ts). Defaults to on in
+   *  production and off elsewhere — PAID_ACCESS=on|off overrides — so the
+   *  rest of the test suite and local development are not behind it. */
+  paidAccess?: boolean;
+  /** Who may open /admin; defaults to ADMIN_EMAILS. Tests pass their own. */
+  adminEmails?: string;
 }
 
 // The test connection is development tooling, like the mock pipelines: never
@@ -147,6 +156,121 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // Tied to the session secret like every other derived key, but its own:
   // a state can never be mistaken for any other signed thing.
   const oauthStateKey = deriveKey('instagram-oauth-state');
+  const paidAccessEnv = process.env.PAID_ACCESS;
+  const paidAccess = options.paidAccess ?? (paidAccessEnv ? paidAccessEnv === 'on' : process.env.NODE_ENV === 'production');
+  const adminEmails = options.adminEmails ?? process.env.ADMIN_EMAILS;
+  // ---- Paid access (src/paidAccess.ts, src/plans.ts) ----------------------
+  // With payments off every workspace is 'unlimited' — the interface must not
+  // show a paywall the server does not enforce. Nor does an admin wait: the
+  // person who opens access for everyone else signs up like anyone.
+  type TenantAccessRow = AccessRow & { phone: string | null };
+  const ACCESS_COLUMNS = `access_forever, access_until, plan_id, period_started_at`;
+  const stateOf = (row: AccessRow, email?: string | null): WorkspaceState =>
+    workspaceState(row, { isAdmin: isAdminEmail(email, adminEmails), enforced: paidAccess });
+
+  // A video, for limits: a new edit. Revisions and previews are part of
+  // finishing one, and a failed render is not something anyone got. A
+  // function of the table alias rather than one string patched afterwards,
+  // so a query that needs `v.` asks for it.
+  const newVideoSql = (alias = '') => {
+    const c = alias ? `${alias}.` : '';
+    return `${c}parent_job_id IS NULL AND ${c}preview_of IS NULL AND ${c}status <> 'failed'`;
+  };
+  const countNewVideos = async (q: Queryable, tenantId: string, since: Date | null): Promise<number> => {
+    const row = since
+      ? await queryOne<{ n: number }>(q, `SELECT count(*)::int AS n FROM video_edit_jobs WHERE tenant_id = ? AND ${newVideoSql()} AND created_at >= ?`, tenantId, since.toISOString())
+      : await queryOne<{ n: number }>(q, `SELECT count(*)::int AS n FROM video_edit_jobs WHERE tenant_id = ? AND ${newVideoSql()}`, tenantId);
+    return row?.n ?? 0;
+  };
+
+  // Read once per request by requireProductCredential — not looked up again.
+  const emailOf = (res: Response): string | null => (res.locals.userEmail as string | undefined) ?? null;
+
+  /** Everything the billing page shows. */
+  const billingFor = async (tenantId: string, email: string | null) => {
+    const row = await queryOne<TenantAccessRow>(db, `SELECT ${ACCESS_COLUMNS}, phone FROM tenants WHERE id = ?`, tenantId);
+    const tenant: TenantAccessRow = row ?? { access_forever: false, access_until: null, plan_id: null, phone: null };
+    const state = stateOf(tenant, email);
+    const plan = planById(tenant.plan_id);
+    const limit = videoLimit(state, plan);
+    const used = await countNewVideos(db, tenantId, usageSince(state, tenant));
+    const pending = await queryOne<{ id: string; plan_id: string; phone: string; amount_kzt: number; created_at: string }>(
+      db,
+      `SELECT id, plan_id, phone, amount_kzt, created_at FROM payment_requests WHERE tenant_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,
+      tenantId
+    );
+    return {
+      state,
+      until: tenant.access_until ? new Date(tenant.access_until).toISOString() : null,
+      plan: plan ? { id: plan.id, name: plan.name } : null,
+      videos: { used, limit },
+      phone: tenant.phone,
+      pendingRequest: pending
+        ? { id: pending.id, planId: pending.plan_id, planName: planById(pending.plan_id)?.name ?? pending.plan_id, phone: pending.phone, amountKzt: pending.amount_kzt, createdAt: pending.created_at }
+        : null,
+    };
+  };
+
+  /** What sign-in and /me say: whether the product opens, or the plans page. */
+  const accessFor = async (tenantId: string, email?: string | null) => {
+    const row = await queryOne<AccessRow>(db, `SELECT ${ACCESS_COLUMNS} FROM tenants WHERE id = ?`, tenantId);
+    const state = row ? stateOf(row, email) : 'trial';
+    return { state, active: state !== 'expired', forever: state === 'unlimited', until: row?.access_until ? new Date(row.access_until).toISOString() : null };
+  };
+
+  /**
+   * Whether one more new edit fits, and the words for the person when not.
+   * `q` is the transaction the edit is inserted in, when there is one.
+   */
+  const videoQuota = async (q: Queryable, res: Response): Promise<{ ok: true } | { ok: false; message: string }> => {
+    if (!paidAccess) return { ok: true };
+    const tenantId = res.locals.tenantId as string;
+    const row = await queryOne<AccessRow>(q, `SELECT ${ACCESS_COLUMNS} FROM tenants WHERE id = ?`, tenantId);
+    const tenant: AccessRow = row ?? { access_forever: false, access_until: null };
+    const state = stateOf(tenant, emailOf(res));
+    const plan = planById(tenant.plan_id);
+    const limit = videoLimit(state, plan);
+    if (limit === null) return { ok: true };
+    if ((await countNewVideos(q, tenantId, usageSince(state, tenant))) < limit) return { ok: true };
+    return {
+      ok: false,
+      message:
+        state === 'trial'
+          ? 'Бесплатный ролик уже смонтирован. Выберите тариф, чтобы монтировать дальше'
+          : state === 'expired'
+            ? 'Тариф закончился. Продлите его, чтобы монтировать дальше'
+            : `В тарифе «${plan?.name}» ${limit} роликов за ${PERIOD_DAYS} дней — они закончились. Перейдите на тариф больше или дождитесь следующего периода`,
+    };
+  };
+
+  /** The upload ticket's check: spares an upload the edit would refuse. */
+  const refuseOverVideoLimit = async (res: Response): Promise<boolean> => {
+    const quota = await videoQuota(db, res);
+    if (quota.ok) return false;
+    res.status(402).json({ error: 'video_limit', message: quota.message });
+    return true;
+  };
+
+  /**
+   * One transaction holding a per-workspace lock. A count-then-insert (the
+   * video limit, the one open payment request) is only a rule if two
+   * requests at once cannot both pass the count before either inserts.
+   */
+  const withTenantLock = async <T>(tenantId: string, run: (client: PoolClient) => Promise<T>): Promise<T> => {
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`tenant:${tenantId}`]);
+      const result = await run(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  };
   const app = express();
 
   // Rate limiting keys on req.ip, which behind a reverse proxy is the
@@ -400,7 +524,8 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
 
     const tenantId = randomUUID();
-    await exec(db, `INSERT INTO tenants (id, name, email) VALUES (?, ?, ?)`, tenantId, name, email);
+    // Staff-created: access is not a question for a workspace staff made by hand.
+    await exec(db, `INSERT INTO tenants (id, name, email, access_forever) VALUES (?, ?, ?, true)`, tenantId, name, email);
     const apiKey = await createApiKeyForTenant(db, tenantId);
 
     // apiKey is shown exactly once, right here — it is not retrievable
@@ -496,7 +621,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     // The token travels only in the httpOnly cookie. Echoing it in the body
     // put it within reach of any script on the page — the one thing the
     // cookie exists to prevent — and the frontend never read it from there.
-    res.status(201).json({ user: { id: userId, email }, tenant: { id: tenantId, name: email } });
+    res.status(201).json({ user: { id: userId, email, isAdmin: isAdminEmail(email, adminEmails) }, tenant: { id: tenantId, name: email }, access: await accessFor(tenantId, email) });
   }));
 
   app.post('/api/auth/login', authRateLimit, asyncHandler(async (req, res) => {
@@ -552,7 +677,8 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     const tenant = await queryOne<{ id: string; name: string }>(db, `SELECT id, name FROM tenants WHERE id = ?`, user.tenant_id);
     const sessionToken = signSession({ userId: user.id, tenantId: user.tenant_id });
     setSessionCookie(res, sessionToken);
-    res.json({ user: { id: user.id, email: user.email }, tenant });
+    // Whether to open the product or the "waiting for payment" screen.
+    res.json({ user: { id: user.id, email: user.email, isAdmin: isAdminEmail(user.email, adminEmails) }, tenant, access: await accessFor(user.tenant_id, user.email) });
   }));
 
   // Signing out has to happen server-side now: an httpOnly cookie is by
@@ -571,7 +697,11 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     // what the API will refuse. It is not the enforcement — that is
     // requireRoleForRequest, server-side — only what lets a viewer see a
     // read-only screen instead of buttons that answer 403.
-    res.json({ user: { id: user.id, email: user.email, role: asRole(user.role) }, tenant });
+    res.json({
+      user: { id: user.id, email: user.email, role: asRole(user.role), isAdmin: isAdminEmail(user.email, adminEmails) },
+      tenant,
+      access: await accessFor(tenantId, user.email),
+    });
   }));
 
   // Before the credential check on purpose: this is the application's own
@@ -686,6 +816,301 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
 
   app.use('/api', requireProductCredential(db));
   app.use('/api', requireRoleForRequest);
+
+  // Paid access, default-deny like the roles above: everything past this line
+  // is judged by the workspace's state, including routes nobody has written
+  // yet (paidAccess.ts says what each state reaches). 402 with a code the
+  // interface turns into the plans page.
+  if (paidAccess) {
+    app.use('/api', async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const path = `${req.baseUrl}${req.path}`;
+        const row = await queryOne<AccessRow>(db, `SELECT ${ACCESS_COLUMNS} FROM tenants WHERE id = ?`, res.locals.tenantId);
+        const state = row ? stateOf(row, emailOf(res)) : 'trial';
+        if (pathAllowed(state, path)) return next();
+        res.status(402).json({
+          error: 'payment_required',
+          state,
+          message: state === 'expired' ? 'Тариф закончился — продлите его, чтобы продолжить' : 'Этот раздел открывается с тарифом',
+        });
+      } catch (err) {
+        next(err);
+      }
+    });
+  }
+
+  // ---- Paid access: the workspace's own view -------------------------------
+  app.get('/api/billing', asyncHandler(async (_req, res) => {
+    const billing = await billingFor(res.locals.tenantId as string, emailOf(res));
+    res.json({
+      ...billing,
+      periodDays: PERIOD_DAYS,
+      trialVideos: TRIAL_VIDEOS,
+      plans: PLANS.map(({ id, name, priceKzt, videosPerPeriod, features }) => ({ id, name, priceKzt, videosPerPeriod, features })),
+    });
+  }));
+
+  // Choosing a plan: the number the Kaspi invoice goes to, and which plan it
+  // is for. One open request per workspace — choosing again replaces it.
+  // Owner-only: it decides who is asked to pay for the workspace.
+  app.post('/api/billing/requests', asyncHandler(async (req, res) => {
+    if (asRole(res.locals.role) !== 'owner') return res.status(403).json({ error: 'Тариф выбирает владелец аккаунта' });
+    const plan = planById(req.body?.planId);
+    if (!plan) return res.status(400).json({ error: 'unknown_plan' });
+    const phone = normalizePhone(req.body?.phone);
+    if (!phone) return res.status(400).json({ error: 'invalid_phone' });
+    const tenantId = res.locals.tenantId as string;
+    // Replace and insert as one, under the workspace's lock: a double click
+    // must leave one request to invoice, not two (the unique index on open
+    // requests is the backstop).
+    await withTenantLock(tenantId, async (client) => {
+      await exec(client, `UPDATE payment_requests SET status = 'cancelled', decided_at = now() WHERE tenant_id = ? AND status = 'pending'`, tenantId);
+      await exec(
+        client,
+        `INSERT INTO payment_requests (id, tenant_id, plan_id, phone, amount_kzt) VALUES (?, ?, ?, ?, ?)`,
+        randomUUID(),
+        tenantId,
+        plan.id,
+        phone,
+        plan.priceKzt
+      );
+      await exec(client, `UPDATE tenants SET phone = ? WHERE id = ?`, phone, tenantId);
+    });
+    res.status(201).json(await billingFor(tenantId, emailOf(res)));
+  }));
+
+  app.delete('/api/billing/requests/current', asyncHandler(async (_req, res) => {
+    if (asRole(res.locals.role) !== 'owner') return res.status(403).json({ error: 'Заявку отменяет владелец аккаунта' });
+    const tenantId = res.locals.tenantId as string;
+    await exec(db, `UPDATE payment_requests SET status = 'cancelled', decided_at = now() WHERE tenant_id = ? AND status = 'pending'`, tenantId);
+    res.json(await billingFor(tenantId, emailOf(res)));
+  }));
+
+  // ---- Admin: requests to invoice, and who has what ----------------------
+  // The one place that deliberately reads across workspaces, so its own gate:
+  // a signed-in person (not an API key — a key is a workspace, not a person)
+  // whose email is in ADMIN_EMAILS. 404, not 403, for everyone else: there is
+  // nothing here a stranger should be able to confirm exists.
+  const requireAdmin = async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+      const session = res.locals.session as { userId: string } | undefined;
+      if (!session || !isAdminEmail(emailOf(res), adminEmails)) return res.status(404).json({ error: 'not_found' });
+      res.locals.adminUserId = session.userId;
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  const logAdmin = (q: Queryable, res: Response, tenantId: string, action: string, days: number | null = null) =>
+    exec(q, `INSERT INTO admin_actions (id, admin_user_id, tenant_id, action, days) VALUES (?, ?, ?, ?, ?)`, randomUUID(), res.locals.adminUserId, tenantId, action, days);
+
+  // Opens a plan for a period, from whichever is later, now or the current
+  // end — paying before the month runs out must not lose the days left. When
+  // access opens from nothing (new, lapsed), the period starts now, so the
+  // limit does not count videos from before it. `endForever` is for a paid
+  // plan: a workspace that chose and paid for one is on it from then on.
+  const extendAccess = (q: Queryable, tenantId: string, days: number, planId: string | null, endForever = false) =>
+    queryOne<{ id: string }>(
+      q,
+      `UPDATE tenants SET
+         period_started_at = CASE WHEN access_until IS NULL OR access_until <= now() OR access_forever THEN now() ELSE period_started_at END,
+         access_until = GREATEST(COALESCE(access_until, now()), now()) + make_interval(days => ?),
+         plan_id = COALESCE(?, plan_id),
+         access_forever = CASE WHEN ? THEN false ELSE access_forever END
+       WHERE id = ? RETURNING id`,
+      days,
+      planId,
+      endForever,
+      tenantId
+    );
+
+  app.get('/api/admin/overview', requireAdmin, asyncHandler(async (_req, res) => {
+    const requests = await queryAll<{ id: string; tenant_id: string; email: string; plan_id: string; phone: string; amount_kzt: number; created_at: string }>(
+      db,
+      `SELECT r.id, r.tenant_id, t.email, r.plan_id, r.phone, r.amount_kzt, r.created_at
+       FROM payment_requests r JOIN tenants t ON t.id = r.tenant_id
+       WHERE r.status = 'pending' ORDER BY r.created_at ASC`
+    );
+    const tenants = await queryAll<TenantAccessRow & { id: string; email: string; created_at: string }>(
+      db,
+      `SELECT id, email, phone, created_at, ${ACCESS_COLUMNS} FROM tenants ORDER BY created_at DESC`
+    );
+    const usage = await queryAll<{ tenant_id: string; total: number; recent: number }>(
+      db,
+      `SELECT tenant_id, count(*)::int AS total, (count(*) FILTER (WHERE created_at >= now() - make_interval(days => ?)))::int AS recent
+       FROM video_edit_jobs WHERE ${newVideoSql()} GROUP BY tenant_id`,
+      PERIOD_DAYS
+    );
+    const usageBy = new Map(usage.map((u) => [u.tenant_id, u]));
+    res.json({
+      requests: requests.map((r) => ({
+        id: r.id,
+        tenantId: r.tenant_id,
+        email: r.email,
+        planName: planById(r.plan_id)?.name ?? r.plan_id,
+        phone: r.phone,
+        amountKzt: r.amount_kzt,
+        createdAt: r.created_at,
+      })),
+      accounts: tenants.map((t) => {
+        const isAdmin = isAdminEmail(t.email, adminEmails);
+        const state = stateOf(t, t.email);
+        const plan = planById(t.plan_id);
+        const u = usageBy.get(t.id);
+        return {
+          id: t.id,
+          email: t.email,
+          phone: t.phone,
+          createdAt: t.created_at,
+          isAdmin,
+          state,
+          planId: plan?.id ?? null,
+          planName: plan?.name ?? null,
+          until: t.access_until ? new Date(t.access_until).toISOString() : null,
+          videos: { used: state === 'trial' ? u?.total ?? 0 : u?.recent ?? 0, limit: videoLimit(state, plan) },
+        };
+      }),
+    });
+  }));
+
+  // The overview's numbers: money, people, work — the last 30 days by day,
+  // and the 30 before them for the change. Days are Almaty days, so "today"
+  // means the owner's today. Revenue is only what was marked paid here:
+  // workspaces that existed before payments did never paid through Sonar.
+  app.get('/api/admin/stats', requireAdmin, asyncHandler(async (_req, res) => {
+    const TZ = `'Asia/Almaty'`;
+    const daily = await queryAll<{ day: string; signups: number; revenue: number; payments: number; videos: number }>(
+      db,
+      `WITH days AS (
+         SELECT generate_series((now() AT TIME ZONE ${TZ})::date - 29, (now() AT TIME ZONE ${TZ})::date, interval '1 day')::date AS day
+       )
+       SELECT to_char(d.day, 'YYYY-MM-DD') AS day,
+         (SELECT count(*) FROM tenants t WHERE (t.created_at AT TIME ZONE ${TZ})::date = d.day)::int AS signups,
+         (SELECT COALESCE(sum(r.amount_kzt), 0) FROM payment_requests r WHERE r.status = 'paid' AND (r.decided_at AT TIME ZONE ${TZ})::date = d.day)::int AS revenue,
+         (SELECT count(*) FROM payment_requests r WHERE r.status = 'paid' AND (r.decided_at AT TIME ZONE ${TZ})::date = d.day)::int AS payments,
+         (SELECT count(*) FROM video_edit_jobs v WHERE ${newVideoSql('v')} AND (v.created_at AT TIME ZONE ${TZ})::date = d.day)::int AS videos
+       FROM days d ORDER BY d.day`
+    );
+    // The 30 Almaty days before the 30 shown — the same kind of window, so
+    // the change compares like with like. (Today is partial in both views
+    // the same way: the shown window ends today, the previous one 30 days ago.)
+    const inPrevious = (col: string) =>
+      `(${col} AT TIME ZONE ${TZ})::date BETWEEN (now() AT TIME ZONE ${TZ})::date - 59 AND (now() AT TIME ZONE ${TZ})::date - 30`;
+    const previous = await queryOne<{ revenue: number; signups: number; videos: number }>(
+      db,
+      `SELECT
+         (SELECT COALESCE(sum(amount_kzt), 0) FROM payment_requests WHERE status = 'paid' AND ${inPrevious('decided_at')})::int AS revenue,
+         (SELECT count(*) FROM tenants WHERE ${inPrevious('created_at')})::int AS signups,
+         (SELECT count(*) FROM video_edit_jobs WHERE ${newVideoSql()} AND ${inPrevious('created_at')})::int AS videos`
+    );
+    const byPlan = await queryAll<{ plan_id: string; payments: number; revenue: number }>(
+      db,
+      `SELECT plan_id, count(*)::int AS payments, COALESCE(sum(amount_kzt), 0)::int AS revenue
+       FROM payment_requests WHERE status = 'paid' AND (decided_at AT TIME ZONE ${TZ})::date >= (now() AT TIME ZONE ${TZ})::date - 29 GROUP BY plan_id`
+    );
+    const paying = await queryOne<{ n: number }>(db, `SELECT count(*)::int AS n FROM tenants WHERE access_forever = false AND access_until > now()`);
+    const pending = await queryOne<{ n: number }>(db, `SELECT count(*)::int AS n FROM payment_requests WHERE status = 'pending'`);
+    const sum = (k: 'revenue' | 'signups' | 'videos') => daily.reduce((a, d) => a + d[k], 0);
+    res.json({
+      daily,
+      totals: { revenue: sum('revenue'), signups: sum('signups'), videos: sum('videos'), paying: paying?.n ?? 0, pendingRequests: pending?.n ?? 0 },
+      previous: previous ?? { revenue: 0, signups: 0, videos: 0 },
+      byPlan: PLANS.map((p) => {
+        const row = byPlan.find((b) => b.plan_id === p.id);
+        return { planId: p.id, name: p.name, payments: row?.payments ?? 0, revenue: row?.revenue ?? 0 };
+      }),
+    });
+  }));
+
+  // Who did what, newest first. The account may since have been erased — the
+  // record stays, without its address.
+  app.get('/api/admin/actions', requireAdmin, asyncHandler(async (_req, res) => {
+    const rows = await queryAll<{ id: string; action: string; days: number | null; created_at: string; admin_email: string | null; tenant_email: string | null }>(
+      db,
+      `SELECT a.id, a.action, a.days, a.created_at, u.email AS admin_email, t.email AS tenant_email
+       FROM admin_actions a LEFT JOIN users u ON u.id = a.admin_user_id LEFT JOIN tenants t ON t.id = a.tenant_id
+       ORDER BY a.created_at DESC LIMIT 200`
+    );
+    res.json({
+      actions: rows.map((r) => ({ id: r.id, action: r.action, days: r.days, createdAt: r.created_at, adminEmail: r.admin_email, tenantEmail: r.tenant_email })),
+    });
+  }));
+
+  // "Оплата получена": the request is paid, its plan opens for a period.
+  // WHERE status = 'pending' makes a double press, or two admins at once,
+  // grant once.
+  app.post('/api/admin/requests/:id/paid', requireAdmin, asyncHandler(async (req, res) => {
+    // One transaction: a request marked paid whose access never opened would
+    // answer every retry with "already processed" and leave the client
+    // locked out with their money gone.
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const request = await queryOne<{ tenant_id: string; plan_id: string }>(
+        client,
+        `UPDATE payment_requests SET status = 'paid', decided_at = now() WHERE id = ? AND status = 'pending' RETURNING tenant_id, plan_id`,
+        req.params.id
+      );
+      if (!request) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Заявка уже обработана или не найдена' });
+      }
+      await extendAccess(client, request.tenant_id, PERIOD_DAYS, request.plan_id, true);
+      await logAdmin(client, res, request.tenant_id, `paid:${request.plan_id}`, PERIOD_DAYS);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+    res.json({ ok: true });
+  }));
+
+  app.post('/api/admin/requests/:id/cancel', requireAdmin, asyncHandler(async (req, res) => {
+    const request = await queryOne<{ tenant_id: string }>(
+      db,
+      `UPDATE payment_requests SET status = 'cancelled', decided_at = now() WHERE id = ? AND status = 'pending' RETURNING tenant_id`,
+      req.params.id
+    );
+    if (!request) return res.status(409).json({ error: 'Заявка уже обработана или не найдена' });
+    await logAdmin(db, res, request.tenant_id, 'cancel_request');
+    res.json({ ok: true });
+  }));
+
+  // By hand, without a request: a goodwill extension, or a payment that came
+  // some other way. Keeps the current plan.
+  app.post('/api/admin/accounts/:id/access', requireAdmin, asyncHandler(async (req, res) => {
+    const days = Number(req.body?.days);
+    if (!Number.isInteger(days) || days < 1 || days > MAX_GRANT_DAYS) {
+      return res.status(400).json({ error: `days: целое число от 1 до ${MAX_GRANT_DAYS}` });
+    }
+    const planId = req.body?.planId === undefined ? null : planById(req.body.planId)?.id;
+    if (planId === undefined) return res.status(400).json({ error: 'unknown_plan' });
+    // Never open-ended by omission: a period without a plan has no video
+    // limit at all, so a workspace that has none must be given one.
+    const current = await queryOne<{ plan_id: string | null }>(db, `SELECT plan_id FROM tenants WHERE id = ?`, req.params.id);
+    if (!current) return res.status(404).json({ error: 'account not found' });
+    if (!planId && !planById(current.plan_id)) return res.status(400).json({ error: 'plan_required', message: 'Выберите тариф, на который открыть доступ' });
+    const updated = await extendAccess(db, req.params.id, days, planId);
+    if (!updated) return res.status(404).json({ error: 'account not found' });
+    await logAdmin(db, res, updated.id, 'grant', days);
+    res.json({ ok: true });
+  }));
+
+  // Ends access now, forever included — the workspace becomes "expired", not
+  // a fresh trial with a free video again. Its data stays.
+  app.post('/api/admin/accounts/:id/revoke', requireAdmin, asyncHandler(async (req, res) => {
+    const updated = await queryOne<{ id: string }>(
+      db,
+      `UPDATE tenants SET access_forever = false, access_until = now() WHERE id = ? RETURNING id`,
+      req.params.id
+    );
+    if (!updated) return res.status(404).json({ error: 'account not found' });
+    await logAdmin(db, res, updated.id, 'revoke');
+    res.json({ ok: true });
+  }));
 
   // ---- Bots --------------------------------------------------------------
   // Workspace discovery for both returning browser sessions and API-key
@@ -2387,6 +2812,11 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // a few hundred megabytes of video through an Express process on a small
   // instance is what takes the whole API down.
   app.post('/api/video-uploads', uploadRateLimit, asyncHandler(async (req, res) => {
+    // The same ticket serves a post's video and a reel to analyse; only an
+    // upload for editing counts against the edit limit. The limit itself is
+    // enforced on POST /api/video-edit-jobs — this only spares an upload that
+    // would be refused there.
+    if (req.body?.purpose === 'edit' && (await refuseOverVideoLimit(res))) return;
     const storage = storageConfigFromEnv();
     if (!storage && !localMedia) return res.status(503).json({ error: 'storage_not_configured' });
 
@@ -2426,6 +2856,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   app.post('/api/video-edit-jobs', mediaRateLimit, asyncHandler(async (req, res) => {
     const template = req.body?.template;
     if (!VIDEO_TEMPLATES.includes(template)) return res.status(400).json({ error: `template must be one of: ${VIDEO_TEMPLATES.join(', ')}` });
+    if (await refuseOverVideoLimit(res)) return;
 
     const tenantId = res.locals.tenantId as string;
 
@@ -2491,8 +2922,13 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       const headlineColourId = isHeadlineColourId(req.body?.headlineColor) ? req.body.headlineColor : DEFAULT_HEADLINE_COLOUR;
 
       const id = randomUUID();
-      await exec(
-        db,
+      // The limit is checked again here, in the same locked transaction as
+      // the insert: the check at the top of the route only answers early.
+      const quota = await withTenantLock(tenantId, async (client) => {
+        const q = await videoQuota(client, res);
+        if (!q.ok) return q;
+        await exec(
+        client,
         `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, subtitle_font, subtitle_color, subtitle_size, headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         tenantId,
@@ -2513,7 +2949,10 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
         headlineColourId,
         removeBreaths,
         aspectRatio
-      );
+        );
+        return q;
+      });
+      if (!quota.ok) return res.status(402).json({ error: 'video_limit', message: quota.message });
       return res.status(201).json({ job: await getVideoJobForTenant(db, id, tenantId) });
     }
   }));
@@ -3167,9 +3606,9 @@ function requireProductCredential(db: Db) {
         // lives a week, and a demotion that only takes effect when it expires
         // is not a demotion. This row is already being fetched, so it costs
         // nothing.
-        const user = await queryOne<{ id: string; role: string }>(
+        const user = await queryOne<{ id: string; role: string; email: string }>(
           db,
-          `SELECT id, role FROM users WHERE id = ? AND tenant_id = ?`,
+          `SELECT id, role, email FROM users WHERE id = ? AND tenant_id = ?`,
           session.payload.userId,
           session.payload.tenantId
         );
@@ -3177,6 +3616,8 @@ function requireProductCredential(db: Db) {
           res.locals.tenantId = session.payload.tenantId;
           res.locals.session = session.payload;
           res.locals.role = asRole(user.role);
+          // For the paid-access checks, so they need no lookup of their own.
+          res.locals.userEmail = user.email;
           return next();
         }
       }

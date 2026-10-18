@@ -1,0 +1,30 @@
+/* Thin marks, recessive grid, text in text colours. The accent marks data only. */
+
+.sparkline { width: 100%; height: 36px; display: block; }
+.sparkline path { stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+
+.figure { margin: 0; display: flex; flex-direction: column; gap: var(--space-2); position: relative; }
+.caption { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.title { font-size: var(--text-base); font-weight: 600; color: var(--foreground); }
+.readout { font-size: var(--text-sm); color: var(--foreground-muted); font-variant-numeric: tabular-nums; }
+
+.chart { width: 100%; height: 180px; display: block; overflow: visible; }
+.grid { stroke: var(--border); stroke-width: 1; }
+.baseline { stroke: var(--foreground-muted); stroke-width: 1; opacity: 0.5; }
+.bar { fill: var(--accent); opacity: 0.85; }
+.barActive { opacity: 1; }
+.hit { fill: transparent; cursor: default; outline: none; }
+.hit:focus-visible { fill: var(--accent-soft); }
+
+.axis { display: flex; justify-content: space-between; color: var(--foreground-muted); font-size: var(--text-xs); }
+.scale { margin-top: calc(-1 * var(--space-1)); color: var(--foreground-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+
+.tableToggle summary { width: fit-content; min-height: 32px; display: flex; align-items: center; color: var(--foreground-muted); font-size: var(--text-sm); cursor: pointer; }
+.table { width: 100%; margin-top: var(--space-2); border-collapse: collapse; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.table th, .table td { padding: 6px 0; border-bottom: 1px solid var(--border); text-align: left; }
+.table th:last-child, .table td:last-child { text-align: right; }
+.table th { color: var(--foreground-muted); font-weight: 500; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .bar { transition: opacity 120ms ease; }
+}

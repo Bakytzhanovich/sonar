@@ -7,7 +7,7 @@ import { createTestDb, dropTestDb } from './dbTestHelper';
 import { sessionTokenFrom } from './sessionTestHelper';
 
 async function signup(app: Express, email = 'onboarding@example.com') {
-  const res = await request(app).post('/api/auth/signup').send({ email, password: 'correct-horse', consent: true });
+  const res = await request(app).post('/api/auth/signup').send({ email, password: 'correct-horse', consent: true, phone: '+77011234567' });
   expect(res.status).toBe(201);
   return {
     sessionToken: sessionTokenFrom(res),

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Bot, Film, House, Images, LayoutGrid, Send, Sparkles, UserRound, Users, Video } from 'lucide-react';
+import { Bot, CreditCard, Film, House, Images, LayoutGrid, Send, ShieldCheck, Sparkles, UserRound, Users, Video } from 'lucide-react';
 import type { ModuleRoute } from './ModuleNav';
 import LogoutButton from './LogoutButton';
 import { useSession } from '@/lib/useSession';
@@ -36,7 +36,7 @@ const SECONDARY: { href: ModuleRoute; label: string; Icon: typeof Bot }[] = [
 export default function TabBar({ current }: { current: ModuleRoute }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [session] = useSession();
-  const moreIsActive = current === '/account' || SECONDARY.some((item) => item.href === current);
+  const moreIsActive = current === '/account' || current === '/billing' || SECONDARY.some((item) => item.href === current);
 
   return (
     <>
@@ -67,6 +67,20 @@ export default function TabBar({ current }: { current: ModuleRoute }) {
                 nothing. */}
             {session && (
               <div className={styles.sheetFooter}>
+                <Link
+                  href="/billing"
+                  className={`${styles.sheetItem} ${current === '/billing' ? styles.sheetItemActive : ''}`}
+                  onClick={() => setMoreOpen(false)}
+                >
+                  <CreditCard size={18} strokeWidth={1.75} />
+                  Тариф
+                </Link>
+                {session.isAdmin && (
+                  <Link href="/admin" className={styles.sheetItem} onClick={() => setMoreOpen(false)}>
+                    <ShieldCheck size={18} strokeWidth={1.75} />
+                    Админка
+                  </Link>
+                )}
                 <Link
                   href="/account"
                   className={`${styles.sheetItem} ${current === '/account' ? styles.sheetItemActive : ''}`}

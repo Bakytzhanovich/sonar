@@ -324,6 +324,38 @@ const MIGRATIONS: string[] = [
   // reason instead. Idempotent: nothing matches once it has run.
   `UPDATE video_edit_jobs SET status = 'failed', failure_reason = 'template_retired', completed_at = now()
    WHERE pipeline = 'preset' AND status = 'processing'`,
+  // Paid access (see tenants in schema.sql). Every workspace that exists when
+  // this first runs keeps working — DEFAULT true fills them, including the
+  // bloggers who paid before payments were part of the product — and only
+  // then does the default become false, for everyone who signs up after.
+  // Both idempotent: the ADD is skipped once the column exists, so a later
+  // start cannot hand everyone access again.
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS phone TEXT`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS access_forever BOOLEAN NOT NULL DEFAULT true`,
+  `ALTER TABLE tenants ALTER COLUMN access_forever SET DEFAULT false`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS access_until TIMESTAMPTZ`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS plan_id TEXT`,
+  `CREATE TABLE IF NOT EXISTS payment_requests (
+     id         TEXT PRIMARY KEY,
+     tenant_id  TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+     plan_id    TEXT NOT NULL,
+     phone      TEXT NOT NULL,
+     amount_kzt INTEGER NOT NULL,
+     status     TEXT NOT NULL DEFAULT 'pending',
+     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+     decided_at TIMESTAMPTZ
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_payment_requests_tenant ON payment_requests(tenant_id, status)`,
+  `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS period_started_at TIMESTAMPTZ`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_requests_one_pending ON payment_requests(tenant_id) WHERE status = 'pending'`,
+  `CREATE TABLE IF NOT EXISTS admin_actions (
+     id            TEXT PRIMARY KEY,
+     admin_user_id TEXT NOT NULL,
+     tenant_id     TEXT NOT NULL,
+     action        TEXT NOT NULL,
+     days          INTEGER,
+     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
 ];
 
 export async function applyMigrations(client: PoolClient): Promise<void> {

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLogout } from '@/lib/useLogout';
 import { useSession } from '@/lib/useSession';
 import styles from './LogoutButton.module.css';
@@ -46,7 +47,11 @@ export default function LogoutButton({ variant = 'inline' }: { variant?: 'inline
         Выйти
       </button>
 
-      {asking && (
+      {/* Portalled to <body>: rendered in place, the dialog belongs to
+          whatever stacking context its trigger sits in — inside the admin
+          panel's sticky sidebar, the charts painted over it and took every
+          click meant for "Выйти". */}
+      {asking && createPortal(
         <div
           className={styles.overlay}
           // Tapping outside cancels, as it does in any phone dialog. The
@@ -72,7 +77,8 @@ export default function LogoutButton({ variant = 'inline' }: { variant?: 'inline
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

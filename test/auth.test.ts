@@ -24,7 +24,7 @@ describe('auth', () => {
 
   describe('signup', () => {
     it('creates a tenant + user and returns a usable session', async () => {
-      const res = await request(app).post('/api/auth/signup').send({ email: 'new@example.com', password: 'correct-horse', consent: true });
+      const res = await request(app).post('/api/auth/signup').send({ email: 'new@example.com', password: 'correct-horse', consent: true, phone: '+77011234567' });
 
       expect(res.status).toBe(201);
       expect(res.body.user.email).toBe('new@example.com');
@@ -41,27 +41,27 @@ describe('auth', () => {
     });
 
     it('rejects a duplicate email', async () => {
-      await request(app).post('/api/auth/signup').send({ email: 'dup@example.com', password: 'correct-horse', consent: true });
-      const second = await request(app).post('/api/auth/signup').send({ email: 'dup@example.com', password: 'another-password', consent: true });
+      await request(app).post('/api/auth/signup').send({ email: 'dup@example.com', password: 'correct-horse', consent: true, phone: '+77011234567' });
+      const second = await request(app).post('/api/auth/signup').send({ email: 'dup@example.com', password: 'another-password', consent: true, phone: '+77011234567' });
 
       expect(second.status).toBe(409);
       expect(second.body.error).toBe('email_taken');
     });
 
     it('rejects a malformed email', async () => {
-      const res = await request(app).post('/api/auth/signup').send({ email: 'not-an-email', password: 'correct-horse', consent: true });
+      const res = await request(app).post('/api/auth/signup').send({ email: 'not-an-email', password: 'correct-horse', consent: true, phone: '+77011234567' });
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('invalid_email');
     });
 
     it('rejects a too-short password', async () => {
-      const res = await request(app).post('/api/auth/signup').send({ email: 'short@example.com', password: 'abc', consent: true });
+      const res = await request(app).post('/api/auth/signup').send({ email: 'short@example.com', password: 'abc', consent: true, phone: '+77011234567' });
       expect(res.status).toBe(400);
       expect(res.body.error).toBe('invalid_password');
     });
 
     it('stores a bcrypt hash, not the plaintext password', async () => {
-      await request(app).post('/api/auth/signup').send({ email: 'hash@example.com', password: 'correct-horse', consent: true });
+      await request(app).post('/api/auth/signup').send({ email: 'hash@example.com', password: 'correct-horse', consent: true, phone: '+77011234567' });
       const row = await queryOne<{ password_hash: string }>(db, `SELECT password_hash FROM users WHERE email = ?`, 'hash@example.com');
 
       expect(row?.password_hash).toBeTruthy();
@@ -77,7 +77,7 @@ describe('auth', () => {
       }
       expect(await queryOne(db, `SELECT id FROM users WHERE email = ?`, 'consent@example.com')).toBeUndefined();
 
-      await request(app).post('/api/auth/signup').send({ email: 'consent@example.com', password: 'correct-horse', consent: true });
+      await request(app).post('/api/auth/signup').send({ email: 'consent@example.com', password: 'correct-horse', consent: true, phone: '+77011234567' });
       const row = await queryOne<{ privacy_consent_at: string | null; privacy_policy_version: string | null }>(
         db,
         `SELECT privacy_consent_at, privacy_policy_version FROM users WHERE email = ?`,
@@ -90,7 +90,7 @@ describe('auth', () => {
 
   describe('login', () => {
     async function signup(email: string, password: string) {
-      const res = await request(app).post('/api/auth/signup').send({ email, password, consent: true });
+      const res = await request(app).post('/api/auth/signup').send({ email, password, consent: true, phone: '+77011234567' });
       return res.body as { user: { id: string }; tenant: { id: string } };
     }
 
@@ -134,7 +134,7 @@ describe('auth', () => {
     });
 
     it('rejects an expired session with a distinct error', async () => {
-      const signupRes = await request(app).post('/api/auth/signup').send({ email: 'expiring@example.com', password: 'correct-horse', consent: true });
+      const signupRes = await request(app).post('/api/auth/signup').send({ email: 'expiring@example.com', password: 'correct-horse', consent: true, phone: '+77011234567' });
       const expiredToken = signSession({ userId: signupRes.body.user.id, tenantId: signupRes.body.tenant.id }, -1);
 
       const res = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${expiredToken}`);

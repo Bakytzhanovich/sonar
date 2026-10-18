@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Eye, EyeOff } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, landingFor, type AccessState } from '@/lib/api';
 import { API_BASE_URL } from '@/lib/apiConfig';
 import { useSession } from '@/lib/useSession';
 import controls from './Controls.module.css';
@@ -12,12 +12,7 @@ import styles from './AuthView.module.css';
 import AuthShowcase from './AuthShowcase';
 import { forgetWorkspaceSelection } from '@/lib/useDevConfig';
 
-// Where a signed-in person lands: straight in the video editor — the part of
-// the product clients have paid for and the one that works end to end today.
-// Home (/home) is one tap away in the nav. Not the guided chat-bot tour: that
-// walks through keywords and demo contacts, the part of the product switched
-// off pending the personal-data question.
-const HOME_ROUTE = '/video';
+// Where a signed-in person lands: see landingFor in lib/api.ts.
 
 export default function LoginView() {
   const router = useRouter();
@@ -38,8 +33,8 @@ export default function LoginView() {
 
     api
       .me({ baseUrl: API_BASE_URL })
-      .then(() => {
-        if (!cancelled) router.replace(HOME_ROUTE);
+      .then((res: { user?: { isAdmin?: boolean }; access?: AccessState }) => {
+        if (!cancelled) router.replace(landingFor(res));
       })
       .catch(() => {
         if (cancelled) return;
@@ -63,11 +58,12 @@ export default function LoginView() {
         userEmail: res.user.email,
         tenantId: res.tenant.id,
         tenantName: res.tenant.name,
+        isAdmin: res.user.isAdmin === true,
       };
       // A new person on this browser: the previous one's bot is not theirs.
       forgetWorkspaceSelection();
       setSession(nextSession);
-      router.replace(HOME_ROUTE);
+      router.replace(landingFor(res));
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError('Неверный email или пароль');
