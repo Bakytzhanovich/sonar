@@ -3,9 +3,10 @@
 
 .frame {
   position: relative;
-  width: 100%;
-  max-width: 280px;
-  max-height: 60vh;
+  /* Computed per shape in FramePreview.tsx — one cap for every shape shrank
+     a landscape frame to a strip. A variable rather than an inline width, so
+     the phone layout's own rule (VideoEditView.module.css) still wins. */
+  width: var(--preview-width, 100%);
   overflow: hidden;
   container-type: size;
   border: 1px solid var(--border);
@@ -64,4 +65,34 @@
 .focused {
   outline: 2px dashed var(--accent);
   outline-offset: -3px;
+}
+
+/* The preview's only control. Covers the frame so a tap anywhere toggles; the
+   mark is on screen while paused and fades out while playing. */
+.playToggle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.playToggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.playMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+.playing .playMark { opacity: 0; }
+.playing:focus-visible .playMark, .playing:hover .playMark { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .playMark { transition: opacity 160ms ease; }
 }

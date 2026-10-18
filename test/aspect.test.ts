@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { aspectRatioFor, ASPECT_RATIOS, isAspectRatioId, REFERENCE_FRAME } from '../src/aspect';
 import { DEFAULT_SUBTITLE_STYLE, scaleStyleToFrame } from '../src/subtitles';
-import { bandHeightForFrame, bandLayoutFor, clearOfHeadline, DEFAULT_HEADLINE_STYLE, HEADLINE_SAFE_TOP, scaleHeadlineToFrame } from '../src/headline';
+import { bandHeightFor, bandHeightForFrame, headlineLinesFor, headlineMaxChars, bandLayoutFor, clearOfHeadline, DEFAULT_HEADLINE_STYLE, HEADLINE_SAFE_TOP, headlineStyleFor, scaleHeadlineToFrame } from '../src/headline';
+import { HEADLINE_SIZES } from '../src/headlineStyles';
 import { styleForPreset } from '../src/subtitlePresets';
 import { applyPosition } from '../src/subtitlePositions';
 
@@ -52,12 +53,13 @@ describe('scaleStyleToFrame', () => {
     expect(square.playResY).toBe(1080);
   });
 
-  it('grows text with the width and margins with the height in a landscape frame', () => {
+  it('sizes text by the short side and margins by the height in a landscape frame', () => {
     const landscape = scaleStyleToFrame(DEFAULT_SUBTITLE_STYLE, aspectRatioFor('16_9'));
-    // 1920/1080 wider, so the text holds the same share of the width and comes
-    // out the same size on a screen showing both at one width.
-    expect(landscape.fontSize).toBe(Math.round(DEFAULT_SUBTITLE_STYLE.fontSize * (1920 / 1080)));
-    expect(landscape.outline).toBeCloseTo(DEFAULT_SUBTITLE_STYLE.outline * (1920 / 1080), 1);
+    // A landscape video is watched full-width, where it is 1080 high: scaled
+    // by its 1920 width the captions came out 10% of the picture's height.
+    // By the short side they are the size they were designed at.
+    expect(landscape.fontSize).toBe(DEFAULT_SUBTITLE_STYLE.fontSize);
+    expect(landscape.outline).toBe(DEFAULT_SUBTITLE_STYLE.outline);
     // The margin is a vertical distance, so it follows the height — scaled by
     // width it would move the captions towards the middle of the frame.
     expect(landscape.marginV).toBe(Math.round(DEFAULT_SUBTITLE_STYLE.marginV * (1080 / 1920)));
@@ -90,16 +92,45 @@ describe('scaleHeadlineToFrame', () => {
     }
   });
 
-  it('shrinks the headline type with its band, not with the width', () => {
-    // The band is a slice of the height, and the words have to fit inside it.
-    // Scaling the font by width in a landscape frame would ask a 171px
-    // headline to fit a 236px band three lines at a time.
-    const landscape = scaleHeadlineToFrame(DEFAULT_HEADLINE_STYLE, aspectRatioFor('16_9'));
-    expect(landscape.bandHeight).toBe(236);
-    expect(landscape.fontSize).toBe(54);
-    expect(landscape.fontSize * 3).toBeLessThan(landscape.bandHeight);
-    expect(landscape.playResX).toBe(1920);
-    expect(landscape.playResY).toBe(1080);
+  it('keeps the headline type its designed size in every frame', () => {
+    // Shrinking the type with a band that is a slice of a shorter frame made
+    // a landscape headline 54px — a third of the share of the width its
+    // vertical twin has. By the short side it is 96 in all three.
+    for (const ratio of ASPECT_RATIOS) {
+      const scaled = scaleHeadlineToFrame(DEFAULT_HEADLINE_STYLE, ratio, 2);
+      expect(scaled.fontSize, ratio.id).toBe(DEFAULT_HEADLINE_STYLE.fontSize);
+      expect(scaled.playResX).toBe(ratio.width);
+      expect(scaled.playResY).toBe(ratio.height);
+    }
+  });
+
+  it('wraps a headline to the width of its frame', () => {
+    const text = 'Как снимать рилсы, которые досматривают';
+    expect(headlineLinesFor(text, aspectRatioFor('9_16')).length).toBeGreaterThan(headlineLinesFor(text, aspectRatioFor('16_9')).length);
+    expect(headlineLinesFor(text, aspectRatioFor('1_1'))).toEqual(headlineLinesFor(text, aspectRatioFor('9_16')));
+    // Every line still fits its frame: the same type, a proportionally longer line.
+    for (const ratio of ASPECT_RATIOS) {
+      expect(headlineMaxChars(ratio) / ratio.width, ratio.id).toBeCloseTo(16 / 1080, 2);
+    }
+  });
+
+  it('grows the band to fit its text, never below its share of the height', () => {
+    for (const ratio of ASPECT_RATIOS) {
+      for (const size of HEADLINE_SIZES) {
+        const style = headlineStyleFor({ size: size.id });
+        for (const lines of [1, 2, 3]) {
+          const band = bandHeightFor(ratio, style, lines);
+          const px = (lines >= 3 ? style.fontSizeSmall : style.fontSize) * (Math.min(ratio.width, ratio.height) / 1080);
+          expect(band, `${ratio.id} ${size.id} ${lines}`).toBeGreaterThanOrEqual(bandHeightForFrame(ratio));
+          // Room for every line with its spacing, and some above and below.
+          expect(band, `${ratio.id} ${size.id} ${lines}`).toBeGreaterThan(px * 1.2 * lines);
+          // And never most of the frame.
+          expect(band / ratio.height, `${ratio.id} ${size.id} ${lines}`).toBeLessThan(0.4);
+        }
+      }
+    }
+    // The vertical frame always had room: its band does not change.
+    expect(bandHeightFor(aspectRatioFor('9_16'), DEFAULT_HEADLINE_STYLE, 3)).toBe(420);
   });
 
   it('puts the band in the black above a letterboxed picture, right against it', () => {

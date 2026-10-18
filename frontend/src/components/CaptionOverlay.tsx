@@ -84,7 +84,7 @@ export default function CaptionOverlay({
   const highlight = look.highlight || preset.highlight;
   const row = look.position?.row ?? preset.row;
 
-  // Shares of the frame turned into container-query units: 1cqw is one per
+  // Shares of the frame turned into container-query units: 1cqmin is one per
   // cent of the overlay's width, and the overlay is exactly the video.
   // Two numbers per size, because libass and the browser mean different
   // things by one. `size` is the ASS size, in container units: it is what
@@ -112,8 +112,8 @@ export default function CaptionOverlay({
   // on a video that is already playing.
   const stroke =
     outline > 0
-      ? `${outline}cqw 0 0 #000, -${outline}cqw 0 0 #000, 0 ${outline}cqw 0 #000, 0 -${outline}cqw 0 #000`
-      : `0 ${preset.shadowRatio * 100}cqw ${preset.shadowRatio * 200}cqw rgba(0,0,0,.75)`;
+      ? `${outline}cqmin 0 0 #000, -${outline}cqmin 0 0 #000, 0 ${outline}cqmin 0 #000, 0 -${outline}cqmin 0 #000`
+      : `0 ${preset.shadowRatio * 100}cqmin ${preset.shadowRatio * 200}cqmin rgba(0,0,0,.75)`;
 
   const useEmphasis = preset.poster && line.emphasis !== null;
   // How far the loud line bites into a quiet neighbour: `overlap` of the two
@@ -131,15 +131,15 @@ export default function CaptionOverlay({
         {useEmphasis ? (
           <>
             {line.words.slice(0, line.emphasis!).length > 0 && (
-              <span className={styles.quiet} style={{ fontSize: `${em}cqw`, lineHeight: `${size * LINE_HEIGHT}cqw`, color: preset.primary }}>
+              <span className={styles.quiet} style={{ fontSize: `${em}cqmin`, lineHeight: `${size * LINE_HEIGHT}cqmin`, color: preset.primary }}>
                 {line.words.slice(0, line.emphasis!).join(' ')}
               </span>
             )}
             <span
               className={styles.loud}
               style={{
-                fontSize: `${em * poster.emphasisScale}cqw`,
-                lineHeight: `${size * poster.emphasisScale * LINE_HEIGHT}cqw`,
+                fontSize: `${em * poster.emphasisScale}cqmin`,
+                lineHeight: `${size * poster.emphasisScale * LINE_HEIGHT}cqmin`,
                 color: highlight,
                 // Negative margins are how the lines bite into each other:
                 // the renderer places each line by hand because ASS line
@@ -151,20 +151,20 @@ export default function CaptionOverlay({
                 // Only towards a line that is actually there: the renderer
                 // subtracts the overlap between neighbours, so an emphasised
                 // word that opens or closes the caption keeps that side.
-                marginTop: line.emphasis! > 0 ? `${-bite}cqw` : undefined,
-                marginBottom: line.emphasis! < line.words.length - 1 ? `${-bite}cqw` : undefined,
+                marginTop: line.emphasis! > 0 ? `${-bite}cqmin` : undefined,
+                marginBottom: line.emphasis! < line.words.length - 1 ? `${-bite}cqmin` : undefined,
               }}
             >
               {emphasised}
             </span>
             {line.words.slice(line.emphasis! + 1).length > 0 && (
-              <span className={styles.quiet} style={{ fontSize: `${em}cqw`, lineHeight: `${size * LINE_HEIGHT}cqw`, color: preset.primary }}>
+              <span className={styles.quiet} style={{ fontSize: `${em}cqmin`, lineHeight: `${size * LINE_HEIGHT}cqmin`, color: preset.primary }}>
                 {line.words.slice(line.emphasis! + 1).join(' ')}
               </span>
             )}
           </>
         ) : (
-          <span className={styles.single} style={{ fontSize: `${em}cqw`, color: preset.primary }}>
+          <span className={styles.single} style={{ fontSize: `${em}cqmin`, color: preset.primary }}>
             {line.words.map((word, i) => (
               <span key={i} style={i === line.emphasis ? { color: highlight } : undefined}>
                 {word}

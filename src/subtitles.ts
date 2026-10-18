@@ -66,11 +66,12 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
  *
  * Two scales rather than one, because the numbers answer to different things.
  *
- * Text sizes follow the WIDTH. A feed hands every video the same width
- * whatever its shape, so captions holding the same fraction of it come out the
- * same size on the viewer's screen. Scaling them by height instead would make
- * a square's captions half the size of a vertical one's at an identical
- * display width — the frames are equally wide and the text would not be.
+ * Text sizes follow the SHORT side. In a feed a square shows at the width of
+ * a vertical, and both are 1080 wide, so their captions match; scaling by
+ * height would halve a square's. A landscape frame is watched full-width on
+ * YouTube or a site's player, where it is 1080 high — scaling by its 1920
+ * width made captions 10% of the picture's height there. The short side is
+ * the one both cases agree on.
  *
  * Vertical margins follow the HEIGHT, because that is the dimension they are a
  * distance in. The margin that clears the Reels controls means "this many
@@ -78,7 +79,7 @@ export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
  * captions near the middle of a landscape one.
  */
 export function scaleStyleToFrame(style: SubtitleStyle, frame: FrameSize): SubtitleStyle {
-  const textScale = frame.width / REFERENCE_FRAME.width;
+  const textScale = Math.min(frame.width, frame.height) / REFERENCE_FRAME.width;
   const verticalScale = frame.height / REFERENCE_FRAME.height;
   // Outline and shadow are the text's own geometry, so they scale with it —
   // an outline left at 3px under a font scaled up stops separating the letters

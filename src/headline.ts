@@ -97,6 +97,37 @@ export function bandHeightForFrame(frame: FrameSize): number {
   return Math.round(HEADLINE_BAND_HEIGHT * (frame.height / REFERENCE_FRAME.height));
 }
 
+/**
+ * How the headline's type scales to a frame: by its SHORT side, the same as
+ * captions (scaleStyleToFrame). Every frame here is 1080 on its short side,
+ * so the type is the size it was designed at in all three — a landscape
+ * headline at 54px, a third the share of the width its vertical twin has, is
+ * what scaling by height produced.
+ */
+export function headlineTextScale(frame: FrameSize): number {
+  return Math.min(frame.width, frame.height) / REFERENCE_FRAME.width;
+}
+
+/** libass's distance between headline lines, as a share of the type size — measured, with room. */
+const HEADLINE_LINE_HEIGHT = 1.25;
+/** Space above and below the text inside the band, in reference pixels. */
+const HEADLINE_BAND_PADDING = 40;
+
+/**
+ * The band for these lines in this frame: its usual share of the height, or
+ * as tall as the text needs, whichever is more. A 9:16 band always holds its
+ * text, so it is unchanged; a square or landscape band, a fraction of a
+ * shorter frame, grows to fit type that no longer shrinks with it.
+ */
+export function bandHeightFor(frame: FrameSize, style: HeadlineStyle, lineCount: number): number {
+  const base = bandHeightForFrame(frame);
+  if (lineCount <= 0) return base;
+  const scale = headlineTextScale(frame);
+  const px = (lineCount >= 3 ? style.fontSizeSmall : style.fontSize) * scale;
+  const needed = Math.ceil(px * HEADLINE_LINE_HEIGHT * lineCount + 2 * HEADLINE_BAND_PADDING * scale);
+  return Math.max(base, needed);
+}
+
 export interface BandLayout {
   /** Where the picture's top edge lands in the finished frame. */
   pictureTop: number;
@@ -137,19 +168,20 @@ export function bandLayoutFor(frame: FrameSize, source: FrameSize | null, bandHe
 /**
  * The headline remapped onto another frame shape.
  *
- * Every number follows the HEIGHT here, unlike captions, where the text scales
- * with the width. The band and its type are not independent choices: the words
- * have to fit inside the strip, and the strip is a fraction of the height.
- * Scaling the font by width would ask a 171px headline to fit a 236px band in
- * a landscape frame, three lines at a time.
+ * The type follows the frame's short side, like captions — the size it was
+ * designed at in every frame here. The band is sized to the text it carries
+ * (bandHeightFor), so pass the number of lines: shrinking the type with a
+ * band that is a fraction of a shorter frame is what made a landscape
+ * headline 54px. Without a line count the band is its usual share of the
+ * height, which is all a frame with no headline needs.
  */
-export function scaleHeadlineToFrame(style: HeadlineStyle, frame: FrameSize): HeadlineStyle {
-  const scale = frame.height / REFERENCE_FRAME.height;
+export function scaleHeadlineToFrame(style: HeadlineStyle, frame: FrameSize, lineCount = 0): HeadlineStyle {
+  const scale = headlineTextScale(frame);
   return {
     ...style,
     fontSize: Math.round(style.fontSize * scale),
     fontSizeSmall: Math.round(style.fontSizeSmall * scale),
-    bandHeight: bandHeightForFrame(frame),
+    bandHeight: bandHeightFor(frame, style, lineCount),
     playResX: frame.width,
     playResY: frame.height,
   };
@@ -177,6 +209,21 @@ export const HEADLINE_MAX_CHARS = 48;
  */
 const MAX_CHARS_PER_LINE = 16;
 const MAX_LINES = 3;
+
+/**
+ * Characters per line in a frame of this shape. The type is the same size in
+ * every frame (headlineTextScale), so a frame 1.78 times wider holds 1.78
+ * times the characters — a landscape headline wrapped like a vertical one
+ * took three lines and a third of the picture for words that fit in two.
+ */
+export function headlineMaxChars(frame: FrameSize): number {
+  return Math.floor((MAX_CHARS_PER_LINE * frame.width) / (REFERENCE_FRAME.width * headlineTextScale(frame)));
+}
+
+/** The headline as it will be drawn in this frame — what the band is sized for. */
+export function headlineLinesFor(text: string, frame: FrameSize): string[] {
+  return wrapHeadline(text, headlineMaxChars(frame));
+}
 
 /**
  * Greedy word wrap. A single word longer than the limit gets its own line
@@ -320,7 +367,7 @@ export function buildHeadlineAss(rawText: string, style: HeadlineStyle = DEFAULT
   const text = sanitizeHeadline(rawText);
   if (!text) return null;
 
-  const lines = wrapHeadline(text);
+  const lines = headlineLinesFor(text, { width: style.playResX, height: style.playResY });
   if (lines.length === 0) return null;
   const fontSize = lines.length >= 3 ? style.fontSizeSmall : style.fontSize;
 

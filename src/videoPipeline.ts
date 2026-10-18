@@ -18,7 +18,7 @@ import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
 import { applyPosition } from './subtitlePositions';
-import { bandHeightForFrame, bandLayoutFor, buildHeadlineAss, clearOfHeadline, headlineStyleFor, scaleHeadlineToFrame } from './headline';
+import { bandHeightFor, bandLayoutFor, buildHeadlineAss, clearOfHeadline, headlineLinesFor, headlineStyleFor, sanitizeHeadline, scaleHeadlineToFrame } from './headline';
 import { aspectRatioFor } from './aspect';
 import { runBreathPass } from './breathPass';
 import { runSpeechTimingPass } from './speechTimingPass';
@@ -539,7 +539,13 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     : probeResult.width && probeResult.height
       ? { width: probeResult.width, height: probeResult.height }
       : null;
-  const bandLayout = bandLayoutFor(frame, sourceSize, bandHeightForFrame(frame));
+  // The band is as tall as this headline needs in this frame — the same
+  // figure the preview uses (bandHeightFor), and the one captions keep clear of.
+  const headlineStyle = headlineStyleFor({ font: job.headline_font, size: job.headline_size, colour: job.headline_color });
+  const headlineText = job.headline ? sanitizeHeadline(job.headline) : '';
+  const headlineLines = headlineText ? headlineLinesFor(headlineText, frame).length : 0;
+  const bandHeight = bandHeightFor(frame, headlineStyle, headlineLines);
+  const bandLayout = bandLayoutFor(frame, sourceSize, bandHeight);
 
   // ---- Stage 4: subtitles ------------------------------------------------
   let subtitlePath: string | undefined;
@@ -583,7 +589,7 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
         frame
       ),
       job.headline,
-      bandLayout.bandTop + bandHeightForFrame(frame)
+      bandLayout.bandTop + bandHeight
     );
     // The poster look lays each caption out itself rather than emitting one
     // karaoke line, and to do that it has to know how wide the words come out
@@ -644,10 +650,7 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   let headlinePath: string | undefined;
   const headlineAss = job.headline
     ? buildHeadlineAss(job.headline, {
-        ...scaleHeadlineToFrame(
-          headlineStyleFor({ font: job.headline_font, size: job.headline_size, colour: job.headline_color }),
-          frame
-        ),
+        ...scaleHeadlineToFrame(headlineStyle, frame, headlineLines),
         // Set after the scale, not before it: this is measured in the output
         // frame from the source's own shape, and scaling it from the reference
         // frame would be scaling a number that was never in that space.

@@ -718,10 +718,10 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       // figures the renderer uses — a second copy in CSS would let the
       // preview and the render disagree about what "Классика" is.
       //
-      // Sizes travel as a share of the frame WIDTH, because that is the
-      // dimension caption sizes are scaled by (see scaleStyleToFrame). In CSS
-      // that is a container-query width unit, so the two agree by
-      // construction rather than by coincidence.
+      // Sizes travel as a share of the reference frame's SHORT side (its
+      // width), because that is the dimension caption sizes are scaled by
+      // (see scaleStyleToFrame). In CSS that is the cqmin unit, so the two
+      // agree by construction rather than by coincidence.
       presets: SUBTITLE_PRESETS.map(({ id, label, description, badge, style }) => ({
         id,
         label,
