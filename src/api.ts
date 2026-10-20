@@ -32,7 +32,7 @@ import {
   SUBTITLE_FONTS,
   SUBTITLE_SIZES,
 } from './subtitleAxes';
-import { ASPECT_RATIOS, DEFAULT_ASPECT_RATIO, isAspectRatioId } from './aspect';
+import { ASPECT_RATIOS, DEFAULT_ASPECT_RATIO, isAspectRatioId, isFrameFill } from './aspect';
 import { HEADLINE_MAX_CHARS, sanitizeHeadline } from './headline';
 import {
   DEFAULT_HEADLINE_COLOUR, DEFAULT_HEADLINE_FONT, DEFAULT_HEADLINE_SIZE,
@@ -41,7 +41,8 @@ import {
 } from './headlineStyles';
 import { isAwaitingWorker } from './jobLease';
 import { asRole, canPerform, requiredRole, ROLE_LABELS } from './roles';
-import { SMART_CUT_WORKER, isWorkerOnline } from './workerHealth';
+import { SMART_CUT_WORKER, isHeartbeatFresh, isWorkerOnline } from './workerHealth';
+import { readHeartbeat, ringWorker, signalStoreFromEnv, type SignalStore } from './workerSignal';
 import { runFlow, collectMessageNodes } from './flowEngine';
 import { getActiveTriggersForBot, normalizeKeyword } from './triggerMatcher';
 import { chooseNextStep, gatherHomeState } from './home';
@@ -57,7 +58,8 @@ import { addDays, autoFillWeek, isDay, listEntries } from './contentCalendar';
 import { computeContentRecommendations } from './contentRecommendations';
 import { assToRgb } from './assColour';
 import { fontFileFor, loadFontMetrics } from './fontMetrics';
-import { DEFAULT_POSTER_OPTIONS } from './subtitles';
+import { DEFAULT_DYNAMIC_OPTIONS, DEFAULT_POSTER_OPTIONS } from './subtitles';
+import { cleanEndCard } from './endCard';
 import { REFERENCE_FRAME } from './aspect';
 import { pickPreviewWindow } from './previewWindow';
 import { adaptReelScript, openAiChatFromEnv, ReelAnalysisError, type ChatModel } from './reelLlm';
@@ -142,6 +144,10 @@ export interface AppOptions {
   paidAccess?: boolean;
   /** Who may open /admin; defaults to ADMIN_EMAILS. Tests pass their own. */
   adminEmails?: string;
+  /** The worker's doorbell (workerSignal.ts). Defaults to object storage, or
+   *  the local media folder in development; null in tests unless given, so a
+   *  test run does not write signal files into the working copy. */
+  signals?: SignalStore | null;
 }
 
 // The test connection is development tooling, like the mock pipelines: never
@@ -159,6 +165,24 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   const paidAccessEnv = process.env.PAID_ACCESS;
   const paidAccess = options.paidAccess ?? (paidAccessEnv ? paidAccessEnv === 'on' : process.env.NODE_ENV === 'production');
   const adminEmails = options.adminEmails ?? process.env.ADMIN_EMAILS;
+  // Whether the render worker is alive. It writes its pulse to the signal
+  // store now (so the database can sleep), and the database row only in a
+  // setup without one — either fresh counts. Cached for a few seconds: the
+  // editor polls its list, and each poll need not fetch the same object.
+  let pulseCache: { at: number; value: boolean } | null = null;
+  const workerIsOnline = async (now: Date): Promise<boolean> => {
+    if (pulseCache && now.getTime() - pulseCache.at < 10_000) return pulseCache.value;
+    let online = false;
+    if (signals) {
+      online = await readHeartbeat(signals, SMART_CUT_WORKER)
+        .then((at) => isHeartbeatFresh(at, now))
+        .catch(() => false);
+    }
+    if (!online) online = await isWorkerOnline(db, SMART_CUT_WORKER, now);
+    pulseCache = { at: now.getTime(), value: online };
+    return online;
+  };
+
   // ---- Paid access (src/paidAccess.ts, src/plans.ts) ----------------------
   // With payments off every workspace is 'unlimited' — the interface must not
   // show a paywall the server does not enforce. Nor does an admin wait: the
@@ -455,6 +479,8 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
   // cannot send an Authorization header, so a token-in-URL scheme is what
   // makes a finished render playable in the browser at all.
   const localMedia = localMediaConfigFromEnv(deriveKey('local-media'));
+  const signals: SignalStore | null =
+    'signals' in options ? options.signals ?? null : process.env.NODE_ENV === 'test' ? null : signalStoreFromEnv(deriveKey('local-media'));
 
   if (localMedia) {
     app.put('/api/media/*', express.raw({ type: '*/*', limit: MAX_UPLOAD_BYTES }), asyncHandler(async (req, res) => {
@@ -741,9 +767,20 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
           // Only the poster style stacks and emphasises; the rest are one
           // line, and the browser needs to know which is which.
           poster: id === 'poster',
+          dynamic: id === 'dynamic',
+          slam: id === 'slam',
+          topic: id === 'topic',
         },
       })),
       // What the poster layout does, for the preview to mirror.
+      dynamicLayout: {
+        emphasisScale: DEFAULT_DYNAMIC_OPTIONS.emphasisScale,
+        maxWordsPerLine: DEFAULT_DYNAMIC_OPTIONS.maxWordsPerLine,
+        leading: DEFAULT_DYNAMIC_OPTIONS.leading,
+        // The share of opacity a word already said keeps (dimAlpha is ASS
+        // transparency out of 255).
+        dimOpacity: 1 - parseInt(DEFAULT_DYNAMIC_OPTIONS.dimAlpha.replace(/[^0-9A-F]/gi, ''), 16) / 255,
+      },
       posterLayout: {
         emphasisScale: DEFAULT_POSTER_OPTIONS.emphasisScale,
         overlap: DEFAULT_POSTER_OPTIONS.overlap,
@@ -816,6 +853,25 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
 
   app.use('/api', requireProductCredential(db));
   app.use('/api', requireRoleForRequest);
+
+  // Ring the worker whenever work may have been queued: any change that
+  // succeeded under the editor's or the reels' routes — a new edit, a
+  // revision, a preview, approved captions, a retry. One rule over the
+  // prefixes rather than a call in each route, so a route added later rings
+  // too. The worker otherwise watches only this bell and leaves the database
+  // asleep (workerSignal.ts); a missed ring costs a wait for its safety
+  // check, never a lost job.
+  if (signals) {
+    const WORK_ROUTES = /^\/api\/(video-edit-jobs|reel-analyses)(\/|$)/;
+    app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+      if (req.method !== 'GET' && WORK_ROUTES.test(`${req.baseUrl}${req.path}`)) {
+        res.on('finish', () => {
+          if (res.statusCode < 400) void ringWorker(signals).catch((err) => console.warn('[worker-signal] ring failed:', err instanceof Error ? err.message : err));
+        });
+      }
+      next();
+    });
+  }
 
   // Paid access, default-deny like the roles above: everything past this line
   // is judged by the workspace's state, including routes nobody has written
@@ -2907,6 +2963,9 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       // client naming a format that no longer exists should get the vertical
       // one the product was built around, not a 400.
       const aspectRatio = isAspectRatioId(req.body?.aspectRatio) ? req.body.aspectRatio : DEFAULT_ASPECT_RATIO;
+      const frameFill = isFrameFill(req.body?.frameFill) ? req.body.frameFill : 'blur';
+      const headlineSeconds = parseHeadlineSeconds(req.body?.headlineSeconds);
+      const endCard = cleanEndCard({ text: req.body?.endCardText, brand: req.body?.endCardBrand, cta: req.body?.endCardCta });
       // Stored already cleaned, so the renderer is not the last line of defence
       // against a brace that would break out of an ASS override block. Empty
       // becomes NULL rather than '': no headline and a headline of nothing are
@@ -2929,7 +2988,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
         if (!q.ok) return q;
         await exec(
         client,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, subtitle_font, subtitle_color, subtitle_size, headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, subtitle_font, subtitle_color, subtitle_size, headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio, frame_fill, headline_seconds, end_card_text, end_card_brand, end_card_cta) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
@@ -2948,7 +3007,12 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
         headlineSizeId,
         headlineColourId,
         removeBreaths,
-        aspectRatio
+        aspectRatio,
+        frameFill,
+        headlineSeconds,
+        endCard.text,
+        endCard.brand,
+        endCard.cta
         );
         return q;
       });
@@ -2996,7 +3060,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
     // Asked once per list, not per job: it is a fact about the fleet, and the
     // screen needs it only to choose between "waiting its turn" and "waiting
     // for a worker that is not running".
-    const workerOnline = await isWorkerOnline(db, SMART_CUT_WORKER, now);
+    const workerOnline = await workerIsOnline(now);
     res.json({
       worker_online: workerOnline,
       jobs: (
@@ -3120,6 +3184,11 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
         subtitleColor: job.subtitle_color,
         subtitleSize: job.subtitle_size,
         aspectRatio: job.aspect_ratio,
+        frameFill: job.frame_fill,
+        headlineSeconds: job.headline_seconds,
+        endCardText: job.end_card_text,
+        endCardBrand: job.end_card_brand,
+        endCardCta: job.end_card_cta,
         headline: job.headline,
         headlineFont: job.headline_font,
         headlineSize: job.headline_size,
@@ -3174,9 +3243,10 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
          id, tenant_id, source_video_url, template, pipeline, source_object_key,
          subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position,
          subtitle_font, subtitle_color, subtitle_size,
-         headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio,
+         headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio, frame_fill, headline_seconds,
+         end_card_text, end_card_brand, end_card_cta,
          preview_of, manual_segments, artifacts
-       ) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, 'never', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)`,
+       ) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, 'never', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)`,
       id,
       tenantId,
       parent.source_video_url,
@@ -3198,6 +3268,11 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       // is going to publish.
       false,
       look.aspectRatio,
+      look.frameFill,
+      look.headlineSeconds,
+      look.endCard.text,
+      look.endCard.brand,
+      look.endCard.cta,
       parent.id,
       JSON.stringify(window),
       JSON.stringify({ probe, transcript, ...(noise ? { noise } : {}) })
@@ -3292,9 +3367,10 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
          id, tenant_id, source_video_url, template, pipeline, source_object_key,
          subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position,
          subtitle_font, subtitle_color, subtitle_size,
-         headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio,
+         headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio, frame_fill, headline_seconds,
+         end_card_text, end_card_brand, end_card_cta,
          parent_job_id, manual_segments, artifacts
-       ) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)`,
+       ) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)`,
       id,
       tenantId,
       parent.source_video_url,
@@ -3318,6 +3394,11 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       headlineColor,
       parent.remove_breaths,
       aspectRatio,
+      look.frameFill,
+      look.headlineSeconds,
+      look.endCard.text,
+      look.endCard.brand,
+      look.endCard.cta,
       parent.id,
       JSON.stringify(segments),
       // Exactly the three checkpoints that describe the SOURCE rather than the
@@ -3756,6 +3837,15 @@ function toPublicScheduledPost(post: ScheduledPost): ScheduledPost {
 // Absent means "same as before" throughout, never "system default". A
 // revision that reset the caption style to Классика because the editor did
 // not mention it would be a worse bug than the one it came to fix.
+/**
+ * How long the headline shows: a whole number of seconds from 1 to 60, or
+ * null for the whole clip — anything else, including 0, is "the whole clip".
+ */
+function parseHeadlineSeconds(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= 60 ? n : null;
+}
+
 function captionLookFrom(body: Record<string, unknown>, parent: VideoEditJob) {
   return {
     subtitles: typeof body.subtitles === 'boolean' ? body.subtitles : parent.subtitles,
@@ -3764,6 +3854,15 @@ function captionLookFrom(body: Record<string, unknown>, parent: VideoEditJob) {
       ? body.subtitlePosition
       : parent.subtitle_position,
     aspectRatio: isAspectRatioId(body.aspectRatio) ? body.aspectRatio : parent.aspect_ratio,
+    frameFill: isFrameFill(body.frameFill) ? body.frameFill : isFrameFill(parent.frame_fill) ? parent.frame_fill : 'blur',
+    headlineSeconds: body.headlineSeconds === undefined ? parent.headline_seconds : parseHeadlineSeconds(body.headlineSeconds),
+    // Each field, like the headline, is kept when not mentioned and removed
+    // when sent empty.
+    endCard: cleanEndCard({
+      text: body.endCardText === undefined ? parent.end_card_text : body.endCardText,
+      brand: body.endCardBrand === undefined ? parent.end_card_brand : body.endCardBrand,
+      cta: body.endCardCta === undefined ? parent.end_card_cta : body.endCardCta,
+    }),
     subtitleFont: isSubtitleFontId(body.subtitleFont) ? body.subtitleFont : parent.subtitle_font,
     subtitleColor: isSubtitleColourId(body.subtitleColor) ? body.subtitleColor : parent.subtitle_color,
     subtitleSize: isSubtitleSizeId(body.subtitleSize) ? body.subtitleSize : parent.subtitle_size,

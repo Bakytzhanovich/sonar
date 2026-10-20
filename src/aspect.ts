@@ -72,3 +72,15 @@ export function aspectRatioFor(id: string | null | undefined): AspectRatio {
 export function isAspectRatioId(value: unknown): value is AspectRatioId {
   return typeof value === 'string' && ASPECT_RATIOS.some((ratio) => ratio.id === value);
 }
+
+/**
+ * What fills the frame around a picture of another shape: a blurred copy of
+ * the picture (the default), plain black bars, or nothing at all — 'crop'
+ * scales the picture to cover the frame and trims what overflows, the way a
+ * phone shows a landscape clip full-screen.
+ */
+export type FrameFill = 'blur' | 'black' | 'crop';
+
+export function isFrameFill(value: unknown): value is FrameFill {
+  return value === 'blur' || value === 'black' || value === 'crop';
+}

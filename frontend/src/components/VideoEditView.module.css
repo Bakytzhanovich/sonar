@@ -504,3 +504,6 @@
   }
   .studio { padding-bottom: 8px; }
 }
+
+/* The end card's three fields, stacked. */
+.endCardFields { display: flex; flex-direction: column; gap: var(--space-3); }

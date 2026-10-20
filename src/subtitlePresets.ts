@@ -1,4 +1,5 @@
 import { DEFAULT_SUBTITLE_STYLE, type SubtitleStyle } from './subtitles';
+import { rgbToAss } from './assColour';
 
 // Ready-made caption looks, rather than exposing the dozen knobs a
 // SubtitleStyle actually has. Font size, outline width and vertical margin
@@ -10,7 +11,7 @@ import { DEFAULT_SUBTITLE_STYLE, type SubtitleStyle } from './subtitles';
 // Colours are ASS &HAABBGGRR — alpha, then BLUE-GREEN-RED. Writing them in
 // the RRGGBB order everyone expects produces the wrong colour silently.
 
-export type SubtitlePresetId = 'classic' | 'bold' | 'lower' | 'minimal' | 'accent' | 'poster';
+export type SubtitlePresetId = 'classic' | 'bold' | 'lower' | 'minimal' | 'accent' | 'poster' | 'dynamic' | 'slam' | 'topic';
 
 export interface SubtitlePreset {
   id: SubtitlePresetId;
@@ -107,6 +108,66 @@ export const SUBTITLE_PRESETS: SubtitlePreset[] = [
       // under them; a user who wants it elsewhere still has the position
       // control, which this style honours.
       alignment: 5,
+    },
+  },
+  {
+    id: 'dynamic',
+    label: 'Динамика',
+    description: 'Слова появляются по одному, ключевое — крупно и жёлтым',
+    badge: 'NEW',
+    style: {
+      ...DEFAULT_SUBTITLE_STYLE,
+      fontSize: 60,
+      // Near-white and lemon, not pure: the colours of the look this is
+      // modelled on, and a pure white glares against a bright frame.
+      primaryColour: rgbToAss('#FCFCFC'),
+      highlightColour: rgbToAss('#F4EC04'),
+      // A soft shadow and no outline, like the poster: type set on the
+      // picture rather than a subtitle track.
+      outline: 0,
+      shadow: 3,
+      // At chest level, under the face: bottom-anchored, well up from the
+      // edge. The position control still moves it.
+      alignment: 2,
+      marginV: 600,
+    },
+  },
+  {
+    id: 'slam',
+    label: 'Удар',
+    description: 'Одно огромное слово за раз, резкая смена',
+    badge: 'NEW',
+    style: {
+      ...DEFAULT_SUBTITLE_STYLE,
+      // Fixed and huge: an ordinary word fills most of a 1080-wide frame,
+      // and a long one is meant to run off it.
+      fontSize: 300,
+      primaryColour: rgbToAss('#AC0414'),
+      highlightColour: rgbToAss('#AC0414'),
+      // No outline, no shadow: a flat red word on the picture.
+      outline: 0,
+      shadow: 0,
+      alignment: 5,
+    },
+  },
+  {
+    id: 'topic',
+    label: 'Тема',
+    description: 'Слово темы сверху, субтитры в две строки',
+    badge: 'NEW',
+    style: {
+      ...DEFAULT_SUBTITLE_STYLE,
+      // The key line's size; the lead-in, the topic word and the accent are
+      // all derived from it (topicLayout.ts). A little over the reference's
+      // 80: condensed capitals read smaller than their size on a phone.
+      fontSize: 96,
+      primaryColour: rgbToAss('#ECE4DC'),
+      highlightColour: rgbToAss('#8C141C'),
+      outline: 0,
+      shadow: 2,
+      // The lower third: the key line's bottom this far above the frame's.
+      alignment: 2,
+      marginV: 300,
     },
   },
 ];

@@ -263,7 +263,7 @@ export function formatAssTime(seconds: number): string {
 //   \\      the escape character (\\N is a hard line break, \\h a hard space).
 // Both are removed outright rather than escaped; neither has any legitimate
 // meaning inside spoken words.
-function escapeAssText(text: string): string {
+export function escapeAssText(text: string): string {
   return text
     .replace(/\{[^}]*\}/g, '')
     .replace(/[{}]/g, '')
@@ -509,6 +509,163 @@ export function buildPosterEvents(
     // the sizes turn out to be.
     const tags = `{\\an5\\pos(${centreX},${y})\\fs${Math.round(line.size)}\\c${line.colour}}`;
     return `Dialogue: 0,${formatAssTime(chunk.start)},${formatAssTime(chunk.end)},Caption,,0,0,0,,${tags}${escapeAssText(line.text)}`;
+  });
+}
+
+// ---- "Динамика": words arrive one at a time ---------------------------------
+//
+// The look of a talking-head reel cut by hand: each word appears as it is
+// said and pops in, the words already said dim, and the phrase's key word
+// stands on its own line, larger and in the highlight colour. The block
+// clears when the phrase ends.
+//
+// One Dialogue per word, each with its own \pos, rather than one line with
+// inline tags: libass reflows a line as an inline \fscx animates, so the
+// neighbours of a popping word would shuffle sideways on every word. Placed
+// individually, nothing moves but the word that is arriving. That needs the
+// words' widths, which is why — like the poster — it takes a measurer and
+// falls back to the plain caption without one.
+
+export interface DynamicOptions {
+  maxWidthRatio: number;
+  /** How much larger the key word is than the rest, before fitting. */
+  emphasisScale: number;
+  maxWordsPerLine: number;
+  /** Line height as a share of the type size — tight, as the look is. */
+  leading: number;
+  /** The pop: from this percent of full size to full, over popMs. */
+  popFrom: number;
+  popMs: number;
+  /** What a word already said fades to (ASS alpha: 00 opaque, FF clear). */
+  dimAlpha: string;
+  fadeMs: number;
+}
+
+export const DEFAULT_DYNAMIC_OPTIONS: DynamicOptions = {
+  maxWidthRatio: 0.86,
+  emphasisScale: 1.8,
+  maxWordsPerLine: 3,
+  leading: 1.0,
+  popFrom: 80,
+  popMs: 120,
+  // 0x8C = 140 of 255 transparent: the word keeps about 45% of its opacity.
+  dimAlpha: '&H8C&',
+  fadeMs: 100,
+};
+
+export function buildDynamicEvents(
+  chunk: SubtitleChunk,
+  style: SubtitleStyle,
+  measure: MeasureText,
+  options: DynamicOptions = DEFAULT_DYNAMIC_OPTIONS
+): string[] {
+  if (chunk.words.length === 0) return [];
+  // Lower case throughout, as the look is; the key word is chosen from the
+  // words as spoken, since capitals carry no meaning here either way.
+  const words = chunk.words.map((w) => w.word.toLocaleLowerCase('ru'));
+  const emphasis = pickEmphasis(chunk.words.map((w) => w.word));
+  const maxWidth = style.playResX * options.maxWidthRatio;
+  const base = style.fontSize;
+  const emphasisSize =
+    emphasis === null ? base : fitTo(words[emphasis], measure, maxWidth, Math.round(base * options.emphasisScale));
+
+  // Short lines of up to maxWordsPerLine, the key word always alone on its own.
+  const lines: number[][] = [];
+  let current: number[] = [];
+  const widthOf = (indices: number[]) => measure(indices.map((i) => words[i]).join(' '), base);
+  for (let i = 0; i < words.length; i++) {
+    if (i === emphasis) {
+      if (current.length) lines.push(current);
+      lines.push([i]);
+      current = [];
+      continue;
+    }
+    const next = [...current, i];
+    if (current.length && (next.length > options.maxWordsPerLine || widthOf(next) > maxWidth)) {
+      lines.push(current);
+      current = [i];
+    } else {
+      current = next;
+    }
+  }
+  if (current.length) lines.push(current);
+
+  // A line still too wide (one long word) shrinks to fit rather than running
+  // off the frame, which libass would do without a word.
+  const sizes = lines.map((line) =>
+    line.length === 1 && line[0] === emphasis ? emphasisSize : fitTo(line.map((i) => words[i]).join(' '), measure, maxWidth, base)
+  );
+  const heights = sizes.map((size) => size * options.leading);
+  const blockHeight = heights.reduce((a, h) => a + h, 0);
+  const top = posterBlockCentre(style, blockHeight) - blockHeight / 2;
+  const centreX = style.playResX / 2;
+
+  const events: string[] = [];
+  let y = top;
+  lines.forEach((line, li) => {
+    const size = sizes[li];
+    const space = Math.max(0, measure('a a', size) - 2 * measure('a', size));
+    const lineWidth = measure(line.map((i) => words[i]).join(' '), size);
+    let x = centreX - lineWidth / 2;
+    const cy = Math.round(y + heights[li] / 2);
+    for (const i of line) {
+      const w = measure(words[i], size);
+      const cx = Math.round(x + w / 2);
+      x += w + space;
+      const begin = Math.max(chunk.start, i === 0 ? chunk.start : chunk.words[i].start);
+      if (chunk.end <= begin) continue;
+      const colour = i === emphasis ? style.highlightColour : style.primaryColour;
+      // Dims once the next word is said — all but the key word, which is the
+      // point of the phrase and stays lit until it clears.
+      const next = i < words.length - 1 ? chunk.words[i + 1].start : null;
+      const fadeAt = next !== null && i !== emphasis ? Math.max(0, Math.round((next - begin) * 1000)) : null;
+      const fade = fadeAt !== null ? `\\t(${fadeAt},${fadeAt + options.fadeMs},\\alpha${options.dimAlpha})` : '';
+      const pop = `\\fscx${options.popFrom}\\fscy${options.popFrom}\\t(0,${options.popMs},\\fscx100\\fscy100)`;
+      const tags = `{\\an5\\pos(${cx},${cy})\\fs${Math.round(size)}\\c${colour}${pop}${fade}}`;
+      events.push(`Dialogue: 0,${formatAssTime(begin)},${formatAssTime(chunk.end)},Caption,,0,0,0,,${tags}${escapeAssText(words[i])}`);
+    }
+    y += heights[li];
+  });
+  return events;
+}
+
+// ---- "Удар": one huge word at a time ---------------------------------------
+//
+// One word on screen at once, in capitals and italic, as large as a word can
+// be: an ordinary word spans most of the frame and a long one runs off both
+// edges, on purpose — the look is the word as an object, not text to read.
+// Hard cuts: a word appears when it is said and is gone when it ends, so a
+// pause is an empty frame. Placed at the speaker's eye level, which is a
+// fact about where the picture sits in the frame (wordAnchorY), not about
+// the frame itself.
+
+/** A gap shorter than this between two words is joined, so speech does not flicker. */
+const SLAM_JOIN_GAP = 0.12;
+
+/**
+ * Where a single big word goes: about a third of the way down the picture,
+ * where a talking head's eyes are — the picture, not the frame, because a
+ * landscape clip in a vertical frame sits in a band in the middle of it.
+ */
+export function wordAnchorY(frameHeight: number, pictureTop: number): number {
+  const pictureHeight = Math.max(1, frameHeight - 2 * pictureTop);
+  return Math.round(pictureTop + pictureHeight * 0.3);
+}
+
+export function buildSlamEvents(chunk: SubtitleChunk, style: SubtitleStyle, centreY: number): string[] {
+  const centreX = Math.round(style.playResX / 2);
+  return chunk.words.flatMap((word, i) => {
+    const next = chunk.words[i + 1];
+    const start = word.start;
+    // Held to the next word only across a gap too short to see — otherwise
+    // it goes when it ends, and the pause shows nothing.
+    const end = next && next.start - word.end < SLAM_JOIN_GAP ? next.start : word.end;
+    if (end <= start) return [];
+    const text = escapeAssText(word.word.toLocaleUpperCase('ru'));
+    // \q2: never wrap. A word wider than the frame is meant to be cut by its
+    // edges, and libass would otherwise break it onto two lines.
+    const tags = `{\\an5\\pos(${centreX},${centreY})\\i1\\q2}`;
+    return [`Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Caption,,0,0,0,,${tags}${text}`];
   });
 }
 

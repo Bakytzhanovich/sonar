@@ -4,6 +4,10 @@ import path from 'node:path';
 import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
 import { fontFileFor, loadFontMetrics, measureAssText } from './fontMetrics';
+import { buildTopicEvents, DEFAULT_TOPIC_LOOK, heuristicMarkup, TOPIC_CHUNK_OPTIONS, type CaptionMarkup } from './topicLayout';
+import { markupCaptions } from './captionMarkup';
+import { buildEndCardEvents, cleanEndCard, endCardAss } from './endCard';
+import { openAiChatFromEnv } from './reelLlm';
 import { applySubtitleAxes } from './subtitleAxes';
 import { denoiseModelAvailable, detectBars, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
 import {
@@ -13,13 +17,13 @@ import {
   planSmartCut,
   type SmartCutOptions,
 } from './smartCut';
-import { buildPosterEvents, buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, scaleStyleToFrame, type ChunkOptions, type SubtitleChunk, type SubtitleStyle } from './subtitles';
+import { buildAssFile, buildDynamicEvents, buildPosterEvents, buildSlamEvents, wordAnchorY, buildSubtitlesForPlan, buildSubtitlesFromLines, DEFAULT_CHUNK_OPTIONS, DEFAULT_SUBTITLE_STYLE, scaleStyleToFrame, type ChunkOptions, type SubtitleChunk, type SubtitleStyle } from './subtitles';
 import { transcriberFromEnv } from './transcribeGoogle';
 import { needsTextCorrection } from './transcriptAlign';
 import { styleForPreset } from './subtitlePresets';
 import { applyPosition } from './subtitlePositions';
 import { bandHeightFor, bandLayoutFor, buildHeadlineAss, clearOfHeadline, headlineLinesFor, headlineStyleFor, sanitizeHeadline, scaleHeadlineToFrame } from './headline';
-import { aspectRatioFor } from './aspect';
+import { aspectRatioFor, isFrameFill } from './aspect';
 import { runBreathPass } from './breathPass';
 import { runSpeechTimingPass } from './speechTimingPass';
 import { cleanAudioTrack } from './deepFilter';
@@ -130,6 +134,9 @@ export interface PipelineDeps {
   // not installed, and the graph falls back to its own denoiser — a worker
   // without it still produces correct cuts and captions.
   cleanAudio: typeof cleanAudioTrack;
+  /** The model's reading of the phrases for the "Тема" look; absent or null
+   *  means the plain layout (topicLayout.ts heuristicMarkup). */
+  markupCaptions?: (chunks: SubtitleChunk[]) => Promise<CaptionMarkup | null>;
 }
 
 export function defaultPipelineDeps(): PipelineDeps {
@@ -157,6 +164,7 @@ export function defaultPipelineDeps(): PipelineDeps {
     findBreaths: runBreathPass,
     tightenTimings: runSpeechTimingPass,
     cleanAudio: cleanAudioTrack,
+    markupCaptions: (chunks) => markupCaptions(openAiChatFromEnv(), chunks),
   };
 }
 
@@ -545,7 +553,10 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   const headlineText = job.headline ? sanitizeHeadline(job.headline) : '';
   const headlineLines = headlineText ? headlineLinesFor(headlineText, frame).length : 0;
   const bandHeight = bandHeightFor(frame, headlineStyle, headlineLines);
-  const bandLayout = bandLayoutFor(frame, sourceSize, bandHeight);
+  // A cropped fill has no bars: the picture is the whole frame, as for an
+  // upright source.
+  const frameFill = isFrameFill(job.frame_fill) ? job.frame_fill : 'blur';
+  const bandLayout = bandLayoutFor(frame, frameFill === 'crop' ? null : sourceSize, bandHeight);
 
   // ---- Stage 4: subtitles ------------------------------------------------
   let subtitlePath: string | undefined;
@@ -598,21 +609,67 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     // karaoke layout rather than failing, since libass would substitute a
     // typeface there anyway and a wrong-font poster is worse than a caption.
     let eventsFor: ((chunk: SubtitleChunk, s: SubtitleStyle) => string[]) | undefined;
-    if (job.subtitle_preset === 'poster') {
+    // "Удар" needs no measuring — it places one word at the speaker's eye
+    // level, which only the picture's place in the frame decides.
+    if (job.subtitle_preset === 'slam') {
+      const centreY = wordAnchorY(frame.height, bandLayout.pictureTop);
+      eventsFor = (chunk, s) => buildSlamEvents(chunk, s, centreY);
+    }
+    // The dynamic look places every word itself, so it needs the same
+    // measurements, and falls back the same way.
+    if (job.subtitle_preset === 'poster' || job.subtitle_preset === 'dynamic') {
       try {
         const metrics = loadFontMetrics(fontFileFor(captionStyle.fontName));
-        eventsFor = (chunk, s) =>
-          buildPosterEvents(chunk, s, (text, size) => measureAssText(text, metrics, size));
+        const measure = (text: string, size: number) => measureAssText(text, metrics, size);
+        eventsFor =
+          job.subtitle_preset === 'dynamic'
+            ? (chunk, s) => buildDynamicEvents(chunk, s, measure)
+            : (chunk, s) => buildPosterEvents(chunk, s, measure);
       } catch (err) {
         console.warn(
-          `[video-pipeline] job ${job.id}: poster captions need font metrics for ${captionStyle.fontName}, falling back: ${err instanceof Error ? err.message : String(err)}`
+          `[video-pipeline] job ${job.id}: ${job.subtitle_preset} captions need font metrics for ${captionStyle.fontName}, falling back: ${err instanceof Error ? err.message : String(err)}`
         );
       }
     }
 
-    const { ass, chunks } = approved
+    let { ass, chunks } = approved
       ? buildSubtitlesFromLines(approved, captionStyle, eventsFor)
-      : buildSubtitlesForPlan(plan.words, plan.segments, captionStyle, deps.chunkOptions, eventsFor);
+      : buildSubtitlesForPlan(
+          plan.words,
+          plan.segments,
+          captionStyle,
+          job.subtitle_preset === 'topic' ? { ...deps.chunkOptions, ...TOPIC_CHUNK_OPTIONS } : deps.chunkOptions,
+          eventsFor
+        );
+    // "Тема" is laid out over the whole clip at once, from the finished
+    // phrases: one model request for what they mean, or the plain fallback.
+    if (job.subtitle_preset === 'topic' && chunks.length > 0) {
+      const markup = (await deps.markupCaptions?.(chunks).catch(() => null)) ?? heuristicMarkup(chunks);
+      const measureWith = (family: string) => {
+        try {
+          const metrics = loadFontMetrics(fontFileFor(family));
+          return (text: string, size: number) => measureAssText(text, metrics, size);
+        } catch {
+          // No metrics: a rough width — six tenths of the size per character.
+          return (text: string, size: number) => text.length * size * 0.6;
+        }
+      };
+      const events = buildTopicEvents(
+        chunks,
+        markup,
+        captionStyle,
+        { keyword: measureWith(DEFAULT_TOPIC_LOOK.keywordFont), key: measureWith(DEFAULT_TOPIC_LOOK.keywordFont) },
+        DEFAULT_TOPIC_LOOK,
+        {
+          pictureTop: bandLayout.pictureTop,
+          // The headline and the topic word share the top: topic words wait
+          // for a timed headline to clear, and stay away from a permanent one.
+          hiddenUntil: job.headline && headlineLines > 0 ? (job.headline_seconds ?? Infinity) : 0,
+        }
+      );
+      const first = chunks[0];
+      ass = buildAssFile(chunks, captionStyle, (chunk) => (chunk === first ? events : []));
+    }
     // A transcript that survives the cut as zero chunks (all filler, or a
     // plan that kept only silence) is not a failure — render without them
     // rather than burning an empty subtitle track.
@@ -651,15 +708,26 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   const headlineAss = job.headline
     ? buildHeadlineAss(job.headline, {
         ...scaleHeadlineToFrame(headlineStyle, frame, headlineLines),
+        seconds: job.headline_seconds,
         // Set after the scale, not before it: this is measured in the output
         // frame from the source's own shape, and scaling it from the reference
         // frame would be scaling a number that was never in that space.
         bandTop: bandLayout.bandTop,
       })
     : null;
-  if (headlineAss) {
+  // The end card shares the headline's file — burned last, over everything —
+  // or gets one of its own when there is no headline.
+  const endCard = cleanEndCard({ text: job.end_card_text, brand: job.end_card_brand, cta: job.end_card_cta });
+  const endCardEvents = buildEndCardEvents(frame, plan.keptDurationSec, endCard);
+  const overlayAss =
+    endCardEvents.length === 0
+      ? headlineAss
+      : headlineAss
+        ? `${headlineAss.trimEnd()}\n${endCardEvents.join('\n')}\n`
+        : endCardAss(frame, endCardEvents);
+  if (overlayAss) {
     headlinePath = path.join(workDir, 'headline.ass');
-    await fs.writeFile(headlinePath, headlineAss, 'utf-8');
+    await fs.writeFile(headlinePath, overlayAss, 'utf-8');
   }
 
   // The recorded decision, not a re-evaluation: the card already told the user
@@ -686,6 +754,7 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
       // shape here would rescale the text with the picture.
       frame,
       crop: probeResult.crop,
+      fill: frameFill,
       // A missing model file must not fail the render: the job still produces
       // a correct cut, just without the noise removal it asked for.
       // The recorded decision, not a re-evaluation: the card already told the

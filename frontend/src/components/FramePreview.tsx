@@ -12,6 +12,7 @@ import styles from './FramePreview.module.css';
 // here would be the next place for the same bug to live.
 import { aspectRatioFor } from '@shared/aspect';
 import { assToRgb } from '@shared/assColour';
+import { wordAnchorY } from '@shared/subtitles';
 import {
   bandHeightFor,
   bandLayoutFor,
@@ -34,6 +35,7 @@ const PREVIEW_AREA = 280 * 498;
 export default function FramePreview({
   src,
   aspectRatio,
+  frameFill = 'blur',
   headline,
   headlineChoice,
   captions,
@@ -42,6 +44,8 @@ export default function FramePreview({
 }: {
   src: string;
   aspectRatio: string;
+  /** Blurred copy around the picture, as the render does by default, or black bars. */
+  frameFill?: 'blur' | 'black' | 'crop';
   headline: string;
   headlineChoice: { font: string; size: string; colour: string };
   captions: { line: CaptionLine; look: CaptionLook } | null;
@@ -80,7 +84,8 @@ export default function FramePreview({
   const baseHeadline = headlineStyleFor({ font: headlineChoice.font, size: headlineChoice.size, colour: headlineChoice.colour });
   // The render's own figure for this text in this frame (bandHeightFor).
   const band = lines.length > 0 ? bandHeightFor(frame, baseHeadline, lines.length) : 0;
-  const layout = bandLayoutFor(frame, source, band);
+  // Cropped to fill: no bars, the picture is the whole frame — as the render lays it out.
+  const layout = bandLayoutFor(frame, frameFill === 'crop' ? null : source, band);
 
   const headlineStyle = scaleHeadlineToFrame(baseHeadline, frame, lines.length);
   // The renderer drops to the smaller size on a third line so a long title
@@ -120,14 +125,17 @@ export default function FramePreview({
       {/* The picture fitted into the whole frame and centred over a blurred
           copy of itself — the same fit buildFitChain does in the render. The
           headline never takes room from it. */}
-      <video className={styles.fill} ref={fill} src={src} muted playsInline preload="metadata" aria-hidden="true" tabIndex={-1} />
+      {/* Black bars are just the frame's own black background showing. */}
+      {frameFill === 'blur' && (
+        <video className={styles.fill} ref={fill} src={src} muted playsInline preload="metadata" aria-hidden="true" tabIndex={-1} />
+      )}
       <div className={styles.picture} style={{ top: 0, height: '100%' }}>
         {/* No native controls: their bar sits across the bottom of the frame —
             exactly where captions go — and hid them in every format wider
             than 9:16. One play/pause button instead (below). */}
         <video
           ref={main}
-          className={styles.video}
+          className={`${styles.video} ${frameFill === 'crop' ? styles.cover : ''}`}
           src={src}
           playsInline
           loop
@@ -166,7 +174,15 @@ export default function FramePreview({
         </div>
       )}
 
-      {captions && <CaptionOverlay line={captions.line} look={captions.look} topMarginRatio={topClearance} focused={focus === 'captions'} />}
+      {captions && (
+        <CaptionOverlay
+          line={captions.line}
+          look={captions.look}
+          topMarginRatio={topClearance}
+          focused={focus === 'captions'}
+          anchorRatio={wordAnchorY(frame.height, layout.pictureTop) / frame.height}
+        />
+      )}
 
       {/* Above the overlays, which draw nothing to click on: a tap anywhere on
           the frame plays or pauses; the round mark shows only while paused. */}

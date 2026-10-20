@@ -573,6 +573,11 @@ CREATE TABLE video_edit_jobs (
   -- choice. It decides padding, not framing — a horizontal source in a 9:16
   -- frame still gets bars, because nothing here crops.
   aspect_ratio      TEXT NOT NULL DEFAULT '9_16',
+  frame_fill        TEXT NOT NULL DEFAULT 'blur', -- blur | black, around a picture of another shape
+  headline_seconds  INTEGER, -- the headline for the first N seconds; null: the whole clip
+  end_card_text     TEXT, -- the end card (endCard.ts): its text, brand and call to action;
+  end_card_brand    TEXT, -- all three null means no card
+  end_card_cta      TEXT,
   -- ---- Manual re-edit -----------------------------------------------------
   -- The automatic cut is a guess, and sometimes a wrong one. A person who
   -- dislikes it draws their own segments and the video is rendered again.

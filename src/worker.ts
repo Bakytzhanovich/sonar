@@ -7,7 +7,8 @@ import { defaultPipelineDeps, runSmartCutJobs } from './videoPipeline';
 import { storageConfigFromEnv } from './storage';
 import { localMediaConfigFromEnv } from './localMedia';
 import { deriveKey } from './auth';
-import { HEARTBEAT_INTERVAL_MS, recordHeartbeat } from './workerHealth';
+import { HEARTBEAT_INTERVAL_MS, recordHeartbeat, SMART_CUT_WORKER } from './workerHealth';
+import { shouldCheckDatabase, signalStoreFromEnv, WORK_SIGNAL_KEY, writeHeartbeat } from './workerSignal';
 
 // Separate process entry point for Module 8's Level-3 renders. server.ts runs
 // the API and the two mock pollers; this runs ffmpeg. They are split because
@@ -21,10 +22,10 @@ import { HEARTBEAT_INTERVAL_MS, recordHeartbeat } from './workerHealth';
 
 const POLL_INTERVAL_MS = Number(process.env.WORKER_POLL_INTERVAL_MS ?? 5_000);
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? 1);
-// Hourly. The thing being cleaned up expires in hours, so sweeping more often
-// would be work that finds nothing, and less often lets a day of trying
-// styles pile up before anything is collected.
-const SWEEP_INTERVAL_MS = Number(process.env.WORKER_SWEEP_INTERVAL_MS ?? 3_600_000);
+// Daily. The sweep talks to the database, and every hour of it woke a
+// sleeping database 24 times a day for something that can wait: expired
+// previews only cost a little room in the bucket until it runs.
+const SWEEP_INTERVAL_MS = Number(process.env.WORKER_SWEEP_INTERVAL_MS ?? 24 * 3_600_000);
 
 async function main(): Promise<void> {
   const deps = defaultPipelineDeps();
@@ -82,15 +83,24 @@ async function main(): Promise<void> {
   // has silently died, this write hangs or rejects too, and the heartbeat
   // stops. Staleness then means what it claims to mean — this worker is not
   // reaching the database — rather than merely that the process exited.
-  const beat = setInterval(() => {
-    void recordHeartbeat(db).catch((err) => console.error('[worker] heartbeat failed', err));
-  }, HEARTBEAT_INTERVAL_MS);
-  // Unref so a pending beat cannot hold the process open after the loop ends.
+  // The doorbell and the pulse (workerSignal.ts). With a store, the heartbeat
+  // goes there and the idle loop watches the bell instead of the database —
+  // which can then sleep, and stop spending its quota, while nobody works.
+  // Without one (a bare development setup) it is the database, as before.
+  const signals = signalStoreFromEnv(deriveKey('local-media'));
+  console.log(`[worker] ожидание работы: ${signals ? 'сигнал в хранилище, база спит' : 'опрос базы'}`);
+
+  const heartbeat = () =>
+    (signals ? writeHeartbeat(signals, SMART_CUT_WORKER) : recordHeartbeat(db)).catch((err) =>
+      console.error('[worker] heartbeat failed', err)
+    );
+  // On its own timer rather than inside the poll below, because the poll
+  // awaits a whole render — minutes, on a long clip.
+  const beat = setInterval(() => void heartbeat(), HEARTBEAT_INTERVAL_MS);
   beat.unref();
 
   // Previews expire on their own timer for the same reason the heartbeat
-  // does: the poll below awaits a whole render, and a sweep sitting inside it
-  // would run once an hour or once a day depending on how busy the queue was.
+  // does: the poll below awaits a whole render.
   const sweep = setInterval(() => {
     void sweepExpiredPreviews(db, deps.storage)
       .then(({ removed, failed }) => {
@@ -99,22 +109,41 @@ async function main(): Promise<void> {
       .catch((err) => console.error('[worker] preview sweep failed', err));
   }, SWEEP_INTERVAL_MS);
   sweep.unref();
-  await recordHeartbeat(db).catch((err) => console.error('[worker] heartbeat failed', err));
+  await heartbeat();
+
+  // Starts as if it had just worked, so a restart checks the database right
+  // away: jobs a crashed worker left behind are picked up without waiting
+  // for a ring.
+  let lastWorkAt = Date.now();
+  let lastCheckAt = 0;
+  let lastSignal: string | null = signals ? await signals.read(WORK_SIGNAL_KEY).catch(() => null) : null;
 
   while (!stopping) {
     try {
-      const { processed } = await runSmartCutJobs(db, new Date(), deps, CONCURRENCY);
-      // Reels after renders, in the same loop: one worker process, one job at
-      // a time, because both lean on the same CPU and the same transcription
-      // budget. A reel is short, so it never holds a render up for long.
-      const { processed: reels } = await runReelJobs(db, new Date(), reelDeps, CONCURRENCY);
-      // Only sleep when there was nothing to do — with a backlog, poll again
-      // immediately instead of idling for the interval between every job.
-      if (processed === 0 && reels === 0) await sleep(POLL_INTERVAL_MS);
+      let rung = !signals;
+      if (signals) {
+        try {
+          const current = await signals.read(WORK_SIGNAL_KEY);
+          rung = current !== lastSignal;
+          lastSignal = current;
+        } catch (err) {
+          // A store that cannot be read must not strand a job: treat it as a
+          // ring, which is the old behaviour — the database, every poll.
+          console.error('[worker] work signal unreadable, checking the database', err);
+          rung = true;
+        }
+      }
+      const now = Date.now();
+      if (shouldCheckDatabase({ rung, lastWorkAt, lastCheckAt }, now)) {
+        lastCheckAt = now;
+        const { processed } = await runSmartCutJobs(db, new Date(), deps, CONCURRENCY);
+        const { processed: reels } = await runReelJobs(db, new Date(), reelDeps, CONCURRENCY);
+        if (processed > 0 || reels > 0 || rung) lastWorkAt = Date.now();
+        // With a backlog, go straight back for the next job.
+        if (processed > 0 || reels > 0) continue;
+      }
+      await sleep(POLL_INTERVAL_MS);
     } catch (err) {
-      // A throw here is infrastructure (the claim query itself failed), not a
-      // job failure — processSmartCutJob handles those internally. Backing
-      // off keeps a database outage from becoming a hot retry loop.
       console.error('[worker] tick failed', err);
       await sleep(POLL_INTERVAL_MS);
     }

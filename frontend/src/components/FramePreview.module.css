@@ -96,3 +96,6 @@
 @media (prefers-reduced-motion: no-preference) {
   .playMark { transition: opacity 160ms ease; }
 }
+
+/* "Во весь кадр": the render covers the frame and trims the overflow. */
+.cover { object-fit: cover; }

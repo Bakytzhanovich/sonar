@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { plural } from '@/lib/plural';
-import { api, type AspectRatioOption, type HeadlineOption, type PosterLayout, type SubtitlePosition, type SubtitlePreset, type VideoEditJob } from '@/lib/api';
+import { api, type AspectRatioOption, type DynamicLayout, type HeadlineOption, type PosterLayout, type SubtitlePosition, type SubtitlePreset, type VideoEditJob } from '@/lib/api';
 import { useDevConfig } from '@/lib/useDevConfig';
 import { useSession } from '@/lib/useSession';
 import { STAFF_BOOTSTRAP_AVAILABLE } from '@/lib/useApiAccess';
@@ -35,7 +35,21 @@ const TEMPLATE_TITLE: Record<string, string> = {
 // The tabs of the look panel. Subtitles and the headline share three of them
 // by name, which is why the panel always says which of the two it is changing.
 const SUBTITLE_TABS = [['style', 'Стиль'], ['font', 'Шрифт'], ['color', 'Цвет'], ['size', 'Размер'], ['position', 'Позиция']] as const;
-const HEADLINE_TABS = [['text', 'Текст'], ['font', 'Шрифт'], ['size', 'Размер'], ['color', 'Цвет']] as const;
+const HEADLINE_TABS = [['text', 'Текст'], ['font', 'Шрифт'], ['size', 'Размер'], ['color', 'Цвет'], ['end', 'Концовка']] as const;
+
+// What fills the frame around a picture of another shape (frame_fill).
+const FRAME_FILLS = [
+  { id: 'blur', label: 'Размытие', description: 'Размытая копия того же видео' },
+  { id: 'black', label: 'Чёрный', description: 'Чёрные полосы сверху и снизу' },
+  { id: 'crop', label: 'Во весь кадр', description: 'Видео заполняет кадр, края обрезаются' },
+];
+
+// How long the headline stays: the whole clip, or a hook for the first seconds.
+const HEADLINE_DURATIONS = [
+  { id: '', label: 'Весь ролик', description: 'Заголовок не уходит' },
+  { id: '7', label: 'Первые 7 секунд', description: 'Как хук: потом верх свободен' },
+  { id: '3', label: 'Первые 3 секунды', description: 'Короткая вспышка в начале' },
+];
 type SubtitleTab = (typeof SUBTITLE_TABS)[number][0];
 type HeadlineTab = (typeof HEADLINE_TABS)[number][0];
 // "No captions" is offered as one more style rather than a separate switch:
@@ -162,6 +176,7 @@ export default function VideoEditView() {
   const [subtitleColors, setSubtitleColors] = useState<Array<HeadlineOption & { hex: string }>>([]);
   const [subtitleSizes, setSubtitleSizes] = useState<HeadlineOption[]>([]);
   const [posterLayout, setPosterLayout] = useState<PosterLayout | null>(null);
+  const [dynamicLayout, setDynamicLayout] = useState<DynamicLayout | null>(null);
   const [sizeScales, setSizeScales] = useState<Record<string, number>>({});
   const [fontEmRatios, setFontEmRatios] = useState<Record<string, number>>({});
   const [subtitleFont, setSubtitleFont] = useState('auto');
@@ -170,6 +185,12 @@ export default function VideoEditView() {
   // Vertical by default — it is what the pipeline produced before the format
   // was a choice, and what Reels, TikTok and Shorts all want.
   const [aspectRatio, setAspectRatio] = useState('9_16');
+  const [frameFill, setFrameFill] = useState<'blur' | 'black' | 'crop'>('blur');
+  // '' is the whole clip; otherwise seconds, as the picker's id.
+  const [headlineSeconds, setHeadlineSeconds] = useState('');
+  const [endCardText, setEndCardText] = useState('');
+  const [endCardBrand, setEndCardBrand] = useState('');
+  const [endCardCta, setEndCardCta] = useState('');
   const [removeBreaths, setRemoveBreaths] = useState(false);
   // Which of the two things on the frame the settings below change, and the
   // tab open for each — kept apart so switching back lands where you were.
@@ -222,6 +243,7 @@ export default function VideoEditView() {
       ? {
           preset: presetLayout,
           poster: posterLayout,
+          dynamic: dynamicLayout ?? undefined,
           sizeScale: sizeScales[subtitleSize] ?? 1,
           fontFamily: subtitleFonts.find((f) => f.id === subtitleFont)?.family || undefined,
           emRatio:
@@ -269,6 +291,7 @@ export default function VideoEditView() {
         setSubtitleColors(res.subtitleColors ?? []);
         setSubtitleSizes(res.subtitleSizes ?? []);
         setPosterLayout(res.posterLayout ?? null);
+        setDynamicLayout(res.dynamicLayout ?? null);
         setSizeScales(res.sizeScales ?? {});
         setFontEmRatios(res.fontEmRatios ?? {});
       })
@@ -324,6 +347,11 @@ export default function VideoEditView() {
         headlineSize,
         headlineColor,
         aspectRatio,
+        frameFill,
+        headlineSeconds: headlineSeconds ? Number(headlineSeconds) : null,
+        endCardText,
+        endCardBrand,
+        endCardCta,
       });
       await load();
       chooseFile(null);
@@ -451,6 +479,12 @@ export default function VideoEditView() {
                   value={aspectRatio}
                   onChange={setAspectRatio}
                 />
+                <PillPicker
+                  label="Фон вокруг видео"
+                  options={FRAME_FILLS}
+                  value={frameFill}
+                  onChange={(id) => setFrameFill(id === 'black' || id === 'crop' ? id : 'blur')}
+                />
                 <Switch
                   checked={removeBreaths}
                   onChange={setRemoveBreaths}
@@ -475,6 +509,7 @@ export default function VideoEditView() {
                     <FramePreview
                       src={filePreviewUrl}
                       aspectRatio={aspectRatio}
+                      frameFill={frameFill}
                       headline={headline}
                       headlineChoice={{ font: headlineFont, size: headlineSize, colour: headlineColor }}
                       captions={subtitles && captionLook ? { line: SAMPLE_CAPTION, look: captionLook } : null}
@@ -537,6 +572,14 @@ export default function VideoEditView() {
                           }}
                         />
                       )}
+                      {/* The topic word and the headline share the top of the
+                          frame and take turns (topicLayout.ts): said here, before
+                          the render, not discovered in it. */}
+                      {subsTab === 'style' && subtitles && subtitlePreset === 'topic' && headline.trim() && !headlineSeconds && (
+                        <p className={styles.studioNote}>
+                          В «Теме» верх кадра занимает слово темы. Пока заголовок показывается весь ролик, слов темы не будет — во вкладке «Заголовок» выберите «Первые 3 секунды» или «Первые 7 секунд».
+                        </p>
+                      )}
                       {subsTab === 'font' && (
                         <PillPicker label="Шрифт субтитров" options={subtitleFonts} value={subtitleFont} onChange={setSubtitleFont} disabled={!subtitles} />
                       )}
@@ -577,6 +620,9 @@ export default function VideoEditView() {
                           </span>
                         </label>
                       )}
+                      {headTab === 'text' && hasHeadline && (
+                        <PillPicker label="Показывать заголовок" options={HEADLINE_DURATIONS} value={headlineSeconds} onChange={setHeadlineSeconds} />
+                      )}
                       {headTab === 'font' && (
                         <PillPicker label="Шрифт заголовка" options={headlineFonts} value={headlineFont} onChange={setHeadlineFont} disabled={!hasHeadline} />
                       )}
@@ -586,7 +632,30 @@ export default function VideoEditView() {
                       {headTab === 'color' && (
                         <PillPicker label="Цвет заголовка" options={headlineColors} value={headlineColor} onChange={setHeadlineColor} disabled={!hasHeadline} />
                       )}
-                      {!hasHeadline && headTab !== 'text' && (
+                      {/* Independent of the headline: a card can close a clip
+                          that has no headline at all. */}
+                      {headTab === 'end' && (
+                        <div className={styles.endCardFields}>
+                          <label className={styles.field}>
+                            <span className={styles.fieldLabel}>Текст карточки</span>
+                            <input className={controls.input} value={endCardText} onChange={(e) => setEndCardText(e.target.value.slice(0, 60))} maxLength={60} placeholder="Например: Подпишись, чтобы не пропустить разбор" />
+                          </label>
+                          <label className={styles.field}>
+                            <span className={styles.fieldLabel}>Бренд</span>
+                            <input className={controls.input} value={endCardBrand} onChange={(e) => setEndCardBrand(e.target.value.slice(0, 24))} maxLength={24} placeholder="Ваше имя или название" />
+                          </label>
+                          <label className={styles.field}>
+                            <span className={styles.fieldLabel}>Кнопка</span>
+                            <input className={controls.input} value={endCardCta} onChange={(e) => setEndCardCta(e.target.value.slice(0, 30))} maxLength={30} placeholder="Например: Подписаться" />
+                          </label>
+                          <span className={styles.fieldHint}>
+                            {endCardText || endCardBrand || endCardCta
+                              ? 'Карточка займёт последние 2 секунды ролика: розовый фон, текст и кнопка'
+                              : 'Пусто — ролик закончится без карточки'}
+                          </span>
+                        </div>
+                      )}
+                      {!hasHeadline && headTab !== 'text' && headTab !== 'end' && (
                         <p className={styles.studioNote}>Сначала напишите текст во вкладке «Текст» — без него плашки не будет.</p>
                       )}
                     </>

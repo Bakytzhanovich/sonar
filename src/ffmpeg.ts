@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { KeepSegment } from './smartCut';
-import type { FrameSize } from './aspect';
+import type { FrameFill, FrameSize } from './aspect';
 
 // Thin wrapper around the ffmpeg/ffprobe binaries. Deliberately not a library
 // wrapper (fluent-ffmpeg and friends): everything below is argument
@@ -498,7 +498,8 @@ export function buildConcatFilter(
   cleanedAudio = false,
   headlinePath?: string,
   frame: FrameSize = DEFAULT_FRAME,
-  crop?: CropRect | null
+  crop?: CropRect | null,
+  fill: FrameFill = 'blur'
 ): string {
   const parts: string[] = [];
   const labels: string[] = [];
@@ -544,7 +545,7 @@ export function buildConcatFilter(
   // After the captions, so the band is drawn over anything that overlaps it.
   const headlineFilter = headlinePath ? `,ass=filename=${escapeFilterPath(headlinePath)}${fontsDir}` : '';
   parts.push(
-    `${buildFitChain('[vcat]', frame, crop)},fps=${OUTPUT_FPS}` +
+    `${buildFitChain('[vcat]', frame, crop, fill)},fps=${OUTPUT_FPS}` +
       `${subtitleFilter}${headlineFilter},format=yuv420p[vout]`
   );
 
@@ -567,7 +568,7 @@ export function buildConcatFilter(
  * featureless by design, so the detail lost is detail nobody sees, and it
  * keeps the extra pass cheap on a worker capped at two cores.
  */
-export function buildFitChain(input: string, frame: FrameSize, crop?: CropRect | null): string {
+export function buildFitChain(input: string, frame: FrameSize, crop?: CropRect | null, fill: FrameFill = 'blur'): string {
   // Even dimensions: the encoder rejects odd ones for yuv420p.
   const even = (n: number) => Math.max(2, 2 * Math.round(n / 2));
   const smallW = even(frame.width / 4);
@@ -575,6 +576,20 @@ export function buildFitChain(input: string, frame: FrameSize, crop?: CropRect |
   // Bars baked into the source go first, so neither the picture nor the fill
   // behind it carries them — see detectBars.
   const trim = crop ? `crop=${crop.width}:${crop.height}:${crop.x}:${crop.y},` : '';
+  // Full frame: cover and trim the overflow, centred — no bars at all.
+  if (fill === 'crop') {
+    return (
+      `${input}${trim}scale=${frame.width}:${frame.height}:force_original_aspect_ratio=increase,` +
+      `crop=${frame.width}:${frame.height},setsar=1`
+    );
+  }
+  // Plain black bars: the picture fitted and padded, no second copy of it.
+  if (fill === 'black') {
+    return (
+      `${input}${trim}scale=${frame.width}:${frame.height}:force_original_aspect_ratio=decrease,setsar=1,` +
+      `pad=${frame.width}:${frame.height}:(ow-iw)/2:(oh-ih)/2:color=black`
+    );
+  }
   return (
     `${input}${trim}split=2[fitfg][fitbg];\n` +
     `[fitbg]scale=${smallW}:${smallH}:force_original_aspect_ratio=increase,crop=${smallW}:${smallH},` +
@@ -608,11 +623,13 @@ export interface RenderOptions {
   frame?: FrameSize;
   // Bars baked into the source, from detectBars. Dropped before the fit.
   crop?: CropRect | null;
+  // Blurred copy of the picture, or black, around a picture of another shape.
+  fill?: FrameFill;
   onProgress?: (fraction: number) => void;
 }
 
 export async function renderSegments(options: RenderOptions): Promise<void> {
-  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, headlinePath, frame = DEFAULT_FRAME, crop, onProgress } = options;
+  const { inputPath, outputPath, workDir, segments, expectedDurationSec, subtitlePath, denoiseModelPath, cleanedAudioPath, headlinePath, frame = DEFAULT_FRAME, crop, fill = 'blur', onProgress } = options;
   if (segments.length === 0) throw new FfmpegError('no segments to render', '');
 
   // The graph is written to a file rather than passed as an argument: at a
@@ -621,7 +638,7 @@ export async function renderSegments(options: RenderOptions): Promise<void> {
   const filterPath = path.join(workDir, 'filter.txt');
   await fs.writeFile(
     filterPath,
-    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath), headlinePath, frame, crop),
+    buildConcatFilter(segments, subtitlePath, denoiseModelPath, Boolean(cleanedAudioPath), headlinePath, frame, crop, fill),
     'utf-8'
   );
 

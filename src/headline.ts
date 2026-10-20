@@ -47,6 +47,8 @@ export interface HeadlineStyle {
    * than staying at the edge with nothing underneath.
    */
   bandTop: number;
+  /** Shown for the first this-many seconds; null or absent for the whole clip. */
+  seconds?: number | null;
 }
 
 export const DEFAULT_HEADLINE_STYLE: HeadlineStyle = {
@@ -325,11 +327,21 @@ function shadowFor(fontSize: number): number {
   return Math.max(1, Math.round(fontSize * 0.04));
 }
 
-// One event, held for the whole clip. An explicit end far past any accepted
-// source is simpler than threading the duration down here, and a headline that
-// outlives the video by hours is never seen.
-function event(text: string): string {
-  return `Dialogue: 0,0:00:00.00,9:59:59.99,Headline,,0,0,0,,${text}`;
+// One event — for the whole clip by default (an end far past any accepted
+// source is simpler than threading the duration down, and a headline that
+// outlives the video is never seen), or for the first few seconds, as a hook
+// that clears and leaves the picture to the speaker.
+function event(text: string, seconds?: number | null): string {
+  const end = seconds && seconds > 0 ? formatAssClock(seconds) : '9:59:59.99';
+  return `Dialogue: 0,0:00:00.00,${end},Headline,,0,0,0,,${text}`;
+}
+
+function formatAssClock(sec: number): string {
+  const cs = Math.round(sec * 100);
+  const h = Math.floor(cs / 360000);
+  const m = Math.floor((cs % 360000) / 6000);
+  const s = Math.floor((cs % 6000) / 100);
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
 }
 
 /**
@@ -393,7 +405,7 @@ export function buildHeadlineAss(rawText: string, style: HeadlineStyle = DEFAULT
 
   // \an5 centres on \pos, which is the middle of the band — so one line and
   // three lines are both centred in it rather than growing downwards.
-  const textEvent = event(`{\\an5\\pos(${Math.round(style.playResX / 2)},${Math.round(style.bandTop + style.bandHeight / 2)})}${lines.join('\\N')}`);
+  const textEvent = event(`{\\an5\\pos(${Math.round(style.playResX / 2)},${Math.round(style.bandTop + style.bandHeight / 2)})}${lines.join('\\N')}`, style.seconds);
 
   const events = [
     '[Events]',

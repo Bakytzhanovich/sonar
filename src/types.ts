@@ -411,6 +411,11 @@ export interface VideoEditJob {
   headline_color: string;
   remove_breaths: boolean;
   aspect_ratio: string;
+  frame_fill: string;
+  headline_seconds: number | null;
+  end_card_text: string | null;
+  end_card_brand: string | null;
+  end_card_cta: string | null;
   // Set on a job created by editing an earlier one. The parent keeps its own
   // finished render — revisions accumulate beside it, they do not replace it.
   parent_job_id: string | null;

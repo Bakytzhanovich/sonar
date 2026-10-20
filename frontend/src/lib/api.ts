@@ -293,6 +293,14 @@ export interface SmartCutRequest {
   headlineSize: string;
   headlineColor: string;
   aspectRatio: string;
+  /** What fills the frame around a picture of another shape. */
+  frameFill: 'blur' | 'black' | 'crop';
+  /** The headline for the first this-many seconds; null for the whole clip. */
+  headlineSeconds: number | null;
+  /** The end card (last 2 seconds); all empty means none. */
+  endCardText: string;
+  endCardBrand: string;
+  endCardCta: string;
 }
 
 export interface CutStyle {
@@ -334,6 +342,20 @@ export interface PresetLayout {
   highlight: string;
   /** True for the stacked, emphasised layout rather than a single line. */
   poster: boolean;
+  /** True for "Динамика": words arrive one at a time. */
+  dynamic?: boolean;
+  /** True for "Удар": one huge word at a time, at the speaker's eye level. */
+  slam?: boolean;
+  /** True for "Тема": the topic word on top, a two-tier caption below. */
+  topic?: boolean;
+}
+
+/** The renderer's DEFAULT_DYNAMIC_OPTIONS, as the preview needs them. */
+export interface DynamicLayout {
+  emphasisScale: number;
+  maxWordsPerLine: number;
+  leading: number;
+  dimOpacity: number;
 }
 
 export interface PosterLayout {
@@ -970,6 +992,7 @@ export const api = {
       subtitleColors?: Array<HeadlineOption & { hex: string }>;
       subtitleSizes?: HeadlineOption[];
       posterLayout?: PosterLayout;
+      dynamicLayout?: DynamicLayout;
       /** Size id to multiplier, so the preview scales the way a render will. */
       sizeScales?: Record<string, number>;
       /** Family to how big libass draws its em relative to the ASS size. */

@@ -51,3 +51,53 @@
   outline-offset: 0.6cqw;
   border-radius: 1cqw;
 }
+
+/* "Динамика": one row per line of the block, the renderer's tight leading. */
+.dynamicRow { display: block; white-space: nowrap; }
+/* The word being said pops in, as the render does (\fscx80 → 100 over 0.12s). */
+.dynamicWord, .dynamicPop { display: inline-block; }
+@media (prefers-reduced-motion: no-preference) {
+  .dynamicPop { animation: dynamic-pop 120ms ease-out; }
+}
+@keyframes dynamic-pop {
+  from { transform: scale(0.8); }
+  to { transform: scale(1); }
+}
+
+/* "Удар": the word centred on the render's anchor, never wrapped, and wider
+   than the frame when it is long — the frame (overflow: hidden) crops it. */
+.slamStage { position: absolute; inset: 0; container-type: size; overflow: hidden; pointer-events: none; }
+.slamWord {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  font-weight: 700;
+  font-style: italic;
+  line-height: 1;
+}
+
+/* "Тема" (topicLayout.ts): the topic word at 22% of the height, in the
+   condensed family; the two-tier caption in the lower third. */
+.topicWord {
+  position: absolute;
+  top: 22%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  font-family: 'Oswald', sans-serif;
+  font-weight: 700;
+  line-height: 1;
+}
+.topicCaption {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6cqmin;
+  text-align: center;
+}
+.topicLead { font-family: 'Montserrat', sans-serif; font-weight: 600; letter-spacing: 0.17em; line-height: 1.1; }
+.topicKey { font-family: 'Oswald', sans-serif; font-weight: 700; line-height: 1; }

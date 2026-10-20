@@ -347,6 +347,11 @@ const MIGRATIONS: string[] = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_payment_requests_tenant ON payment_requests(tenant_id, status)`,
   `ALTER TABLE tenants ADD COLUMN IF NOT EXISTS period_started_at TIMESTAMPTZ`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS frame_fill TEXT NOT NULL DEFAULT 'blur'`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS headline_seconds INTEGER`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS end_card_text TEXT`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS end_card_brand TEXT`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS end_card_cta TEXT`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_requests_one_pending ON payment_requests(tenant_id) WHERE status = 'pending'`,
   `CREATE TABLE IF NOT EXISTS admin_actions (
      id            TEXT PRIMARY KEY,
