@@ -22,8 +22,17 @@ export async function notify(db: Db, tenantId: string, type: NotificationType, m
   const id = randomUUID();
   await exec(db, `INSERT INTO notifications (id, tenant_id, type, message, related_id) VALUES (?, ?, ?, ?, ?)`, id, tenantId, type, message, relatedId ?? null);
 
-  ensureVapidConfigured();
-  const subscriptions = await queryAll<PushSubscriptionRecord>(db, `SELECT * FROM push_subscriptions WHERE tenant_id = ?`, tenantId);
+  // Push is best-effort here too: a process without VAPID keys (the video
+  // worker, whose filesystem is read-only) once failed a finished render
+  // because key setup threw out of notify().
+  let subscriptions: PushSubscriptionRecord[];
+  try {
+    ensureVapidConfigured();
+    subscriptions = await queryAll<PushSubscriptionRecord>(db, `SELECT * FROM push_subscriptions WHERE tenant_id = ?`, tenantId);
+  } catch (err) {
+    console.warn(`[notify] push skipped: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
 
   for (const sub of subscriptions) {
     webpush

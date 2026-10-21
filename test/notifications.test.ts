@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
 import { exec, type Db } from '../src/db';
@@ -31,6 +31,24 @@ describe('notify / listNotifications (pure)', () => {
     const notifications = await listNotifications(db, 't1', false);
     expect(notifications).toHaveLength(1);
     expect(notifications[0]).toMatchObject({ type: 'post_published', message: 'Тестовое сообщение', related_id: 'related-1', is_read: false });
+  });
+
+  it('still records the notification, and does not throw, when push keys cannot be set up', async () => {
+    db = await createTestDb();
+    await exec(db, `INSERT INTO tenants (id, name, email) VALUES ('t1', 'T', 't@example.com')`);
+    // Half-configured keys make key setup throw — like the worker, which has
+    // no keys and nowhere to write them. A fresh module, so no earlier test
+    // has configured push already.
+    vi.resetModules();
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'only-half');
+    vi.stubEnv('VAPID_PRIVATE_KEY', '');
+    try {
+      const fresh = await import('../src/notifications');
+      await expect(fresh.notify(db, 't1', 'video_completed', 'Готово', 'job-1')).resolves.toBeUndefined();
+      expect(await listNotifications(db, 't1', false)).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('unreadOnly filters out read notifications', async () => {
