@@ -148,7 +148,22 @@ export interface TopicPlacement {
    * topic words at all; the form says so before the render.
    */
   hiddenUntil: number;
+  /**
+   * "Слово за человеком": where the top of the speaker is during each
+   * keyword window (personMask.ts), in frame pixels, null for nobody there.
+   * The word then sits on that line, wider than the head, so the head hides
+   * only its lower part — behind a vertical close-up a word at the usual
+   * height is covered whole.
+   */
+  personTops?: Array<number | null>;
 }
+
+/** Behind the speaker the word spans almost the frame, so it shows on both sides of the head. */
+const BEHIND_WIDTH = 0.92;
+/** …and may grow past the usual cap to get there. */
+const BEHIND_SIZE_CAP = 4.5;
+/** Oswald's capitals stand about three quarters of the font size tall. */
+const CAP_HEIGHT = 0.75;
 
 export function buildTopicEvents(
   chunks: SubtitleChunk[],
@@ -158,10 +173,33 @@ export function buildTopicEvents(
   look: TopicLook = DEFAULT_TOPIC_LOOK,
   placement: TopicPlacement = { pictureTop: 0, hiddenUntil: 0 }
 ): string[] {
+  const layers = buildTopicLayers(chunks, markup, style, measures, look, placement);
+  return [...layers.keywords, ...layers.captions];
+}
+
+export interface TopicLayers {
+  /** The topic words alone — what "слово за человеком" draws behind the speaker. */
+  keywords: string[];
+  /** When each topic word is on screen, in seconds: the only frames that need a person mask. */
+  keywordWindows: Array<{ start: number; end: number }>;
+  /** Everything else: the two-tier caption and the handwritten accents. */
+  captions: string[];
+}
+
+/** The same events as buildTopicEvents, with the topic words kept apart. */
+export function buildTopicLayers(
+  chunks: SubtitleChunk[],
+  markup: CaptionMarkup,
+  style: SubtitleStyle,
+  measures: TopicMeasures,
+  look: TopicLook = DEFAULT_TOPIC_LOOK,
+  placement: TopicPlacement = { pictureTop: 0, hiddenUntil: 0 }
+): TopicLayers {
   const W = style.playResX;
   const H = style.playResY;
   const cx = Math.round(W / 2);
-  const events: string[] = [];
+  const keywords: string[] = [];
+  const keywordWindows: TopicLayers['keywordWindows'] = [];
   const dialogue = (start: number, end: number, tags: string, text: string) =>
     end > start ? [`Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Caption,,0,0,0,,{${tags}}${escapeAssText(text)}`] : [];
 
@@ -179,9 +217,21 @@ export function buildTopicEvents(
     const nextStart = markup.topics[i + 1] ? chunks[markup.topics[i + 1].from].start : Infinity;
     const end = Math.min(nextStart, Math.max(chunks[topic.to].end, start + MIN_TOPIC_SEC));
     const word = topic.keyword.toLocaleUpperCase('ru');
-    const size = fit(word, measures.keyword, W * 0.8, keywordSizeCap);
-    events.push(...dialogue(start, end, `\\an5\\pos(${cx},${keywordY})\\fn${look.keywordFont}\\b1\\fs${size}\\c${look.keywordColour}\\bord0\\shad0`, word));
+    const top = placement.personTops?.[keywordWindows.length];
+    let size = fit(word, measures.keyword, W * 0.8, keywordSizeCap);
+    let y = keywordY;
+    if (top !== undefined && top !== null) {
+      size = grow(word, measures.keyword, W * BEHIND_WIDTH, Math.round(style.fontSize * BEHIND_SIZE_CAP));
+      // The middle of the letters on the top of the head: the upper half
+      // stands clear, the lower half goes behind the hair. Never out of the
+      // picture at the top.
+      const half = Math.round((size * CAP_HEIGHT) / 2);
+      y = Math.max(top, placement.pictureTop + half + Math.round(H * 0.02));
+    }
+    keywords.push(...dialogue(start, end, `\\an5\\pos(${cx},${y})\\fn${look.keywordFont}\\b1\\fs${size}\\c${look.keywordColour}\\bord0\\shad0`, word));
+    if (end > start) keywordWindows.push({ start, end });
   });
+  const captions: string[] = [];
 
   // 2. The two-tier caption, per phrase: the lead-in from the phrase's start,
   // the key part from the moment its first word is said.
@@ -198,11 +248,11 @@ export function buildTopicEvents(
     const lead = chunk.words.slice(0, k).map((w) => w.word).join(' ').toLocaleUpperCase('ru');
     const key = chunk.words.slice(k).map((w) => w.word).join(' ').toLocaleUpperCase('ru');
     if (lead) {
-      events.push(...dialogue(chunk.start, until, `\\an5\\pos(${cx},${leadY})\\fn${look.leadFont}\\fs${leadSize}\\fsp${spacing}\\c${look.textColour}`, lead));
+      captions.push(...dialogue(chunk.start, until, `\\an5\\pos(${cx},${leadY})\\fn${look.leadFont}\\fs${leadSize}\\fsp${spacing}\\c${look.textColour}`, lead));
     }
     const keyAt = Math.max(chunk.start, chunk.words[k].start);
     const keySize = fit(key, measures.key, W * 0.9, style.fontSize);
-    events.push(...dialogue(keyAt, until, `\\an5\\pos(${cx},${keyY})\\fn${look.keywordFont}\\b1\\fs${keySize}\\c${look.textColour}`, key));
+    captions.push(...dialogue(keyAt, until, `\\an5\\pos(${cx},${keyY})\\fn${look.keywordFont}\\b1\\fs${keySize}\\c${look.textColour}`, key));
   });
 
   // 3. Handwritten accents: the word, tilted, just above the caption block
@@ -212,9 +262,16 @@ export function buildTopicEvents(
   for (const a of markup.accents) {
     const chunk = chunks[a.chunk];
     const word = chunk.words[a.word].word.toLocaleLowerCase('ru');
-    events.push(...dialogue(chunk.words[a.word].start, chunk.end, `\\an5\\pos(${cx + Math.round(W * 0.12)},${accentY})\\fn${look.accentFont}\\fs${accentSize}\\frz8\\c${look.accentColour}\\bord0`, word));
+    captions.push(...dialogue(chunk.words[a.word].start, chunk.end, `\\an5\\pos(${cx + Math.round(W * 0.12)},${accentY})\\fn${look.accentFont}\\fs${accentSize}\\frz8\\c${look.accentColour}\\bord0`, word));
   }
-  return events;
+  return { keywords, keywordWindows, captions };
+}
+
+// The size at which the text is exactly `width` wide, but never above `cap`.
+function grow(text: string, measure: MeasureText, width: number, cap: number): number {
+  const at100 = measure(text, 100);
+  if (at100 <= 0) return cap;
+  return Math.max(1, Math.min(cap, Math.floor((100 * width) / at100)));
 }
 
 // Largest size at or below `preferred` that fits — never wider than the frame.

@@ -416,6 +416,7 @@ export interface VideoEditJob {
   end_card_text: string | null;
   end_card_brand: string | null;
   end_card_cta: string | null;
+  keep_full_length: boolean;
   // Set on a job created by editing an earlier one. The parent keeps its own
   // finished render — revisions accumulate beside it, they do not replace it.
   parent_job_id: string | null;

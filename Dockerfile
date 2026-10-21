@@ -60,6 +60,9 @@ RUN npm run build && npm prune --omit=dev
 # Fail the build rather than ship an image where "убрать фоновый шум" silently
 # does nothing.
 RUN test -f assets/rnnoise/bd.rnnn
+# And for the person mask: without it Тема and Удар quietly draw their words
+# in front of the speaker instead of behind.
+RUN test -f assets/models/modnet.onnx && node -e "require('onnxruntime-node')"
 
 # Same stance for the fonts, and the more important one: a missing model is
 # audible, a missing font is not. libass substitutes without a word, so an

@@ -508,6 +508,19 @@ describe('video upload + smart cut API', () => {
     expect(res.body.job.aspect_ratio).toBe('16_9');
   });
 
+  it('records "Не сокращать видео" only when asked, and only as a real true', async () => {
+    const apiKey = await tenantKey('sc-full@example.com');
+    const send = async (extra: Record<string, unknown>) =>
+      request(app)
+        .post('/api/video-edit-jobs')
+        .set('Authorization', `Bearer ${apiKey}`)
+        .send({ template: 'ai_smart_cut', sourceObjectKey: await ownedObjectKey(apiKey), ...extra });
+
+    expect((await send({ keepFullLength: true })).body.job.keep_full_length).toBe(true);
+    expect((await send({})).body.job.keep_full_length).toBe(false);
+    expect((await send({ keepFullLength: 'yes' })).body.job.keep_full_length).toBe(false);
+  });
+
   it('defaults to vertical, and falls back to it rather than failing on an unknown format', async () => {
     const apiKey = await tenantKey('sc-aspect2@example.com');
     const send = (body: Record<string, unknown>) =>
@@ -810,6 +823,53 @@ describe('re-editing a finished cut by hand', () => {
     expect(job!.status).toBe('completed');
     expect(job!.artifacts.plan!.segments).toEqual([{ start: 0, end: 4 }]);
     expect(job!.artifacts.plan!.removedDurationSec).toBe(2);
+  });
+
+  it('Удар puts every word behind the speaker, on the top of the head', async () => {
+    await seedJob(db, 'job-slam');
+    await exec(db, `UPDATE video_edit_jobs SET subtitle_preset = 'slam', review_mode = 'never' WHERE id = 'job-slam'`);
+    const renders: Array<{ subtitlePath?: string }> = [];
+    let keywords = '';
+    const behindPerson = {
+      available: () => true,
+      mask: vi.fn(async () => ({ frames: 1, masked: 1, tops: [700] })),
+      composite: vi.fn(async ({ keywordsPath, outputPath }: { keywordsPath: string; outputPath: string }) => {
+        keywords = await fs.readFile(keywordsPath, 'utf-8');
+        await fs.writeFile(outputPath, 'composited');
+      }),
+      burnOver: vi.fn(async () => {}),
+    };
+    const base = deps();
+
+    await runSmartCutJobs(
+      db,
+      new Date(),
+      deps({
+        behindPerson: behindPerson as unknown as PipelineDeps['behindPerson'],
+        ffmpeg: { ...base.ffmpeg, render: async (o) => { renders.push({ subtitlePath: o.subtitlePath }); await fs.writeFile(o.outputPath, 'base'); } },
+      })
+    );
+
+    expect((await readJob(db, 'job-slam'))!.status).toBe('completed');
+    // Nothing burned in the first pass: the words all go behind.
+    expect(renders[0].subtitlePath).toBeUndefined();
+    expect(behindPerson.composite).toHaveBeenCalledOnce();
+    expect(keywords).toContain('\\pos(540,700)');
+    expect(keywords).toContain('ПРИВЕТ');
+  });
+
+  it('"Не сокращать видео" keeps the whole source, with nothing cut and no passes run', async () => {
+    await seedJob(db, 'job-full');
+    await exec(db, `UPDATE video_edit_jobs SET keep_full_length = true, remove_breaths = true WHERE id = 'job-full'`);
+    const findBreaths = vi.fn(async () => []);
+
+    await runSmartCutJobs(db, new Date(), deps({ findBreaths }));
+
+    const job = await readJob(db, 'job-full');
+    expect(job!.status).toBe('completed');
+    expect(job!.artifacts.plan!.removedDurationSec).toBe(0);
+    expect(job!.artifacts.plan!.droppedFillerCount).toBe(0);
+    expect(findBreaths).not.toHaveBeenCalled();
   });
 
   // Both passes exist to guess where the cuts go, and the guessing is over by

@@ -288,6 +288,8 @@ export interface SmartCutRequest {
   subtitleColor: string;
   subtitleSize: string;
   removeBreaths: boolean;
+  /** No automatic cut: the whole video, only captions and the look added. */
+  keepFullLength: boolean;
   headline: string;
   headlineFont: string;
   headlineSize: string;

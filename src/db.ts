@@ -352,6 +352,7 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS end_card_text TEXT`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS end_card_brand TEXT`,
   `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS end_card_cta TEXT`,
+  `ALTER TABLE video_edit_jobs ADD COLUMN IF NOT EXISTS keep_full_length BOOLEAN NOT NULL DEFAULT false`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_requests_one_pending ON payment_requests(tenant_id) WHERE status = 'pending'`,
   `CREATE TABLE IF NOT EXISTS admin_actions (
      id            TEXT PRIMARY KEY,

@@ -4,12 +4,13 @@ import path from 'node:path';
 import { exec, queryAll, type Db } from './db';
 import { notify } from './notifications';
 import { fontFileFor, loadFontMetrics, measureAssText } from './fontMetrics';
-import { buildTopicEvents, DEFAULT_TOPIC_LOOK, heuristicMarkup, TOPIC_CHUNK_OPTIONS, type CaptionMarkup } from './topicLayout';
+import { buildTopicLayers, DEFAULT_TOPIC_LOOK, heuristicMarkup, TOPIC_CHUNK_OPTIONS, type CaptionMarkup } from './topicLayout';
 import { markupCaptions } from './captionMarkup';
 import { buildEndCardEvents, cleanEndCard, endCardAss } from './endCard';
 import { openAiChatFromEnv } from './reelLlm';
 import { applySubtitleAxes } from './subtitleAxes';
-import { denoiseModelAvailable, detectBars, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
+import { burnOver, compositeBehindPerson, denoiseModelAvailable, detectBars, extractAudio, extractPosterFrame, ffmpegAvailable, measureNoise, NOISY_HEADROOM_DB, OUTPUT_FPS, probe, renderSegments, RNNOISE_MODEL_PATH } from './ffmpeg';
+import { personMaskAvailable, writePersonMask, type TimeWindow } from './personMask';
 import {
   DEFAULT_SMART_CUT_OPTIONS,
   normalizeManualSegments,
@@ -137,6 +138,14 @@ export interface PipelineDeps {
   /** The model's reading of the phrases for the "Тема" look; absent or null
    *  means the plain layout (topicLayout.ts heuristicMarkup). */
   markupCaptions?: (chunks: SubtitleChunk[]) => Promise<CaptionMarkup | null>;
+  /** "Слово за человеком" (personMask.ts). Absent, or not available: the
+   *  keyword is drawn in front, as without the option. */
+  behindPerson?: {
+    available: () => boolean;
+    mask: typeof writePersonMask;
+    composite: typeof compositeBehindPerson;
+    burnOver: typeof burnOver;
+  };
 }
 
 export function defaultPipelineDeps(): PipelineDeps {
@@ -165,6 +174,7 @@ export function defaultPipelineDeps(): PipelineDeps {
     tightenTimings: runSpeechTimingPass,
     cleanAudio: cleanAudioTrack,
     markupCaptions: (chunks) => markupCaptions(openAiChatFromEnv(), chunks),
+    behindPerson: { available: () => personMaskAvailable(), mask: writePersonMask, composite: compositeBehindPerson, burnOver },
   };
 }
 
@@ -466,9 +476,13 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   // weighing pauses — exists only to guess what this person has now said
   // outright. Running any of it would be work whose result is discarded, and
   // the breath pass alone is a second decode of the whole audio track.
+  // "Не сокращать видео" is the same thing said in advance: one segment, the
+  // whole source — so it skips the same passes and keeps the same captions.
   const manual = job.manual_segments
     ? normalizeManualSegments(job.manual_segments, probeResult.durationSec)
-    : null;
+    : job.keep_full_length
+      ? [{ start: 0, end: probeResult.durationSec }]
+      : null;
   if (job.manual_segments && !manual) {
     // Validated when the edit was accepted, so reaching here means the source
     // is not the one those segments were drawn against — a different duration
@@ -560,6 +574,19 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
 
   // ---- Stage 4: subtitles ------------------------------------------------
   let subtitlePath: string | undefined;
+  // "Слово за человеком": the Тема keywords in a file of their own, burned in
+  // a second pass behind the speaker, and when they are on screen.
+  let keywordsPath: string | undefined;
+  let keywordWindows: TimeWindow[] = [];
+  // Rebuilt once the mask says where the speaker's head is.
+  let keywordsAssFor: ((personTops: Array<number | null>) => string) | undefined;
+  // Always, not an option: Тема puts its topic word behind the speaker, Удар
+  // its one big word — the look is the word behind the person. Without the
+  // model the words are drawn in front, as they were before.
+  const behindPerson =
+    (job.subtitle_preset === 'topic' || job.subtitle_preset === 'slam') && deps.behindPerson?.available()
+      ? deps.behindPerson
+      : undefined;
   if (job.subtitles) {
     await setStage(db, job, 'subtitles', now);
     // The words are remapped onto the OUTPUT timeline inside here. Passing
@@ -654,26 +681,56 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
           return (text: string, size: number) => text.length * size * 0.6;
         }
       };
-      const events = buildTopicEvents(
-        chunks,
-        markup,
-        captionStyle,
-        { keyword: measureWith(DEFAULT_TOPIC_LOOK.keywordFont), key: measureWith(DEFAULT_TOPIC_LOOK.keywordFont) },
-        DEFAULT_TOPIC_LOOK,
-        {
-          pictureTop: bandLayout.pictureTop,
-          // The headline and the topic word share the top: topic words wait
-          // for a timed headline to clear, and stay away from a permanent one.
-          hiddenUntil: job.headline && headlineLines > 0 ? (job.headline_seconds ?? Infinity) : 0,
-        }
-      );
+      const topicLayers = (personTops?: Array<number | null>) =>
+        buildTopicLayers(
+          chunks,
+          markup,
+          captionStyle,
+          { keyword: measureWith(DEFAULT_TOPIC_LOOK.keywordFont), key: measureWith(DEFAULT_TOPIC_LOOK.keywordFont) },
+          DEFAULT_TOPIC_LOOK,
+          {
+            pictureTop: bandLayout.pictureTop,
+            // The headline and the topic word share the top: topic words wait
+            // for a timed headline to clear, and stay away from a permanent one.
+            hiddenUntil: job.headline && headlineLines > 0 ? (job.headline_seconds ?? Infinity) : 0,
+            personTops,
+          }
+        );
+      const layers = topicLayers();
       const first = chunks[0];
-      ass = buildAssFile(chunks, captionStyle, (chunk) => (chunk === first ? events : []));
+      if (behindPerson && layers.keywords.length > 0) {
+        ass = buildAssFile(chunks, captionStyle, (chunk) => (chunk === first ? layers.captions : []));
+        keywordsAssFor = (personTops) => buildAssFile(chunks, captionStyle, (chunk) => (chunk === first ? topicLayers(personTops).keywords : []));
+        keywordsPath = path.join(workDir, 'keywords.ass');
+        await fs.writeFile(keywordsPath, keywordsAssFor([]), 'utf-8');
+        keywordWindows = layers.keywordWindows;
+      } else {
+        ass = buildAssFile(chunks, captionStyle, (chunk) => (chunk === first ? [...layers.keywords, ...layers.captions] : []));
+      }
+    }
+    // Удар behind the speaker: every caption is one big word, so all of them
+    // go to the second pass. At eye level the face would hide the middle of
+    // each word; on the top of the head, like Тема's, the top half stands
+    // clear. One height for the whole clip — the head's usual place, the
+    // median over every window — so the words do not jump between phrases.
+    let captionsBehind = false;
+    if (job.subtitle_preset === 'slam' && behindPerson && chunks.length > 0) {
+      const slamY = (tops: Array<number | null>) => {
+        const known = tops.filter((t): t is number => t !== null).sort((a, b) => a - b);
+        if (known.length === 0) return wordAnchorY(frame.height, bandLayout.pictureTop);
+        const half = Math.round((captionStyle.fontSize * 0.75) / 2);
+        return Math.max(known[Math.floor(known.length / 2)], bandLayout.pictureTop + half + Math.round(frame.height * 0.02));
+      };
+      keywordsAssFor = (tops) => buildAssFile(chunks, captionStyle, (chunk) => buildSlamEvents(chunk, captionStyle, slamY(tops)));
+      keywordsPath = path.join(workDir, 'keywords.ass');
+      await fs.writeFile(keywordsPath, keywordsAssFor([]), 'utf-8');
+      keywordWindows = chunks.map((chunk) => ({ start: chunk.start, end: chunk.end }));
+      captionsBehind = true;
     }
     // A transcript that survives the cut as zero chunks (all filler, or a
     // plan that kept only silence) is not a failure — render without them
     // rather than burning an empty subtitle track.
-    if (chunks.length > 0) {
+    if (chunks.length > 0 && !captionsBehind) {
       subtitlePath = path.join(workDir, 'captions.ass');
       await fs.writeFile(subtitlePath, ass, 'utf-8');
     }
@@ -740,10 +797,13 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
   // with the source's own timestamps. A null here is not a failure — the
   // graph falls back to the older in-filter denoiser.
   const cleanedAudioPath = wantsDenoise ? await deps.cleanAudio(sourcePath, workDir) : null;
+  const basePath = path.join(workDir, 'base.mp4');
   try {
     await deps.ffmpeg.render({
       inputPath: sourcePath,
-      outputPath,
+      // With keywords to put behind the speaker this is the first of two
+      // passes: everything else, then the keywords — see below.
+      outputPath: keywordsPath ? basePath : outputPath,
       workDir,
       segments: plan.segments,
       expectedDurationSec: plan.keptDurationSec,
@@ -768,6 +828,26 @@ async function runStages(db: Db, job: VideoEditJob, deps: PipelineDeps, workDir:
     });
   } catch (err) {
     throw new PipelineError('render_failed', err instanceof Error ? err.message : String(err));
+  }
+
+  if (keywordsPath && behindPerson) {
+    try {
+      const maskPath = path.join(workDir, 'person-mask.mkv');
+      const started = Date.now();
+      const { frames, masked, tops } = await behindPerson.mask({ inputPath: basePath, outputPath: maskPath, frame, fps: OUTPUT_FPS, windows: keywordWindows });
+      console.log(`[video-pipeline] job ${job.id}: person mask ${masked}/${frames} frames in ${Math.round((Date.now() - started) / 1000)}s`);
+      if (keywordsAssFor) await fs.writeFile(keywordsPath, keywordsAssFor(tops), 'utf-8');
+      await behindPerson.composite({ basePath, maskPath, keywordsPath, outputPath, workDir, frame });
+    } catch (err) {
+      // The option is a look, not the content: without a mask the keywords
+      // are still burned — in front of the speaker, as without the option.
+      console.warn(`[video-pipeline] job ${job.id}: keyword behind the speaker skipped: ${err instanceof Error ? err.message : String(err)}`);
+      try {
+        await behindPerson.burnOver(basePath, keywordsPath, outputPath);
+      } catch (fallbackErr) {
+        throw new PipelineError('render_failed', fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr));
+      }
+    }
   }
 
   // ---- Stage 6: upload ---------------------------------------------------

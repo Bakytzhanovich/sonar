@@ -192,6 +192,7 @@ export default function VideoEditView() {
   const [endCardBrand, setEndCardBrand] = useState('');
   const [endCardCta, setEndCardCta] = useState('');
   const [removeBreaths, setRemoveBreaths] = useState(false);
+  const [keepFullLength, setKeepFullLength] = useState(false);
   // Which of the two things on the frame the settings below change, and the
   // tab open for each — kept apart so switching back lands where you were.
   const [target, setTarget] = useState<'subs' | 'headline'>('subs');
@@ -341,7 +342,8 @@ export default function VideoEditView() {
         subtitleFont,
         subtitleColor,
         subtitleSize,
-        removeBreaths,
+        removeBreaths: removeBreaths && !keepFullLength,
+        keepFullLength,
         headline,
         headlineFont,
         headlineSize,
@@ -486,11 +488,19 @@ export default function VideoEditView() {
                   onChange={(id) => setFrameFill(id === 'black' || id === 'crop' ? id : 'blur')}
                 />
                 <Switch
-                  checked={removeBreaths}
-                  onChange={setRemoveBreaths}
-                  label="Убрать вздохи"
-                  hint="Вырезает вдохи между фразами"
+                  checked={keepFullLength}
+                  onChange={setKeepFullLength}
+                  label="Не сокращать видео"
+                  hint="Паузы и слова-паразиты остаются — только субтитры и оформление"
                 />
+                {!keepFullLength && (
+                  <Switch
+                    checked={removeBreaths}
+                    onChange={setRemoveBreaths}
+                    label="Убрать вздохи"
+                    hint="Вырезает вдохи между фразами"
+                  />
+                )}
               </div>
 
               {/* The look, laid out the way phone editors (CapCut, Instagram)

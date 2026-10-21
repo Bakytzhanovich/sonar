@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   api,
   type ApiConfig,
@@ -21,6 +21,8 @@ import CaptionOverlay, { type CaptionLook } from './CaptionOverlay';
 // generator and the overlay's CSS.
 import { chunkWords, DEFAULT_CHUNK_OPTIONS, joinBoundaries, remapWordsToOutputTimeline } from '@shared/subtitles';
 import { pickEmphasis } from '@shared/emphasis';
+import { cutSpan, isWordKept, keepSpan, spanOfWords } from '@shared/manualCut';
+import { Scissors, Undo2, X } from 'lucide-react';
 import styles from './CutEditor.module.css';
 
 // Module 8, level 3 — the manual half of Smart Cut.
@@ -67,21 +69,6 @@ function gapsBetween(segments: Segment[], duration: number): Segment[] {
   return gaps;
 }
 
-// Restoring a gap always touches its neighbours, so the result is one
-// continuous block rather than three abutting ones. Merging here keeps what
-// is drawn identical to what the server will store — it normalises the same
-// way — so the timeline never shows a seam the render will not have.
-function mergeTouching(segments: Segment[]): Segment[] {
-  const sorted = [...segments].sort((a, b) => a.start - b.start);
-  const merged: Segment[] = [];
-  for (const segment of sorted) {
-    const last = merged[merged.length - 1];
-    if (last && segment.start <= last.end + 0.01) last.end = Math.max(last.end, segment.end);
-    else merged.push({ ...segment });
-  }
-  return merged;
-}
-
 export default function CutEditor({
   config,
   jobId,
@@ -99,26 +86,24 @@ export default function CutEditor({
   const [saving, setSaving] = useState(false);
   const [playhead, setPlayhead] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
-  // Playing the source straight through would show a video nobody asked for:
-  // the person just watched the edit and pressed "edit it", so the edit is
-  // what play should give them. Preview skips the cut parts as it plays, the
-  // way a timeline preview does — the removed footage stays on the timeline
-  // and reachable, it just does not interrupt the watch. Turned off when
-  // someone is hunting through what was thrown away for something to restore.
-  // Three things worth watching, and they are not interchangeable:
-  //   result  — the finished render being edited, captions and headline
-  //             burned in. What the person was just looking at, and the only
-  //             place the caption style is actually visible.
-  //   preview — the source with the cut parts skipped, which is the edit as
-  //             it stands right now, including changes not rendered yet.
-  //   source  — the whole source, for hunting through what was thrown away.
-  const [mode, setMode] = useState<'result' | 'preview' | 'source'>('result');
-  const preview = mode === 'preview';
-  // The result is a different timeline — twenty seconds against the source's
-  // forty-six — so the strip below must not follow it, and a seek asked for
-  // while it is on screen has to land on the source instead. Held until the
-  // swapped-in element reports it is ready, because setting currentTime on
-  // one that is still loading is silently dropped.
+  // One player, and it plays the edit as it stands: the source with every
+  // cut part skipped, captions drawn live. It used to open on the finished
+  // render, with the edit and the raw source on two more tabs — people
+  // edited while watching the old version and saw none of their changes.
+  // The finished render is still one tap away, to compare against.
+  const [mode, setMode] = useState<'edit' | 'result'>('edit');
+  // A seek into a cut part is someone asking to hear what was thrown away:
+  // that stretch plays through instead of being skipped, once.
+  const hearCutRef = useRef<{ start: number; end: number } | null>(null);
+  // Words selected in the text — the first one tapped and the last. Cutting
+  // and restoring act on everything between them.
+  const [selection, setSelection] = useState<{ anchor: number; focus: number } | null>(null);
+  // Every change to the cut, so a wrong one is one tap from undone.
+  const [history, setHistory] = useState<Segment[][]>([]);
+  // The finished render is a different timeline — twenty seconds against the
+  // source's forty-six — so a seek asked for while it is on screen lands on
+  // the source instead. Held until the swapped-in element reports it is
+  // ready, because setting currentTime on one still loading is dropped.
   const pendingSeek = useRef<number | null>(null);
   // The look, and the words themselves. Both start as whatever produced the
   // render being edited, so opening the editor and pressing "Пересобрать"
@@ -149,6 +134,7 @@ export default function CutEditor({
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const wordsRef = useRef<HTMLDivElement>(null);
   // Held in a ref rather than state: a pointer drag fires dozens of moves a
   // second, and routing each through a re-render makes the handle lag behind
   // the cursor.
@@ -164,11 +150,6 @@ export default function CutEditor({
         setSegments(loaded.segments);
         setStyle(loaded.style);
         setWords(loaded.words.map((w) => w.word));
-        // Opening on the finished render is the point — it is what the person
-        // was looking at when they decided to change something. A job that
-        // never produced one opens on the edit instead; leaving the mode at
-        // 'result' there would show the source while refusing to track it.
-        if (!loaded.result_url) setMode('preview');
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Не удалось открыть редактор');
@@ -263,32 +244,94 @@ export default function CutEditor({
   // `to` is always a source timestamp — the strip, the segments and the words
   // are all measured there. Asking for one while the finished render is on
   // screen therefore means leaving it: that file has no such moment.
-  function seek(to: number, into: 'preview' | 'source' = 'preview') {
+  function seek(to: number) {
     const at = Math.min(Math.max(to, 0), duration);
     setPlayhead(at);
     if (mode === 'result') {
       pendingSeek.current = at;
-      setMode(into);
+      setMode('edit');
       return;
     }
-    if (into === 'source') setMode('source');
     const video = videoRef.current;
     if (video) video.currentTime = at;
   }
 
+  // Every change to the cut goes through here, so each one can be undone.
+  function changeCut(next: Segment[]) {
+    // Zero segments is not a shorter video, it is no video, and the server
+    // refuses it anyway.
+    if (next.length === 0) return;
+    setHistory((past) => [...past, segments]);
+    setSegments(next);
+  }
+
+  function undo() {
+    if (history.length === 0) return;
+    setSegments(history[history.length - 1]);
+    setHistory((past) => past.slice(0, -1));
+    setSelected(null);
+  }
+
   function restoreGap(gap: Segment) {
-    setSegments((current) => mergeTouching([...current, gap]));
+    changeCut(keepSpan(segments, gap));
     setSelected(null);
   }
 
   function dropSegment(index: number) {
-    setSegments((current) => {
-      // One segment has to survive: zero of them is not a shorter video, it
-      // is no video, and the server refuses it anyway.
-      if (current.length <= 1) return current;
-      return current.filter((_, i) => i !== index);
-    });
+    changeCut(segments.filter((_, i) => i !== index));
     setSelected(null);
+  }
+
+  // Tapping a word selects it; tapping a second one selects everything
+  // between them. A third tap starts over. Shift-click extends, as in text.
+  function tapWord(i: number, extend: boolean) {
+    setSelection((current) => {
+      if (current && (extend || current.anchor === current.focus) && current.anchor !== i) {
+        return { anchor: current.anchor, focus: i };
+      }
+      return { anchor: i, focus: i };
+    });
+    const word = data?.words[i];
+    if (word) seekWord(word);
+  }
+
+  function seekWord(word: { start: number; end: number }) {
+    // A cut word is played from the source rather than skipped past —
+    // otherwise the tap would look like it did nothing.
+    if (!isWordKept(word, segments)) {
+      const gap = gaps.find((g) => word.start < g.end && word.end > g.start);
+      hearCutRef.current = gap ?? null;
+    } else {
+      hearCutRef.current = null;
+    }
+    seek(word.start);
+  }
+
+  // Ctrl+Z / Cmd+Z undoes the last change to the cut — except inside a text
+  // field, where it belongs to the field.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return;
+      if (event.target instanceof HTMLInputElement) return;
+      event.preventDefault();
+      undo();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  const selLo = selection ? Math.min(selection.anchor, selection.focus) : -1;
+  const selHi = selection ? Math.max(selection.anchor, selection.focus) : -1;
+  const selectedWords = selection && data ? data.words.slice(selLo, selHi + 1) : [];
+  // "Вернуть" when everything selected is already cut, "Вырезать" otherwise:
+  // one button that does what the selection needs.
+  const selectionCut = selectedWords.length > 0 && selectedWords.every((w) => !isWordKept(w, segments));
+  const selectionSpan = selection && data ? spanOfWords(data.words, selLo, selHi, duration) : null;
+
+  function applySelection() {
+    if (!selectionSpan) return;
+    changeCut(selectionCut ? keepSpan(segments, selectionSpan) : cutSpan(segments, selectionSpan));
+    setSelection(null);
   }
 
   // Renders four seconds of this video with the look on screen. Polled
@@ -348,7 +391,7 @@ export default function CutEditor({
     }
   }
 
-  const gaps = useMemo(() => gapsBetween(segments, duration), [segments, duration]);
+  const gaps = gapsBetween(segments, duration);
   const kept = totalKept(segments);
   // Left unmemoised on purpose: both are a walk over a few hundred short
   // strings, and hand-memoising them defeats the React Compiler, which
@@ -365,13 +408,7 @@ export default function CutEditor({
   // A word belongs to the cut when its middle falls inside a kept segment.
   // Measured at the midpoint rather than the start so a word straddling a
   // boundary lands on the side it mostly plays on.
-  const wordKept = useCallback(
-    (word: { start: number; end: number }) => {
-      const middle = (word.start + word.end) / 2;
-      return segments.some((s) => middle >= s.start && middle <= s.end);
-    },
-    [segments]
-  );
+  const wordKept = (word: { start: number; end: number }) => isWordKept(word, segments);
 
   // ---- Live captions -----------------------------------------------------
   //
@@ -407,6 +444,23 @@ export default function CutEditor({
       : [];
 
   const outputNow = toOutputTime(playhead);
+  const playheadKept = segments.some((seg) => playhead >= seg.start - 0.05 && playhead <= seg.end);
+  // The word being said right now, lit in the text as the edit plays.
+  const wordNow = mode === 'edit' ? (data?.words ?? []).findIndex((w) => playhead >= w.start && playhead < w.end) : -1;
+
+  // Keeps the word being said in sight while the edit plays — scrolling the
+  // text box only, never the page under it.
+  useEffect(() => {
+    const box = wordsRef.current;
+    const video = videoRef.current;
+    if (!box || wordNow < 0 || !video || video.paused) return;
+    const el = box.querySelector<HTMLElement>(`[data-word="${wordNow}"]`);
+    if (!el) return;
+    const top = el.offsetTop - box.offsetTop;
+    if (top < box.scrollTop || top > box.scrollTop + box.clientHeight - el.offsetHeight) {
+      box.scrollTop = Math.max(0, top - box.clientHeight / 3);
+    }
+  }, [wordNow]);
   const activeChunk = chunks.find((c) => outputNow >= c.start && outputNow <= c.end);
   const presetLayout = catalogue?.presets.find((p) => p.id === style?.subtitlePreset)?.layout;
   const captionLook: CaptionLook | null =
@@ -457,11 +511,12 @@ export default function CutEditor({
               // Remounted when swapping between the render and the source:
               // they are different files of different lengths, and reusing
               // one element leaves the old duration and position behind.
-              key={mode === 'result' ? 'result' : 'source'}
+              key={mode}
               ref={videoRef}
               className={styles.player}
               src={mode === 'result' && data.result_url ? data.result_url : data.source_url}
               controls
+              playsInline
               preload="metadata"
               onLoadedMetadata={(e) => {
                 const at = pendingSeek.current;
@@ -475,18 +530,21 @@ export default function CutEditor({
                 // drive the strip would slide the playhead to a moment of the
                 // source that has nothing to do with what is on screen.
                 if (mode === 'result') return;
-                setPlayhead(video.currentTime);
-                if (!preview || segments.length === 0) return;
+                const now = video.currentTime;
+                setPlayhead(now);
+                if (segments.length === 0) return;
+                // Inside a cut part someone asked to hear: let it play out.
+                const hearing = hearCutRef.current;
+                if (hearing && now >= hearing.start - 0.05 && now < hearing.end) return;
+                hearCutRef.current = null;
                 // Inside a cut? Jump to where the edit resumes. Compared
                 // against the segment a hair BEFORE the playhead so a jump
                 // that lands exactly on a boundary is not read as still
                 // being in the hole it just left, which would re-fire this
                 // every frame and freeze playback.
-                const inKept = segments.some(
-                  (s) => video.currentTime >= s.start - 0.05 && video.currentTime <= s.end
-                );
+                const inKept = segments.some((s) => now >= s.start - 0.05 && now <= s.end);
                 if (inKept) return;
-                const next = segments.find((s) => s.start > video.currentTime);
+                const next = segments.find((s) => s.start > now);
                 // Nothing after this hole means the edit is over, even though
                 // the source runs on. Stopping is what the finished render
                 // does, so it is what the preview should do.
@@ -494,11 +552,9 @@ export default function CutEditor({
                 else video.pause();
               }}
             />
-            {/* Only over the source views. The finished render already has
-                its captions burned in, and drawing a second set on top of
-                them would be two copies of the same words at slightly
-                different sizes. */}
-            {mode !== 'result' && style?.subtitles && captionLook && activeChunk && (
+            {/* Not over the finished render: its captions are burned in, and
+                a second set on top would be the same words twice. */}
+            {mode === 'edit' && playheadKept && style?.subtitles && captionLook && activeChunk && (
               <CaptionOverlay
                 line={{
                   words: activeChunk.words.map((w) => w.word),
@@ -509,44 +565,136 @@ export default function CutEditor({
             )}
             </div>
 
-            <div className={styles.modeRow}>
-              {/* Only offered when there is one — a job that failed before it
-                  rendered has no result to show. */}
+            <div className={styles.compareRow}>
+              <span className={styles.compareText}>
+                {mode === 'edit' ? 'Ваш монтаж с правками' : 'Готовый ролик — без ваших новых правок'}
+              </span>
               {data.result_url && (
                 <button
                   type="button"
-                  className={`${styles.mode} ${mode === 'result' ? styles.modeOn : ''}`}
-                  onClick={() => setMode('result')}
+                  className={styles.compare}
+                  aria-pressed={mode === 'result'}
+                  onClick={() => setMode(mode === 'edit' ? 'result' : 'edit')}
                 >
-                  Готовый вариант
+                  {mode === 'edit' ? 'Сравнить с готовым' : 'Вернуться к правке'}
                 </button>
               )}
-              <button
-                type="button"
-                className={`${styles.mode} ${mode === 'preview' ? styles.modeOn : ''}`}
-                onClick={() => setMode('preview')}
-              >
-                Мой монтаж
-              </button>
-              <button
-                type="button"
-                className={`${styles.mode} ${mode === 'source' ? styles.modeOn : ''}`}
-                onClick={() => setMode('source')}
-              >
-                Исходник
-              </button>
             </div>
 
-            <p className={styles.lead}>
-              {mode === 'result' &&
-                'Это то, что ИИ смонтировал: с субтитрами и заголовком. Правки ниже в нём ещё не видны — переключись на «Мой монтаж», чтобы посмотреть новую нарезку.'}
-              {mode === 'preview' &&
-                'Нарезка с вашими правками — вырезанное пропускается. Субтитров и заголовка здесь нет: они появятся только после пересборки.'}
-              {mode === 'source' && 'Исходник целиком, вместе с вырезанным.'}{' '}
-              Цветом на полосе отмечено то, что останется. Потяни края, чтобы подвинуть границу;
-              нажми на вырезанный кусок, чтобы вернуть его.
-            </p>
+            {/* The text is the main way to edit: reading finds a sentence
+                faster than scrubbing does, and it is what the cut was
+                planned from. Struck-through words are not in the video. */}
+            {data.words.length > 0 && (
+              <>
+                <div className={styles.toolbar} aria-live="polite">
+                  {selection ? (
+                    <>
+                      <span className={styles.toolbarInfo}>
+                        {selectedWords.length === 1
+                          ? `«${words[selLo] ?? selectedWords[0].word}»`
+                          : `${selectedWords.length} слов, ${(selectionSpan ? selectionSpan.end - selectionSpan.start : 0).toFixed(1)} с`}
+                      </span>
+                      <button type="button" className={styles.toolPrimary} onClick={applySelection}>
+                        {selectionCut ? (
+                          'Вернуть'
+                        ) : (
+                          <>
+                            <Scissors size={16} aria-hidden="true" /> Вырезать
+                          </>
+                        )}
+                      </button>
+                      {selectedWords.length === 1 && (
+                        <button type="button" className={styles.tool} onClick={() => setEditingWord(selLo)}>
+                          Исправить
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className={styles.toolIcon}
+                        onClick={() => setSelection(null)}
+                        aria-label="Снять выделение"
+                      >
+                        <X size={18} aria-hidden="true" />
+                      </button>
+                    </>
+                  ) : (
+                    <span className={styles.toolbarHint}>
+                      Нажмите на слово, потом на другое — выделится всё между ними. Зачёркнутое в ролик не попадёт.
+                    </span>
+                  )}
+                  {history.length > 0 && !selection && (
+                    <button type="button" className={styles.tool} onClick={undo}>
+                      <Undo2 size={16} aria-hidden="true" /> Отменить
+                    </button>
+                  )}
+                </div>
+                <div
+                  ref={wordsRef}
+                  className={styles.words}
+                  onKeyDown={(e) => {
+                    if (editingWord !== null) return;
+                    if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
+                      e.preventDefault();
+                      applySelection();
+                    }
+                    if (e.key === 'Escape' && selection) {
+                      e.stopPropagation();
+                      setSelection(null);
+                    }
+                  }}
+                >
+                  {data.words.map((word, i) =>
+                    editingWord === i ? (
+                      <input
+                        key={`edit-${i}`}
+                        className={styles.wordInput}
+                        value={words[i] ?? ''}
+                        autoFocus
+                        size={Math.max(4, (words[i] ?? '').length)}
+                        onChange={(e) =>
+                          setWords((current) => current.map((w, j) => (j === i ? e.target.value : w)))
+                        }
+                        onBlur={() => setEditingWord(null)}
+                        onKeyDown={(e) => {
+                          // Enter commits, Escape puts the original back —
+                          // the two things a text field is expected to do.
+                          if (e.key === 'Enter') setEditingWord(null);
+                          if (e.key === 'Escape') {
+                            e.stopPropagation();
+                            setWords((current) =>
+                              current.map((w, j) => (j === i ? data.words[i].word : w))
+                            );
+                            setEditingWord(null);
+                          }
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        key={`${word.start}-${i}`}
+                        data-word={i}
+                        aria-pressed={i >= selLo && i <= selHi}
+                        className={[
+                          styles.word,
+                          wordKept(word) ? '' : styles.wordCut,
+                          words[i] !== word.word ? styles.wordFixed : '',
+                          i >= selLo && i <= selHi ? styles.wordSelected : '',
+                          i === wordNow ? styles.wordNow : '',
+                        ].join(' ')}
+                        onClick={(e) => tapWord(i, e.shiftKey)}
+                        onDoubleClick={() => setEditingWord(i)}
+                      >
+                        {words[i] ?? word.word}
+                      </button>
+                    )
+                  )}
+                </div>
+              </>
+            )}
 
+            <p className={styles.sectionLabel}>
+              Полоса времени: цветное останется, пунктир вырезан. Потяните край куска, чтобы подвинуть границу, или нажмите на пунктир, чтобы вернуть.
+            </p>
             <div
               ref={trackRef}
               className={styles.track}
@@ -564,7 +712,8 @@ export default function CutEditor({
                   style={{ left: `${pct(gap.start)}%`, width: `${pct(gap.end - gap.start)}%` }}
                   onPointerDown={(e) => e.stopPropagation()}
                   onClick={() => restoreGap(gap)}
-                  title={`Вернуть ${(gap.end - gap.start).toFixed(1)}с`}
+                  aria-label={`Вернуть ${(gap.end - gap.start).toFixed(1)} с`}
+                  title={`Вернуть ${(gap.end - gap.start).toFixed(1)} с`}
                 />
               ))}
 
@@ -583,6 +732,7 @@ export default function CutEditor({
                     className={`${styles.handle} ${styles.handleStart}`}
                     onPointerDown={(e) => {
                       e.stopPropagation();
+                      setHistory((past) => [...past, segments]);
                       dragRef.current = { index, edge: 'start' };
                     }}
                   />
@@ -590,12 +740,19 @@ export default function CutEditor({
                     className={`${styles.handle} ${styles.handleEnd}`}
                     onPointerDown={(e) => {
                       e.stopPropagation();
+                      setHistory((past) => [...past, segments]);
                       dragRef.current = { index, edge: 'end' };
                     }}
                   />
                 </div>
               ))}
 
+              {selectionSpan && (
+                <span
+                  className={styles.selectionBand}
+                  style={{ left: `${pct(selectionSpan.start)}%`, width: `${pct(selectionSpan.end - selectionSpan.start)}%` }}
+                />
+              )}
               <span className={styles.playhead} style={{ left: `${pct(playhead)}%` }} />
             </div>
 
@@ -618,64 +775,6 @@ export default function CutEditor({
                   Убрать
                 </button>
               </div>
-            )}
-
-            {/* Reading is faster than scrubbing for finding where a sentence
-                ends, and the transcript is already in hand — it is what the
-                cut was planned from. Struck-through words are the ones the
-                current cut drops. */}
-            {data.words.length > 0 && (
-              <>
-                <p className={styles.sectionLabel}>
-                  Текст субтитров — нажми на слово, чтобы перемотать, дважды — чтобы исправить
-                </p>
-                <div className={styles.words}>
-                  {data.words.map((word, i) =>
-                    editingWord === i ? (
-                      <input
-                        key={`edit-${i}`}
-                        className={styles.wordInput}
-                        value={words[i] ?? ''}
-                        autoFocus
-                        size={Math.max(4, (words[i] ?? '').length)}
-                        onChange={(e) =>
-                          setWords((current) => current.map((w, j) => (j === i ? e.target.value : w)))
-                        }
-                        onBlur={() => setEditingWord(null)}
-                        onKeyDown={(e) => {
-                          // Enter commits, Escape puts the original back —
-                          // the two things a text field is expected to do.
-                          if (e.key === 'Enter') setEditingWord(null);
-                          if (e.key === 'Escape') {
-                            setWords((current) =>
-                              current.map((w, j) => (j === i ? data.words[i].word : w))
-                            );
-                            setEditingWord(null);
-                          }
-                        }}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        key={`${word.start}-${i}`}
-                        className={`${styles.word} ${wordKept(word) ? '' : styles.wordCut} ${
-                          words[i] !== word.word ? styles.wordFixed : ''
-                        }`}
-                        onClick={() => {
-                          // Asking to hear a word the cut drops is asking to
-                          // hear the source. Left in preview the playhead
-                          // would land there and be thrown straight out
-                          // again, which reads as the click doing nothing.
-                          seek(word.start, wordKept(word) ? 'preview' : 'source');
-                        }}
-                        onDoubleClick={() => setEditingWord(i)}
-                      >
-                        {words[i] ?? word.word}
-                      </button>
-                    )
-                  )}
-                </div>
-              </>
             )}
 
             {style && catalogue && (

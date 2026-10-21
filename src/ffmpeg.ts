@@ -681,3 +681,78 @@ export async function renderSegments(options: RenderOptions): Promise<void> {
     RENDER_TIMEOUT_MS
   );
 }
+
+/**
+ * "Слово за человеком": the keywords drawn over a finished render, then the
+ * speaker laid back on top through the mask from personMask.ts — so the word
+ * sits between the background and the person.
+ *
+ * The person is cut from the same finished render, captions and all, so a
+ * caption crossing the speaker stays in front of the keyword too. The mask is
+ * scaled up from the model's size here and its edge softened a little: a hard
+ * edge at that resolution shows as a stepped outline around the hair.
+ */
+export function buildBehindPersonFilter(keywordsPath: string, frame: FrameSize): string {
+  const fontsDir = `:fontsdir=${escapeFilterPath(FONTS_DIR)}`;
+  return [
+    `[1:v]scale=${frame.width}:${frame.height}:flags=bicubic,format=gray,gblur=sigma=1.5[mask]`,
+    `[0:v]split=2[base][fg]`,
+    `[base]ass=filename=${escapeFilterPath(keywordsPath)}${fontsDir}[text]`,
+    `[fg]format=yuva420p[fga]`,
+    `[fga][mask]alphamerge[person]`,
+    `[text][person]overlay=format=auto,format=yuv420p[vout]`,
+  ].join(';\n');
+}
+
+export interface BehindPersonOptions {
+  basePath: string;
+  maskPath: string;
+  keywordsPath: string;
+  outputPath: string;
+  workDir: string;
+  frame: FrameSize;
+}
+
+export async function compositeBehindPerson(options: BehindPersonOptions): Promise<void> {
+  const { basePath, maskPath, keywordsPath, outputPath, workDir, frame } = options;
+  const filterPath = path.join(workDir, 'behind-filter.txt');
+  await fs.writeFile(filterPath, buildBehindPersonFilter(keywordsPath, frame), 'utf-8');
+  await run(
+    FFMPEG,
+    [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', basePath,
+      '-i', maskPath,
+      '-filter_complex_script', filterPath,
+      '-map', '[vout]', '-map', '0:a?',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+      '-profile:v', 'high', '-level', '4.0',
+      '-r', String(OUTPUT_FPS),
+      // The sound was finished by the first pass.
+      '-c:a', 'copy',
+      '-movflags', '+faststart',
+      outputPath,
+    ],
+    undefined,
+    RENDER_TIMEOUT_MS
+  );
+}
+
+/** The fallback when no mask could be made: the keywords burned over the render, in front. */
+export async function burnOver(basePath: string, assPath: string, outputPath: string): Promise<void> {
+  await run(
+    FFMPEG,
+    [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+      '-i', basePath,
+      '-vf', `ass=filename=${escapeFilterPath(assPath)}:fontsdir=${escapeFilterPath(FONTS_DIR)},format=yuv420p`,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+      '-profile:v', 'high', '-level', '4.0',
+      '-c:a', 'copy',
+      '-movflags', '+faststart',
+      outputPath,
+    ],
+    undefined,
+    RENDER_TIMEOUT_MS
+  );
+}

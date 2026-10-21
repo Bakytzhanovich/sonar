@@ -2959,6 +2959,8 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
       // Opt-in: the most destructive pass in the pipeline, and on a noisy
       // recording it finds nothing anyway.
       const removeBreaths = req.body?.removeBreaths === true;
+      // Opt-in too: some people want their video as they said it, pauses and all.
+      const keepFullLength = req.body?.keepFullLength === true;
       // Same fallback as the caption ids, and for the same reason: a stale
       // client naming a format that no longer exists should get the vertical
       // one the product was built around, not a 400.
@@ -2988,7 +2990,7 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
         if (!q.ok) return q;
         await exec(
         client,
-        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, subtitle_font, subtitle_color, subtitle_size, headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio, frame_fill, headline_seconds, end_card_text, end_card_brand, end_card_cta) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO video_edit_jobs (id, tenant_id, source_video_url, template, pipeline, source_object_key, subtitles, denoise_mode, review_mode, subtitle_preset, subtitle_position, subtitle_font, subtitle_color, subtitle_size, headline, headline_font, headline_size, headline_color, remove_breaths, aspect_ratio, frame_fill, headline_seconds, end_card_text, end_card_brand, end_card_cta, keep_full_length) VALUES (?, ?, ?, ?, 'smart_cut', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         tenantId,
         sourceObjectKey,
@@ -3012,7 +3014,8 @@ export function createApp(db: Db, options: AppOptions = {}): Express {
         headlineSeconds,
         endCard.text,
         endCard.brand,
-        endCard.cta
+        endCard.cta,
+        keepFullLength
         );
         return q;
       });

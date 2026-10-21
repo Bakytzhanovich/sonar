@@ -578,6 +578,7 @@ CREATE TABLE video_edit_jobs (
   end_card_text     TEXT, -- the end card (endCard.ts): its text, brand and call to action;
   end_card_brand    TEXT, -- all three null means no card
   end_card_cta      TEXT,
+  keep_full_length  BOOLEAN NOT NULL DEFAULT false, -- no automatic cut: the whole source, captions and all
   -- ---- Manual re-edit -----------------------------------------------------
   -- The automatic cut is a guess, and sometimes a wrong one. A person who
   -- dislikes it draws their own segments and the video is rendered again.
